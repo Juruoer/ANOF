@@ -1,0 +1,20 @@
+add_executable(anof_system_clock_unittest SystemClock_unittest.cc)
+target_link_libraries(anof_system_clock_unittest PRIVATE anof_infrastructure Boost::unit_test_framework)
+target_compile_definitions(anof_system_clock_unittest PRIVATE BOOST_TEST_DYN_LINK)
+target_compile_options(anof_system_clock_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_test(NAME anof_system_clock_unittest COMMAND anof_system_clock_unittest)
+set_tests_properties(anof_system_clock_unittest PROPERTIES TIMEOUT 15 LABELS "unit;system")
+
+add_executable(anof_instance_lock_probe InstanceLockProbe.cc)
+target_link_libraries(anof_instance_lock_probe PRIVATE anof_infrastructure)
+
+add_executable(anof_instance_lock_unittest InstanceLock_unittest.cc)
+target_link_libraries(anof_instance_lock_unittest PRIVATE anof_infrastructure Boost::unit_test_framework)
+target_compile_definitions(anof_instance_lock_unittest PRIVATE
+    BOOST_TEST_DYN_LINK
+    INSTANCE_LOCK_PROBE="$<TARGET_FILE:anof_instance_lock_probe>"
+)
+target_compile_options(anof_instance_lock_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_dependencies(anof_instance_lock_unittest anof_instance_lock_probe)
+add_test(NAME anof_instance_lock_unittest COMMAND anof_instance_lock_unittest)
+set_tests_properties(anof_instance_lock_unittest PROPERTIES TIMEOUT 30 LABELS "unit;system")

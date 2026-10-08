@@ -1,0 +1,1 @@
+anof_add_unit_test(anof_core_unittest Core_unittest.cc)

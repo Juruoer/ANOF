@@ -1,0 +1,26 @@
+add_executable(anof_session_token_codec_unittest SessionTokenCodec_unittest.cc)
+target_link_libraries(anof_session_token_codec_unittest PRIVATE
+    anof_infrastructure PkgConfig::Sodium Boost::unit_test_framework
+)
+target_compile_definitions(anof_session_token_codec_unittest PRIVATE BOOST_TEST_DYN_LINK)
+target_compile_options(anof_session_token_codec_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_test(NAME anof_session_token_codec_unittest COMMAND anof_session_token_codec_unittest)
+set_tests_properties(anof_session_token_codec_unittest PROPERTIES TIMEOUT 15 LABELS "unit;crypto")
+
+add_executable(anof_request_identity_unittest RequestIdentity_unittest.cc)
+target_link_libraries(anof_request_identity_unittest PRIVATE
+    anof_infrastructure PkgConfig::Sodium Boost::unit_test_framework
+)
+target_compile_definitions(anof_request_identity_unittest PRIVATE BOOST_TEST_DYN_LINK)
+target_compile_options(anof_request_identity_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_test(NAME anof_request_identity_unittest COMMAND anof_request_identity_unittest)
+set_tests_properties(anof_request_identity_unittest PROPERTIES TIMEOUT 15 LABELS "unit;crypto")
+
+add_executable(anof_node_id_generator_unittest NodeIdGenerator_unittest.cc)
+target_link_libraries(anof_node_id_generator_unittest PRIVATE
+    anof_infrastructure Boost::unit_test_framework
+)
+target_compile_definitions(anof_node_id_generator_unittest PRIVATE BOOST_TEST_DYN_LINK)
+target_compile_options(anof_node_id_generator_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_test(NAME anof_node_id_generator_unittest COMMAND anof_node_id_generator_unittest)
+set_tests_properties(anof_node_id_generator_unittest PROPERTIES TIMEOUT 15 LABELS "unit;crypto")

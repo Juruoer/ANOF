@@ -1,0 +1,10 @@
+target_sources(anof_infrastructure PRIVATE TomlInstanceConfiguration.h TomlInstanceConfiguration.cc)
+target_link_libraries(anof_infrastructure PRIVATE tomlplusplus::tomlplusplus)
+
+if (ANOF_BUILD_TESTS)
+    set(source "${CMAKE_CURRENT_BINARY_DIR}/headers/TomlInstanceConfiguration.h.cc")
+    file(GENERATE OUTPUT "${source}" CONTENT "#include <anof/infrastructure/config/TomlInstanceConfiguration.h>\n")
+    add_library(anof_config_headers_check OBJECT "${source}")
+    target_link_libraries(anof_config_headers_check PRIVATE anof_application)
+    add_subdirectory(tests)
+endif ()

@@ -1,0 +1,56 @@
+add_executable(anof_create_directory_integration_unittest
+    CreateDirectory_unittest.cc
+    ${PROJECT_SOURCE_DIR}/anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.cc
+)
+target_link_libraries(anof_create_directory_integration_unittest PRIVATE
+    anof_application anof_infrastructure Boost::unit_test_framework
+)
+target_compile_definitions(anof_create_directory_integration_unittest PRIVATE BOOST_TEST_DYN_LINK)
+target_compile_options(anof_create_directory_integration_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_test(NAME anof_create_directory_integration_unittest COMMAND anof_create_directory_integration_unittest)
+set_tests_properties(anof_create_directory_integration_unittest PROPERTIES TIMEOUT 60 LABELS "integration;sqlite")
+
+add_executable(anof_metadata_executor_integration_unittest
+    MetadataExecutor_unittest.cc
+    ${PROJECT_SOURCE_DIR}/anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.cc
+)
+target_link_libraries(anof_metadata_executor_integration_unittest PRIVATE
+    anof_runtime anof_infrastructure Boost::unit_test_framework
+)
+target_compile_definitions(anof_metadata_executor_integration_unittest PRIVATE BOOST_TEST_DYN_LINK)
+target_compile_options(anof_metadata_executor_integration_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_test(NAME anof_metadata_executor_integration_unittest COMMAND anof_metadata_executor_integration_unittest)
+set_tests_properties(anof_metadata_executor_integration_unittest PROPERTIES TIMEOUT 30 LABELS "integration;sqlite;runtime")
+
+add_executable(anof_http_create_directory_integration_unittest
+    HttpCreateDirectory_unittest.cc
+    ${PROJECT_SOURCE_DIR}/anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.cc
+)
+target_link_libraries(anof_http_create_directory_integration_unittest PRIVATE
+    anof_runtime anof_http anof_infrastructure nlohmann_json::nlohmann_json
+    PkgConfig::Sodium Boost::unit_test_framework
+)
+target_compile_definitions(anof_http_create_directory_integration_unittest PRIVATE BOOST_TEST_DYN_LINK)
+target_compile_options(anof_http_create_directory_integration_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_test(NAME anof_http_create_directory_integration_unittest COMMAND anof_http_create_directory_integration_unittest)
+set_tests_properties(anof_http_create_directory_integration_unittest PROPERTIES
+    TIMEOUT 60 LABELS "integration;http;sqlite;runtime")
+
+add_executable(anof_instance_server_integration_unittest InstanceServer_unittest.cc)
+target_link_libraries(anof_instance_server_integration_unittest PRIVATE
+    anof_instance_runtime anof_infrastructure Boost::unit_test_framework
+)
+target_compile_definitions(anof_instance_server_integration_unittest PRIVATE BOOST_TEST_DYN_LINK)
+target_compile_options(anof_instance_server_integration_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_test(NAME anof_instance_server_integration_unittest COMMAND anof_instance_server_integration_unittest)
+set_tests_properties(anof_instance_server_integration_unittest PROPERTIES TIMEOUT 30 LABELS "integration;http;sqlite;runtime")
+
+add_executable(anof_serve_process_integration_unittest ServeProcess_unittest.cc)
+target_link_libraries(anof_serve_process_integration_unittest PRIVATE anof_infrastructure Boost::unit_test_framework)
+target_compile_definitions(anof_serve_process_integration_unittest PRIVATE
+    BOOST_TEST_DYN_LINK ANOF_EXECUTABLE="$<TARGET_FILE:anof>"
+)
+target_compile_options(anof_serve_process_integration_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_dependencies(anof_serve_process_integration_unittest anof)
+add_test(NAME anof_serve_process_integration_unittest COMMAND anof_serve_process_integration_unittest)
+set_tests_properties(anof_serve_process_integration_unittest PROPERTIES TIMEOUT 45 LABELS "integration;http;sqlite;instance;process")

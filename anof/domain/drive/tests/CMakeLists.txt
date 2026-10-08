@@ -1,0 +1,2 @@
+anof_add_unit_test(anof_directory_policy_unittest DirectoryPolicy_unittest.cc)
+anof_add_unit_test(anof_quota_unittest Quota_unittest.cc)

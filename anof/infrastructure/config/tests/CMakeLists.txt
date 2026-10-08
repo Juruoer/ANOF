@@ -1,0 +1,6 @@
+add_executable(anof_instance_configuration_unittest InstanceConfiguration_unittest.cc)
+target_link_libraries(anof_instance_configuration_unittest PRIVATE anof_infrastructure Boost::unit_test_framework)
+target_compile_definitions(anof_instance_configuration_unittest PRIVATE BOOST_TEST_DYN_LINK)
+target_compile_options(anof_instance_configuration_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_test(NAME anof_instance_configuration_unittest COMMAND anof_instance_configuration_unittest)
+set_tests_properties(anof_instance_configuration_unittest PROPERTIES TIMEOUT 30 LABELS "unit;config")

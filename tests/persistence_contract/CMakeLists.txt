@@ -1,0 +1,5 @@
+# 只编译契约案例，未接入真实后端时不注册为通过的 CTest。
+add_library(anof_persistence_contract_cases OBJECT MetadataContract_unittest.cc)
+target_link_libraries(anof_persistence_contract_cases PUBLIC anof_application Boost::unit_test_framework)
+target_compile_definitions(anof_persistence_contract_cases PUBLIC BOOST_TEST_DYN_LINK)
+target_compile_options(anof_persistence_contract_cases PRIVATE -Wall -Wextra -Wconversion -Wshadow)
