@@ -1,3 +1,31 @@
+anof_add_unit_test(anof_http_account_writes_unittest AccountWrites_unittest.cc)
+target_link_libraries(anof_http_account_writes_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_account_writes_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+anof_add_unit_test(anof_http_account_reads_unittest AccountReads_unittest.cc)
+target_link_libraries(anof_http_account_reads_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_account_reads_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+anof_add_unit_test(anof_http_account_protocol_unittest AccountProtocol_unittest.cc)
+target_link_libraries(anof_http_account_protocol_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_account_protocol_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+anof_add_unit_test(anof_http_identity_handlers_unittest IdentityHandlers_unittest.cc)
+target_link_libraries(anof_http_identity_handlers_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_identity_handlers_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+anof_add_unit_test(anof_http_reads_unittest ReadHandlers_unittest.cc)
+target_link_libraries(anof_http_reads_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_reads_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+anof_add_unit_test(anof_http_identity_stream_unittest IdentityStream_unittest.cc)
+target_link_libraries(anof_http_identity_stream_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_identity_stream_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+anof_add_unit_test(anof_http_identity_protocol_unittest IdentityProtocol_unittest.cc)
+target_link_libraries(anof_http_identity_protocol_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_identity_protocol_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
 anof_add_unit_test(anof_http_protocol_unittest Protocol_unittest.cc)
 target_link_libraries(anof_http_protocol_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
 target_compile_options(anof_http_protocol_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
@@ -15,6 +43,12 @@ set(http_public_headers
     BearerCredentials.h
     CreateDirectoryJson.h
     JsonResponse.h
+    IdentityStream.h
+    AccountResponse.h
+    AccountRequest.h
+    IdentityRequest.h
+    IdentityResponse.h
+    Pagination.h
     RequestTrace.h
     HttpApi.h
     CreateDirectoryHandler.h

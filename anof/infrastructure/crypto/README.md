@@ -1,14 +1,52 @@
 # Crypto 适配器
 
-本目录通过 application 端口提供 token 摘要计算、请求 ID 派生和随机节点 UUID 生成。公开头文件不暴露 libsodium 类型，不依赖 HTTP、runtime、SQLite 或测试 fixture。
+本目录通过 application 端口提供 Argon2id 密码哈希／验证、凭据签发与摘要、请求 ID 派生和随机实体 UUID 生成。公开头文件不暴露 libsodium 类型，不依赖 HTTP、runtime、SQLite 或测试 fixture。
 
 | 头文件 | 工厂 | 接口可用性 |
 |---|---|---|
 | [SodiumSessionTokenCodec.h](SodiumSessionTokenCodec.h) | `makeSodiumSessionTokenCodec()` | 已定义，返回 `SessionTokenCodec` |
 | [SodiumRequestIdentity.h](SodiumRequestIdentity.h) | `makeSodiumRequestIdentity()` | 已定义，返回 `RequestIdentity` |
 | [SodiumNodeIdGenerator.h](SodiumNodeIdGenerator.h) | `makeSodiumNodeIdGenerator()` | 已定义，返回 `NodeIdGenerator` |
+| [SodiumPasswordHasher.h](SodiumPasswordHasher.h) | `makeSodiumPasswordHasher(policy)` | 已定义，返回 `PasswordHasher` |
+| [SodiumCredentialIssuer.h](SodiumCredentialIssuer.h) | `makeSodiumCredentialIssuer()` | 已定义，返回 `CredentialIssuer` |
+| [SodiumInviteTokenCodec.h](SodiumInviteTokenCodec.h) | `makeSodiumInviteTokenCodec()` | 已定义，返回 `InviteTokenCodec` |
+| [SodiumIdentityIdGenerator.h](SodiumIdentityIdGenerator.h) | `makeSodiumIdentityIdGenerator()` | 已定义，返回 `IdentityIdGenerator` |
 
 命名空间为 `anof::infrastructure::crypto`，工厂返回类型统一为 `Result<std::unique_ptr<端口>>`。链接目标为 `anof_infrastructure`。
+
+## PasswordHasher 与显式预算
+
+[SodiumPasswordPolicy](SodiumPasswordPolicy.h) 分别指定 hashing 工作参数和 verification 接纳上限，没有有效的默认策略。工厂首先验证策略，再初始化 libsodium；无效策略为 InvalidArgument，初始化或分配失败为 InternalError。
+
+| 字段 | 单位与接纳范围 |
+|---|---|
+| hashing.memoryKiB／verification.maxMemoryKiB | KiB，8..262144；转换为字节前检查 size_t 乘法和 libsodium 的限制 |
+| hashing.iterations／verification.maxIterations | Argon2 迭代次数，1..10 |
+| hashing.parallelism／verification.maxParallelism | 固定为 1 |
+
+hashing 不得超过 verification。此范围是适配器接纳边界，不是推荐生产强度，也不是进程 RSS 硬上限；算法及运行库另有开销。生产密码 worker 数量、排队／取消、登录限流和总内存预算由 runtime 装配负责，适配器不创建线程或队列，不进行参数校准。
+
+`hash(const PasswordInput&)` 使用 libsodium Argon2id v19，独立随机盐，输出规范 PHC 编码，固定 16 字节盐、32 字节摘要。验证生成编码及参数与策略一致后返回 move-only EncodedPasswordHash。密码按领域值持有的原始 UTF-8 字节处理，12..1024 字节，不 trim、归一化或截断；已移走秘密的空对象返回 InvalidArgument。
+
+`verify(password, encoded)` 不信任编码曾在更宽预算下构造。它重新检查有界 PHC 结构、工作参数和固定盐／摘要长度，再运行 Argon2id；领域解析器支持但本适配器不支持的长度或参数返回 InvalidArgument，不能进入昂贵计算。计算成功后用 sodium_memcmp 比较摘要，匹配为 true、不匹配为 false。算法计算失败为 InternalError，不合并成错误密码；它不调用将这两种情况统一为 -1 的 str_verify 接口。
+
+密码计算必须在密码 worker 或显式离线初始化中完成，计算前结束数据库快照／事务。持久化 Store 的 passwordHashLimits 应与 verification 保持一致。该适配器不负责 dummy hash 选择、用户查询、Session 签发或登录响应，局部往返成功不表示登录流程已经接通。
+
+## CredentialIssuer 与 InviteTokenCodec
+
+[CredentialIssuer](SodiumCredentialIssuer.h) 的 issueSession／issueInvite 每次独立调用 randombytes_buf 取得 32 个随机字节，返回自有 SecretToken 和对应强类型摘要。Session 编码恰 43 字符；邀请为 `anof_invite_` 加同样的规范、无 padding base64url 编码，总长 55。两种摘要均为原始随机字节的 SHA-256，前缀及编码文本不参与计算。
+
+随机签发在 worker／离线流程中执行，不在同步 selector 调用。适配器不持久化凭据，不定义有效期或撤销状态；应用仍须先提交关联事务，再返回一次性明文。失败或提交未知时不得将已生成凭据当作签发成功返回。
+
+[InviteTokenCodec](SodiumInviteTokenCodec.h) 接收自有 InviteTokenText，复验前缀与长度后复用 Session 解码器的固定长度、字母表、末尾未使用位校验，返回 InviteDigest。没有初始化、随机调用、数据库／文件访问或密码工作，可用于有界输入的同步计算。无效或已移走的输入为 InvalidArgument，内部哈希失败为 InternalError。SessionDigest 与 InviteDigest 类型分离；邀请带前缀不能作为 Bearer 使用。相同原始字节在两种类型下数学摘要相同，类型区分不依赖额外哈希前缀。
+
+所有新适配器不记录密码、编码、凭据或摘要，不保留借用视图。适配器自己的盐、原始 token、PHC 输出及计算临时缓冲区用 RAII 在退出时清零；返回的秘密由领域 move-only 类型持有并在析构清零。不承诺清除调用方、寄存器、分页或所有库内部副本，也不提供 mlock 保证。
+
+## IdentityIdGenerator
+
+[IdentityIdGenerator](SodiumIdentityIdGenerator.h) 提供 nextUser、nextSpace、nextNode、nextInvite、nextInstance、nextOperation，分别返回相应强类型 ID。每次使用新鲜的 16 字节安全随机值，通过[共享 UUID v4 格式化](internal/RandomUuid.h) 设置 version／variant 位；不把 NodeId 强制转换成其他身份类型，不使用请求 ID 或计数器代替随机实体 ID。
+
+工厂显式初始化 libsodium。生成方法无数据库访问或碰撞重试，库级随机源致命终止没有 Result 错误通道；有限样本不证明绝对无碰撞。既有 NodeIdGenerator 复用同一位布局实现，保留原接口及回归。
 
 ## SessionTokenCodec 用法
 
@@ -85,16 +123,19 @@ RequestId 只用于服务端关联，不是认证凭据、节点 ID 或幂等键
 
 `ANOF_BUILD_TESTS=ON` 时提供：
 
+- `anof_password_hasher_unittest`：[7 个案例](tests/PasswordHasher_unittest.cc)，超时 30 秒；覆盖策略上下界、真实哈希往返／错误密码、libsodium 原生接口互验、输入长度与空白、超预算／不支持编码在计算前拒绝、计算故障和 move-only 生命周期。实际计算使用显式 8192 KiB、1 次、parallelism=1，仅为测试策略；最大策略只验证参数，不运行高资源计算。
+- `anof_m2_credentials_unittest`：[6 个案例](tests/M2Credentials_unittest.cc)，超时 15 秒；覆盖两类签发／摘要往返、固定 SHA-256 答案、邀请前缀与规范编码边界、秘密移动、六类身份 UUID 及确定性位布局。样本不证明随机源质量。
+
 - `anof_node_id_generator_unittest`：[4 个 Boost.Test 案例](tests/NodeIdGenerator_unittest.cc)，CTest 超时 15 秒。覆盖确定性格式化、全零／全一／递增输入、256 种字节值的位保留检查、128 个生产样本的解析／非 nil／v4 布局，以及重复初始化构造。样本无重复不证明无碰撞。固定字节仅进入[内部格式化函数](internal/NodeUuid.h)，不替换 RNG。
-- `anof_crypto_headers_check`：三个公开头分别独立编译，仅依赖 `anof_application`。
+- `anof_crypto_headers_check`：八个公开头分别独立编译，仅依赖 `anof_application`。
 - `anof_request_identity_unittest`：[7 个 Boost.Test 案例](tests/RequestIdentity_unittest.cc)，CTest 超时 15 秒。包含三组固定种子下的 18 个独立已知答案、66 字节精确布局、编号边界、摘要截断与全零修正、版本／变体位保留、哈希失败无替代 ID、生产 provider 重复调用与独立构造。固定种子只传入[内部纯派生接缝](internal/RequestIdDerivation.h)，不生成生产 provider。
 - `anof_session_token_codec_unittest`：[8 个 Boost.Test 案例](tests/SessionTokenCodec_unittest.cc)，CTest 超时 15 秒。覆盖独立固定 SHA-256 答案、规范编码往返、非法长度／字母表／padding／空白／尾随数据、末尾未使用位、无 NUL 结尾视图、重复构造和内部失败分类。
 
 从项目根目录运行：
 
 ```sh
-cmake --build cmake-build-debug --target anof_session_token_codec_unittest anof_request_identity_unittest anof_node_id_generator_unittest anof_crypto_headers_check --parallel 2
-ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_(session_token_codec|request_identity|node_id_generator)_unittest$' -j 1
+cmake --build cmake-build-debug --target anof_session_token_codec_unittest anof_request_identity_unittest anof_node_id_generator_unittest anof_password_hasher_unittest anof_m2_credentials_unittest anof_crypto_headers_check --parallel 2
+ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_(session_token_codec|request_identity|node_id_generator|password_hasher|m2_credentials)_unittest$' -j 1
 ```
 
-Release 使用同名目标及 `cmake-build-release` 目录，两者均需开启 `ANOF_BUILD_TESTS`。测试只处理内存中的小数据，不运行随机源压力测试。内部错误注入不触发真实熵源失效、系统内存耗尽或进程终止；局部测试不验证 HTTP、真实 Session 鉴权、SQL 事务或完整实例关闭。
+Release 使用同名目标及 `cmake-build-release` 目录，两者均需开启 `ANOF_BUILD_TESTS`。密码学五组共 32 个案例，串行执行；另保留 system 的 UTC 时钟回归。测试只处理内存中的小数据，不运行校准、内存压力或随机源压力测试。内部错误注入不触发真实熵源失效、系统内存耗尽或进程终止；局部测试不验证 HTTP、真实 Session 鉴权、SQL 事务或完整实例关闭。

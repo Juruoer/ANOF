@@ -1,10 +1,12 @@
+#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestStore.h>
 #include <anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteMigration.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
 
 #include <cstdlib>
 #include <initializer_list>
+#include <limits>
 #include <stdexcept>
 
 namespace anof::infrastructure::sqlite::testing {
@@ -23,23 +25,27 @@ Result<void> seedDatabase(SqliteConnection& connection, const anof::testing::Met
     // 节点种子顺序不必按拓扑排序；所有外键仍须在提交时成立。
     auto deferred = connection.execute("PRAGMA defer_foreign_keys=ON");
     if (!deferred) return deferred.error();
+    std::size_t userIndex = 0;
     for (const auto& user : seed.users) {
-        auto p = SqliteStatement::prepare(connection, "INSERT INTO users VALUES (?1, ?2, ?3, ?4)");
+        auto p = SqliteStatement::prepare(connection, "INSERT INTO users VALUES (?1, ?2, ?3, ?4, ?5, 'Fixture user', '"
+            "$argon2id$v=19$m=8192,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 1, 1, 0, 0)");
         if (!p) return p.error();
         auto& s = *p.value();
         if (user.principal.role != UserRole::Member && user.principal.role != UserRole::Administrator) return ErrorCode::IntegrityError;
         auto result = finish(s, { s.bindText(1, user.principal.userId.toString()),
             s.bindInt64(2, user.principal.role == UserRole::Administrator ? 1 : 0), s.bindInt64(3, user.enabled ? 1 : 0),
-            s.bindInt64(4, user.principal.authEpoch.value()) });
+            s.bindInt64(4, user.principal.authEpoch.value()), s.bindText(5, "fixture_" + std::to_string(++userIndex)) });
         if (!result) return result.error();
     }
     for (const auto& session : seed.sessions) {
-        auto p = SqliteStatement::prepare(connection, "INSERT INTO sessions VALUES (?1, ?2, ?3, ?4, ?5)");
+        auto p = SqliteStatement::prepare(connection, "INSERT INTO sessions VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'bearer')");
         if (!p) return p.error();
         auto& s = *p.value();
+        const auto expiry = session.expiresAt.time_since_epoch().count();
+        if (expiry == std::numeric_limits<std::int64_t>::min()) return ErrorCode::IntegrityError;
         auto result = finish(s, { s.bindBlob(1, session.digest.bytes().data(), session.digest.bytes().size()),
             s.bindText(2, session.userId.toString()), s.bindInt64(3, session.authEpoch.value()),
-            s.bindInt64(4, session.expiresAt.time_since_epoch().count()), s.bindInt64(5, session.revoked ? 1 : 0) });
+            s.bindInt64(4, session.expiresAt.time_since_epoch().count()), s.bindInt64(5, session.revoked ? 1 : 0), s.bindInt64(6, expiry - 1) });
         if (!result) return result.error();
     }
     for (const auto& space : seed.spaces) {
@@ -76,8 +82,8 @@ Result<void> seedDatabase(SqliteConnection& connection, const anof::testing::Met
         const auto* contribution = std::get_if<PublicContributionQuota>(&quota.scope);
         const auto space = contribution ? contribution->spaceId : std::get<SpaceQuota>(quota.scope).spaceId;
         auto p = SqliteStatement::prepare(connection, contribution ?
-            "INSERT INTO public_contribution_quotas(space_id, limit_bytes, limit_nodes, used_bytes, used_nodes, reserved_bytes, reserved_nodes, user_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)" :
-            "INSERT INTO space_quotas VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)");
+            "INSERT INTO public_contribution_quotas(space_id, limit_bytes, limit_nodes, used_bytes, used_nodes, reserved_bytes, reserved_nodes, user_id, revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)" :
+            "INSERT INTO space_quotas VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)");
         if (!p) return p.error();
         auto& s = *p.value();
         if (contribution) {
@@ -116,8 +122,8 @@ Result<void> SqliteTestMetadataBackend::reset(const anof::testing::MetadataSeed&
     if (error) return ErrorCode::InternalError;
     std::filesystem::create_directory(directory_ / "database", error);
     if (error) return ErrorCode::InternalError;
-    auto migrated = migrateSqliteDatabase(databasePath(), { 0 });
-    if (!migrated) return migrated.error();
+    auto created = createSqliteDatabase(databasePath(), { 0 });
+    if (!created) return created.error();
     auto connection = openSqliteDatabase(databasePath(), { 0 });
     if (!connection) return connection.error();
     auto begun = connection.value()->beginWrite();
@@ -128,10 +134,10 @@ Result<void> SqliteTestMetadataBackend::reset(const anof::testing::MetadataSeed&
     return connection.value()->commit();
 }
 
-Result<std::unique_ptr<MetadataStore>> SqliteTestMetadataBackend::connect() { return openSqliteMetadataStore(databasePath(), { 0 }); }
+Result<std::unique_ptr<MetadataStore>> SqliteTestMetadataBackend::connect() { return testing::openTestMetadataStore(databasePath(), { 0 }); }
 
 Result<std::optional<anof::testing::NodeSeed>> SqliteTestMetadataBackend::readNode(NodeId nodeId) {
-    auto connection = openSqliteDatabase(databasePath(), { 0 });
+    auto connection = SqliteConnection::open(databasePath(), { 0 }, SqliteOpenMode::Inspect);
     if (!connection) return connection.error();
     auto p = SqliteStatement::prepare(*connection.value(),
         "SELECT id, space_id, parent_id, name, created_by, revision, created_at, updated_at, blob_id, trashed, kind FROM nodes WHERE id=?1");
@@ -171,7 +177,7 @@ Result<std::optional<anof::testing::NodeSeed>> SqliteTestMetadataBackend::readNo
 }
 
 Result<QuotaState> SqliteTestMetadataBackend::readQuota(const QuotaScope& scope) {
-    auto connection = openSqliteDatabase(databasePath(), { 0 });
+    auto connection = SqliteConnection::open(databasePath(), { 0 }, SqliteOpenMode::Inspect);
     if (!connection) return connection.error();
     const auto* contribution = std::get_if<PublicContributionQuota>(&scope);
     const auto space = contribution ? contribution->spaceId : std::get<SpaceQuota>(scope).spaceId;
@@ -200,7 +206,7 @@ Result<QuotaState> SqliteTestMetadataBackend::readQuota(const QuotaScope& scope)
 }
 
 Result<std::vector<DirectoryCreatedEvent>> SqliteTestMetadataBackend::readAudit() {
-    auto connection = openSqliteDatabase(databasePath(), { 0 });
+    auto connection = SqliteConnection::open(databasePath(), { 0 }, SqliteOpenMode::Inspect);
     if (!connection) return connection.error();
     auto p = SqliteStatement::prepare(*connection.value(),
         "SELECT actor_id, space_id, node_id, parent_id, request_id, occurred_at, action FROM audit_events ORDER BY sequence");

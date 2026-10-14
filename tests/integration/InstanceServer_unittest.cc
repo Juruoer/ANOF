@@ -1,3 +1,4 @@
+#include <anof/runtime/InstanceIdentity.h>
 #define BOOST_TEST_MODULE InstanceServerIntegration
 #include <boost/test/unit_test.hpp>
 
@@ -11,7 +12,7 @@
 #include <anof/infrastructure/crypto/SodiumRequestIdentity.h>
 #include <anof/infrastructure/crypto/SodiumSessionTokenCodec.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteMigration.h>
+#include <tests/integration/InitializedInstance.h>
 #include <anof/infrastructure/system/SystemClock.h>
 #include <muduox/net/EventLoop.h>
 #include <muduox/net/InetAddress.h>
@@ -70,7 +71,6 @@ struct Fixture {
         auto directory = ::mkdtemp(name);
         if (!directory) throw std::runtime_error("temporary root failed");
         root = directory;
-        std::filesystem::create_directory(root / ".anof");
     }
     ~Fixture() {
         release();
@@ -90,11 +90,11 @@ struct Fixture {
         configuration.shutdownGraceSeconds = 0;
         return { std::make_unique<Lease>(root, held), configuration };
     }
-    void migrate() {
-        BOOST_REQUIRE(infrastructure::sqlite::migrateSqliteDatabase(root / ".anof" / "metadata.sqlite3"));
+    void initialize() {
+        BOOST_REQUIRE(initializeTestInstance(root));
     }
     Result<MetadataWorkerResources> resources() {
-        auto store = infrastructure::sqlite::openSqliteMetadataStore(root / ".anof" / "metadata.sqlite3");
+        auto store = infrastructure::sqlite::openSqliteMetadataStore(root / ".anof" / "metadata.sqlite3", {instancePasswordPolicy().verification, {}});
         if (!store) return store.error();
         auto clock = infrastructure::system::makeSystemClock();
         if (!clock) return clock.error();
@@ -107,13 +107,13 @@ struct Fixture {
         BOOST_REQUIRE(result);
         server = std::move(result).value();
     }
-    void injected(MetadataExecutor::Factory factory) {
+    void injected(MetadataExecutor::Factory factory, IdentityExecutor::Factory password = makeInstancePasswordResources) {
         auto tokens = infrastructure::crypto::makeSodiumSessionTokenCodec();
         auto requests = infrastructure::crypto::makeSodiumRequestIdentity();
         BOOST_REQUIRE(tokens);
         BOOST_REQUIRE(requests);
         server = std::make_unique<InstanceServer>(loop, prepared(),
-            InstanceCrypto{ std::move(tokens).value(), std::move(requests).value() }, std::move(factory));
+            InstanceCrypto{ std::move(tokens).value(), std::move(requests).value() }, std::move(factory), std::move(password));
     }
     void start(bool throwReady = false, bool throwStopped = false) {
         BOOST_REQUIRE(server->start([this, throwReady](Result<void> result) {
@@ -158,7 +158,7 @@ struct Socket {
 
 BOOST_AUTO_TEST_CASE(production_factory_delays_http_until_worker_ready_and_keeps_lease_through_stop) {
     Fixture fixture;
-    fixture.migrate();
+    fixture.initialize();
     fixture.production();
     BOOST_CHECK(!fixture.server->port());
     BOOST_CHECK(!fixture.server->ready());
@@ -189,6 +189,17 @@ BOOST_AUTO_TEST_CASE(production_factory_delays_http_until_worker_ready_and_keeps
     fixture.stopped();
 }
 
+BOOST_AUTO_TEST_CASE(password_startup_failure_never_binds_and_keeps_lease_until_destruction) {
+    Fixture fixture;
+    fixture.initialize();
+    fixture.injected([&] { return fixture.resources(); }, []() -> Result<PasswordWorkerResources> { return ErrorCode::InternalError; });
+    fixture.start();
+    BOOST_REQUIRE(drive(fixture.loop, [&] { return fixture.server->state() == RuntimeState::Stopped; }));
+    BOOST_CHECK(fixture.startupError == ErrorCode::InternalError);
+    BOOST_CHECK(!fixture.server->port());
+    fixture.stopped();
+}
+
 BOOST_AUTO_TEST_CASE(missing_database_fails_before_binding_without_creating_database) {
     Fixture fixture;
     fixture.production();
@@ -202,7 +213,7 @@ BOOST_AUTO_TEST_CASE(missing_database_fails_before_binding_without_creating_data
 
 BOOST_AUTO_TEST_CASE(stop_during_worker_initialization_never_publishes_ready_or_releases_lease_early) {
     Fixture fixture;
-    fixture.migrate();
+    fixture.initialize();
     fixture.injected([&] { return fixture.gated(); });
     fixture.start();
     BOOST_REQUIRE(drive(fixture.loop, [&] { return fixture.entered.load(); }));
@@ -230,7 +241,7 @@ BOOST_AUTO_TEST_CASE(worker_factory_exception_is_a_failed_start_without_http) {
 
 BOOST_AUTO_TEST_CASE(ready_observer_exception_stops_and_stopped_observer_exception_is_contained) {
     Fixture fixture;
-    fixture.migrate();
+    fixture.initialize();
     fixture.production();
     fixture.start(true, true);
     BOOST_REQUIRE(drive(fixture.loop, [&] { return fixture.server->state() == RuntimeState::Stopped; }));
@@ -250,20 +261,10 @@ BOOST_AUTO_TEST_CASE(invalid_prepared_configuration_releases_lease_without_worke
 
 BOOST_AUTO_TEST_CASE(real_lease_survives_cancelled_worker_start_until_instance_destruction) {
     Fixture fixture;
-    fixture.migrate();
-    BOOST_REQUIRE_EQUAL(::chmod((fixture.root / ".anof").c_str(), 0700), 0);
-    BOOST_REQUIRE_EQUAL(::chmod((fixture.root / ".anof/metadata.sqlite3").c_str(), 0600), 0);
-    const auto write = [&](const char* name, const char* text) {
-        const auto path = fixture.root / ".anof" / name;
-        std::ofstream stream(path); stream << text; stream.close();
-        BOOST_REQUIRE(stream);
-        BOOST_REQUIRE_EQUAL(::chmod(path.c_str(), 0600), 0);
-    };
-    write("instance.json", R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":1})");
-    write("config.toml", "development_http=true\nport=0\n");
+    fixture.initialize();
     auto locks = infrastructure::system::makeLinuxInstanceLockProvider();
     auto config = infrastructure::config::makeTomlInstanceConfigurationLoader();
-    auto maintenance = infrastructure::sqlite::makeSqliteInstanceMaintenance();
+    auto maintenance = infrastructure::sqlite::makeSqliteInstanceMaintenance({instancePasswordPolicy().verification, {}});
     BOOST_REQUIRE(locks && config && maintenance);
     auto prepared = prepareInstance(fixture.root, *locks.value(), *config.value(), *maintenance.value());
     BOOST_REQUIRE(prepared);
@@ -271,7 +272,7 @@ BOOST_AUTO_TEST_CASE(real_lease_survives_cancelled_worker_start_until_instance_d
     auto requests = infrastructure::crypto::makeSodiumRequestIdentity();
     BOOST_REQUIRE(tokens && requests);
     fixture.server = std::make_unique<InstanceServer>(fixture.loop, std::move(prepared).value(),
-        InstanceCrypto{std::move(tokens).value(), std::move(requests).value()}, [&] { return fixture.gated(); });
+        InstanceCrypto{std::move(tokens).value(), std::move(requests).value()}, [&] { return fixture.gated(); }, makeInstancePasswordResources);
     const auto locked = [&] {
         const auto second = locks.value()->acquire(fixture.root);
         BOOST_REQUIRE(!second);

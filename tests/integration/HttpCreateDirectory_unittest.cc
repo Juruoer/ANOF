@@ -1,3 +1,4 @@
+#include <anof/runtime/IdentityExecutor.h>
 #define BOOST_TEST_MODULE AnofHttpCreateDirectoryIntegration
 #include <boost/test/unit_test.hpp>
 
@@ -103,22 +104,28 @@ struct Control {
     }
 };
 // 仅装饰类型化端口；所有写入、鉴权、提交及回滚仍由真实 SQLite 执行。
-class Transaction final : public MetadataTransaction, public AuthorizationRepository, public AuditRepository {
+class Transaction final : public MetadataTransaction, public AuthorizationReader, public AuditRepository {
 public:
     Transaction(std::unique_ptr<MetadataTransaction> inner, Control& control)
         : inner_(std::move(inner)), control_(control) {}
-    AuthorizationRepository& authorization() override { return *this; }
+    AuthorizationReader& authorization() override { return *this; }
+    UserRepository& users() override { return inner_->users(); }
+    SessionRepository& sessions() override { return inner_->sessions(); }
+    InviteRepository& invites() override { return inner_->invites(); }
+    SettingsRepository& settings() override { return inner_->settings(); }
+    IdentityAuditRepository& identityAudit() override { return inner_->identityAudit(); }
+
     SpaceRepository& spaces() override { return inner_->spaces(); }
     NodeRepository& nodes() override { return inner_->nodes(); }
     QuotaRepository& quotas() override { return inner_->quotas(); }
-    AuditRepository& audit() override { return *this; }
-    Result<Principal> requireActiveSession(const SessionDigest& digest, UtcTime now) override {
+    AuditRepository& directoryAudit() override { return *this; }
+    Result<Principal> requireActiveSession(const SessionCredential& digest, UtcTime now) override {
         const auto count = ++control_.auths;
         if (control_.fault == Fault::ExpireSecondCheck && count == 2) now += std::chrono::hours(2);
         return inner_->authorization().requireActiveSession(digest, now);
     }
     Result<void> append(const DirectoryCreatedEvent& event) override {
-        auto result = inner_->audit().append(event);
+        auto result = inner_->directoryAudit().append(event);
         if (result && control_.fault == Fault::Audit) return ErrorCode::InternalError;
         return result;
     }
@@ -142,6 +149,7 @@ public:
         control_.opened = std::this_thread::get_id();
     }
     ~Store() override { inner_.reset(); control_.closed = std::this_thread::get_id(); }
+    Result<std::unique_ptr<MetadataReadSnapshot>> beginRead() override { return inner_->beginRead(); }
     Result<std::unique_ptr<MetadataTransaction>> beginWrite() override {
         ++control_.begins;
         // gate 在事务开启之前；用于确定 Running／Queued 次序，不占用 SQLite 写锁。
@@ -178,6 +186,8 @@ struct Fixture {
     std::vector<DirectoryTaskRecord> tasks;
     std::vector<HttpTraceRecord> finished;
     AnofRuntime runtime{loop, {1, 1}};
+    // 本夹具只验收目录；身份 dispatcher 不启动，身份端点由完整实例测试覆盖。
+    IdentityExecutor identities{loop, runtime.metadataExecutor()};
     CreateDirectoryHandler handler{runtime.dispatcher(), [this] { return runtime.ready(); },
         [this](auto value) { record(tasks, std::move(value)); }};
     std::unique_ptr<HttpApi> api;
@@ -215,7 +225,7 @@ struct Fixture {
     }
     void start(double responseSeconds = 30) {
         BOOST_REQUIRE(backend->reset(seed));
-        api = std::make_unique<HttpApi>(*codec, *identity, [this] { return runtime.ready(); }, handler.stream(),
+        api = std::make_unique<HttpApi>(*codec, *identity, [this] { return runtime.ready(); }, handler.stream(), identities,
             HttpObservation{{}, [this](auto value) { record(finished, std::move(value)); }}, HttpApiOptions{4, 15, responseSeconds});
         api->configure(server);
         BOOST_REQUIRE(runtime.start([this]() -> Result<MetadataWorkerResources> {
@@ -433,7 +443,7 @@ BOOST_AUTO_TEST_CASE(real_commits_fill_completion_capacity_until_loop_drains) {
     const auto digest = f.seed.sessions[0].digest;
     std::vector<CreateDirectoryCompletion> results;
     const auto submit = [&](unsigned number) {
-        return f.runtime.dispatcher().trySubmit({digest, id<RequestId>(number)},
+        return f.runtime.dispatcher().trySubmit({{digest, CredentialMode::Bearer}, id<RequestId>(number)},
             {f.space, f.root, "backlog-" + std::to_string(number)},
             [&](auto result) { results.push_back(std::move(result)); });
     };

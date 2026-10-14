@@ -1,10 +1,9 @@
+#include <anof/runtime/internal/ShutdownTrace.h>
+#include <anof/runtime/InstanceIdentity.h>
 #include <anof/runtime/InstanceServer.h>
 
-#include <anof/infrastructure/crypto/SodiumNodeIdGenerator.h>
 #include <anof/infrastructure/crypto/SodiumRequestIdentity.h>
 #include <anof/infrastructure/crypto/SodiumSessionTokenCodec.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
-#include <anof/infrastructure/system/SystemClock.h>
 #include <muduox/net/EventLoop.h>
 #include <muduox/net/InetAddress.h>
 
@@ -14,13 +13,14 @@
 namespace anof::runtime {
 
 InstanceServer::InstanceServer(muduox::net::EventLoop& loop, PreparedInstance prepared, InstanceCrypto crypto,
-                               MetadataExecutor::Factory worker, http::HttpObservation httpObservation,
+                               MetadataExecutor::Factory worker, IdentityExecutor::Factory passwordWorker, http::HttpObservation httpObservation,
                                http::DirectoryTaskObserver taskObservation)
     : loop_(loop), prepared_(std::move(prepared)), crypto_(std::move(crypto)), worker_(std::move(worker)),
+      passwordWorker_(std::move(passwordWorker)),
       httpObservation_(std::move(httpObservation)), taskObservation_(std::move(taskObservation)),
-      runtime_(loop, { prepared_.configuration.metadataQueue, 32 }) {
+      runtime_(loop, { prepared_.configuration.metadataQueue, 32 }), identity_(loop, runtime_.metadataExecutor()) {
     loop_.assertInLoopThread();
-    if (!prepared_.lease || !prepared_.lease->root().is_absolute() || !crypto_.tokens || !crypto_.requests || !worker_ ||
+    if (!prepared_.lease || !prepared_.lease->root().is_absolute() || !crypto_.tokens || !crypto_.requests || !worker_ || !passwordWorker_ ||
         !validateInstanceConfiguration(prepared_.configuration)) throw std::invalid_argument("Invalid instance dependencies");
 }
 
@@ -47,18 +47,26 @@ Result<void> InstanceServer::start(MetadataExecutor::Started readyCallback, Meta
 }
 
 void InstanceServer::initialized(Result<void> result) {
-    if (!result) {
-        notifyReady(result);
+    if (!result || stopCalled_) {
+        requestStop();
+        notifyReady(result ? Result<void>{ErrorCode::Retryable} : result);
         return;
     }
-    if (stopCalled_) {
-        notifyReady(ErrorCode::Retryable);
+    auto started = identity_.start(std::move(passwordWorker_), [this](auto ready) { identityInitialized(ready); },
+                                   [this] { stopMetadata(); });
+    if (!started) { requestStop(); notifyReady(started); }
+}
+
+void InstanceServer::identityInitialized(Result<void> result) {
+    if (!result || stopCalled_) {
+        requestStop();
+        notifyReady(result ? Result<void>{ErrorCode::Retryable} : result);
         return;
     }
     try {
         http::CreateDirectoryHandler handler(runtime_.dispatcher(), [this] { return ready(); }, taskObservation_);
         api_ = std::make_unique<http::HttpApi>(*crypto_.tokens, *crypto_.requests, [this] { return ready(); },
-            handler.stream(), httpObservation_, http::HttpApiOptions{ prepared_.configuration.httpInFlight, 15, 30 });
+            handler.stream(), identityDispatcher(), httpObservation_, http::HttpApiOptions{ prepared_.configuration.httpInFlight, 15, 30 });
         // muduox 构造即 bind；必须延后到 worker 初始化成功。bind/listen 的 fatal 不可捕获。
         server_ = std::make_unique<muduox::net::HttpServer>(&loop_,
             muduox::net::InetAddress(prepared_.configuration.port, true), "anof");
@@ -88,9 +96,13 @@ void InstanceServer::requestStop() {
     loop_.assertInLoopThread();
     if (stopCalled_) return;
     stopCalled_ = true;
-    runtime_.requestStop();
+    internal::shutdownTrace("instance", "stop_requested", this);
+    identity_.requestStop();
+    if (identity_.stopped()) stopMetadata();
     if (server_ && !httpStopped_) {
+        internal::shutdownTrace("http", "stop_requested", this);
         server_->stop(prepared_.configuration.shutdownGraceSeconds, [this] {
+            internal::shutdownTrace("http", "stopped", this);
             httpStopped_ = true;
             if (httpStarted_) (void)runtime_.markHttpStopped();
             finishIfStopped();
@@ -99,9 +111,21 @@ void InstanceServer::requestStop() {
     finishIfStopped();
 }
 
+void InstanceServer::stopMetadata() {
+    internal::shutdownTrace("instance", "identity_stopped_start_metadata_stop", this);
+    runtime_.requestStop();
+    if (httpStarted_ && httpStopped_) (void)runtime_.markHttpStopped();
+    finishIfStopped();
+}
+
+IdentityDispatcher& InstanceServer::identityDispatcher() { loop_.assertInLoopThread(); return identity_; }
+
 void InstanceServer::finishIfStopped() {
-    if (completed_ || runtime_.state() != RuntimeState::Stopped || !httpStopped_) return;
+    if (stopCalled_) internal::shutdownTrace("instance", "barriers", this,
+        runtime_.state() == RuntimeState::Stopped, identity_.stopped(), httpStopped_);
+    if (completed_ || runtime_.state() != RuntimeState::Stopped || !identity_.stopped() || !httpStopped_) return;
     completed_ = true;
+    internal::shutdownTrace("instance", "all_stopped", this);
     auto callback = std::move(onStopped_);
     try { if (callback) callback(); }
     catch (...) { ++notificationExceptions_; }
@@ -130,17 +154,9 @@ Result<std::unique_ptr<InstanceServer>> makeInstanceServer(muduox::net::EventLoo
         auto requests = infrastructure::crypto::makeSodiumRequestIdentity();
         if (!requests) return requests.error();
         const auto database = prepared.lease->root() / ".anof" / "metadata.sqlite3";
-        auto worker = [database]() -> Result<MetadataWorkerResources> {
-            auto store = infrastructure::sqlite::openSqliteMetadataStore(database);
-            if (!store) return store.error();
-            auto clock = infrastructure::system::makeSystemClock();
-            if (!clock) return clock.error();
-            auto ids = infrastructure::crypto::makeSodiumNodeIdGenerator();
-            if (!ids) return ids.error();
-            return MetadataWorkerResources{ std::move(store).value(), std::move(clock).value(), std::move(ids).value() };
-        };
+        auto worker = [database] { return makeInstanceMetadataResources(database); };
         return std::make_unique<InstanceServer>(loop, std::move(prepared),
-            InstanceCrypto{ std::move(tokens).value(), std::move(requests).value() }, std::move(worker),
+            InstanceCrypto{ std::move(tokens).value(), std::move(requests).value() }, std::move(worker), makeInstancePasswordResources,
             std::move(httpObservation), std::move(taskObservation));
     } catch (...) { return ErrorCode::InternalError; }
 }

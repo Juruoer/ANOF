@@ -1,6 +1,8 @@
+#include <tests/diagnostics/ProcessSnapshot.h>
+#include <tests/diagnostics/WaitTrace.h>
 #define BOOST_TEST_MODULE ServeProcess
 #include <boost/test/unit_test.hpp>
-#include <anof/infrastructure/persistence/sqlite/SqliteMigration.h>
+#include <tests/integration/InitializedInstance.h>
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
 
 #include <arpa/inet.h>
@@ -102,7 +104,13 @@ struct Process {
         return static_cast<unsigned short>(std::stoul(text.substr(pos + std::string("ANOF_READY address=127.0.0.1 port=").size())));
     }
     void exited(int code) {
-        BOOST_REQUIRE_MESSAGE(wait([&] { return status.has_value(); }), text);
+        anof::test::WaitTrace trace(__FILE__, __LINE__);
+        trace.event("process_exit_wait_begin");
+        const bool done = wait([&] { return status.has_value(); });
+        trace.event(done ? "process_exited" : "process_exit_timeout", done);
+        if (std::getenv("ANOF_SHUTDOWN_TRACE")) std::fprintf(stderr, "CHILD_TRACE pid=%ld\n%s\n", static_cast<long>(pid), text.c_str());
+        if (!done && std::getenv("ANOF_SHUTDOWN_TRACE")) anof::test::processSnapshot(pid);
+        BOOST_REQUIRE_MESSAGE(done, text);
         BOOST_REQUIRE_MESSAGE(WIFEXITED(*status), text);
         BOOST_CHECK_EQUAL(WEXITSTATUS(*status), code);
     }
@@ -116,11 +124,7 @@ struct Fixture {
         auto created = ::mkdtemp(name);
         if (!created) throw std::runtime_error("mkdtemp failed");
         root = created;
-        BOOST_REQUIRE_EQUAL(::mkdir((root / ".anof").c_str(), 0700), 0);
-        write("instance.json", R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":1})");
-        write("config.toml", "development_http=true\nport=0\nshutdown_grace_seconds=0.5\n");
-        write("metadata.sqlite3", "");
-        BOOST_REQUIRE(infrastructure::sqlite::migrateSqliteDatabase(root / ".anof/metadata.sqlite3"));
+        BOOST_REQUIRE(anof::testing::initializeTestInstance(root));
     }
     ~Fixture() { std::error_code ignored; fs::remove_all(root, ignored); }
     void write(const char* file, const std::string& contents) {

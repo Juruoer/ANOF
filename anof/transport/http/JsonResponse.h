@@ -1,6 +1,7 @@
 #pragma once
 
 #include <anof/application/drive/CreateDirectory.h>
+#include <anof/application/ports/TaskDispatcher.h>
 #include <muduox/net/http/HttpResponse.h>
 
 #include <cstddef>
@@ -10,6 +11,13 @@ namespace anof::http {
 
 inline constexpr std::size_t kMaxJsonBytes = 64 * 1024;
 enum class ProtocolError {
+    LoginConflict,
+    InviteUnavailable,
+    UserLimitReached,
+    Forbidden,
+    PreconditionFailed,
+    PreconditionRequired,
+    SessionLimitReached,
     InvalidArgument,
     InvalidName,
     Unauthenticated,
@@ -18,6 +26,7 @@ enum class ProtocolError {
     DepthLimitExceeded,
     NameConflict,
     QuotaExceeded,
+    QuotaLimitExceeded,
     ConcurrentModification,
     RequestTooLarge,
     UnsupportedMediaType,
@@ -29,6 +38,7 @@ enum class ProtocolError {
 };
 
 ProtocolError protocolError(ErrorCode code);
+ProtocolError protocolError(SubmitError error);
 
 // 流式发送时 headers 不含 body，长度取 body.size()；提前拒绝可显式转为缓冲响应。
 struct JsonResponse {

@@ -24,6 +24,7 @@ public:
     RuntimeState state() const;
     bool ready() const;
     CreateDirectoryDispatcher& dispatcher();
+    MetadataExecutor& metadataExecutor() { return metadata_; }
     MetadataExecutorSnapshot metadataSnapshot() const;
     std::size_t notificationExceptions() const;
 

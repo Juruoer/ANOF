@@ -26,6 +26,78 @@ public:
         return SessionDigest(SessionDigest::Bytes{});
     }
 };
+// 现有 mkdir/health 不应提交身份任务；误调用立即使测试失败。
+class UnexpectedIdentityDispatcher final : public IdentityDispatcher {
+public:
+    TaskSubmission submit(RequestId, RegisterCommand, Completion<UserProfile>) override {
+        BOOST_ERROR("Unexpected identity submission: RegisterCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestId, LoginCommand, Completion<LoginResult>) override {
+        BOOST_ERROR("Unexpected identity submission: LoginCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, LogoutCommand, Completion<void>) override {
+        BOOST_ERROR("Unexpected identity submission: LogoutCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, GetMeCommand, Completion<UserProfile>) override {
+        BOOST_ERROR("Unexpected identity submission: GetMeCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, CreateInviteCommand, Completion<CreatedInvite>) override {
+        BOOST_ERROR("Unexpected identity submission: CreateInviteCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, ListInvitesCommand, Completion<Page<InviteInfo, InviteCursor>>) override {
+        BOOST_ERROR("Unexpected identity submission: ListInvitesCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, RevokeInviteCommand, Completion<void>) override {
+        BOOST_ERROR("Unexpected identity submission: RevokeInviteCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, ListSpacesCommand, Completion<std::vector<SpaceView>>) override {
+        BOOST_ERROR("Unexpected identity submission: ListSpacesCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, GetNodeCommand, Completion<NodeDetails>) override {
+        BOOST_ERROR("Unexpected identity submission: GetNodeCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, ListChildrenCommand, Completion<Page<NodeDetails, ChildrenCursor>>) override {
+        BOOST_ERROR("Unexpected identity submission: ListChildrenCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, UpdateDisplayNameCommand, Completion<UserProfile>) override {
+        BOOST_ERROR("Unexpected identity submission: UpdateDisplayNameCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, ChangePasswordCommand, Completion<void>) override {
+        BOOST_ERROR("Unexpected identity submission: ChangePasswordCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, ListUsersCommand, Completion<Page<UserProfile, UserCursor>>) override {
+        BOOST_ERROR("Unexpected identity submission: ListUsersCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, GetUserCommand, Completion<AdminUserView>) override {
+        BOOST_ERROR("Unexpected identity submission: GetUserCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, SetUserEnabledCommand, Completion<AdminUserView>) override {
+        BOOST_ERROR("Unexpected identity submission: SetUserEnabledCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, GetQuotaCommand, Completion<ManagedQuota>) override {
+        BOOST_ERROR("Unexpected identity submission: GetQuotaCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, SetQuotaLimitCommand, Completion<ManagedQuota>) override {
+        BOOST_ERROR("Unexpected identity submission: SetQuotaLimitCommand");
+        return SubmitError::InternalError;
+    }
+};
 struct Client {
     int fd;
     std::string bytes;

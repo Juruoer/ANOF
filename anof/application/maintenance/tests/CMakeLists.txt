@@ -1,3 +1,10 @@
 anof_add_unit_test(anof_prepare_instance_unittest PrepareInstance_unittest.cc)
 target_link_libraries(anof_prepare_instance_unittest PRIVATE anof_application)
 target_compile_options(anof_prepare_instance_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+anof_add_unit_test(anof_initialization_values_unittest InitializationValues_unittest.cc)
+target_link_libraries(anof_initialization_values_unittest PRIVATE anof_application)
+
+anof_add_unit_test(anof_initialize_instance_unittest InitializeInstance_unittest.cc)
+target_link_libraries(anof_initialize_instance_unittest PRIVATE anof_application)
+target_compile_options(anof_initialize_instance_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)

@@ -1,4 +1,8 @@
 target_sources(anof_infrastructure PRIVATE
+    LinuxInstanceInitializer.h
+    LinuxInstanceInitializer.cc
+    internal/InitializationFiles.h
+    internal/InitializationFiles.cc
     SystemClock.h
     LinuxInstanceLock.h
     LinuxInstanceLock.cc
@@ -12,7 +16,7 @@ target_sources(anof_infrastructure PRIVATE
 )
 
 if (ANOF_BUILD_TESTS)
-    set(system_headers SystemClock.h LinuxInstanceLock.h)
+    set(system_headers SystemClock.h LinuxInstanceLock.h LinuxInstanceInitializer.h)
     set(system_header_sources)
     foreach(header IN LISTS system_headers)
         set(source "${CMAKE_CURRENT_BINARY_DIR}/headers/${header}.cc")

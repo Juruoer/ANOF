@@ -82,6 +82,10 @@ struct Owned {
 
 struct Store final : MetadataStore, Owned {
     using Owned::Owned;
+    Result<std::unique_ptr<MetadataReadSnapshot>> beginRead() override {
+        BOOST_FAIL("Unexpected read in write-only executor fixture");
+        return ErrorCode::InternalError;
+    }
     Result<std::unique_ptr<MetadataTransaction>> beginWrite() override {
         checkThread();
         const int call = ++tracking->calls;
@@ -123,7 +127,7 @@ MetadataExecutor::Factory factory(const std::shared_ptr<Tracking>& data) {
 }
 
 RequestContext context() {
-    return { SessionDigest(std::array<std::uint8_t, 32>{}), RequestId::parse("50000000-0000-4000-8000-000000000001").value() };
+    return { { SessionDigest(std::array<std::uint8_t, 32>{}), CredentialMode::Bearer }, RequestId::parse("50000000-0000-4000-8000-000000000001").value() };
 }
 CreateDirectoryCommand command() {
     return { SpaceId::parse("10000000-0000-4000-8000-000000000001").value(),
@@ -149,13 +153,13 @@ struct Fixture {
     }
 };
 
-std::unique_ptr<TaskHandle> accepted(CreateDirectorySubmission submission) {
+std::unique_ptr<TaskHandle> accepted(TaskSubmission submission) {
     BOOST_REQUIRE(std::holds_alternative<AcceptedTask>(submission));
     auto handle = std::move(std::get<AcceptedTask>(submission).handle);
     BOOST_REQUIRE(handle);
     return handle;
 }
-void rejected(const CreateDirectorySubmission& submission, SubmitError expected) {
+void rejected(const TaskSubmission& submission, SubmitError expected) {
     BOOST_REQUIRE(std::holds_alternative<SubmitError>(submission));
     BOOST_CHECK(std::get<SubmitError>(submission) == expected);
 }

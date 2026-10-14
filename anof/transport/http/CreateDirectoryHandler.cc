@@ -61,7 +61,7 @@ public:
         if (auto* accepted = std::get_if<AcceptedTask>(&submission)) {
             task_ = std::move(accepted->handle);
         } else {
-            fail(std::get<SubmitError>(submission) == SubmitError::InternalError ? ProtocolError::InternalError : ProtocolError::TemporarilyUnavailable);
+            fail(protocolError(std::get<SubmitError>(submission)));
         }
     }
     void cancel() {

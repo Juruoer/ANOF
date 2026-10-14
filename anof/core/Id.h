@@ -60,6 +60,9 @@ private:
     std::array<std::uint8_t, 16> bytes_;
 };
 
+using InstanceId = Id<struct InstanceIdTag>;
+using OperationId = Id<struct OperationIdTag>;
+using InviteId = Id<struct InviteIdTag>;
 using UserId = Id<struct UserIdTag>;
 using SpaceId = Id<struct SpaceIdTag>;
 using NodeId = Id<struct NodeIdTag>;

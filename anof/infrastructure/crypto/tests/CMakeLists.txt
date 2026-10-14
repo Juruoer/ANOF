@@ -24,3 +24,17 @@ target_compile_definitions(anof_node_id_generator_unittest PRIVATE BOOST_TEST_DY
 target_compile_options(anof_node_id_generator_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 add_test(NAME anof_node_id_generator_unittest COMMAND anof_node_id_generator_unittest)
 set_tests_properties(anof_node_id_generator_unittest PROPERTIES TIMEOUT 15 LABELS "unit;crypto")
+
+add_executable(anof_password_hasher_unittest PasswordHasher_unittest.cc)
+target_link_libraries(anof_password_hasher_unittest PRIVATE anof_infrastructure PkgConfig::Sodium Boost::unit_test_framework)
+target_compile_definitions(anof_password_hasher_unittest PRIVATE BOOST_TEST_DYN_LINK)
+target_compile_options(anof_password_hasher_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_test(NAME anof_password_hasher_unittest COMMAND anof_password_hasher_unittest)
+set_tests_properties(anof_password_hasher_unittest PROPERTIES TIMEOUT 30 LABELS "unit;crypto")
+
+add_executable(anof_m2_credentials_unittest M2Credentials_unittest.cc)
+target_link_libraries(anof_m2_credentials_unittest PRIVATE anof_infrastructure PkgConfig::Sodium Boost::unit_test_framework)
+target_compile_definitions(anof_m2_credentials_unittest PRIVATE BOOST_TEST_DYN_LINK)
+target_compile_options(anof_m2_credentials_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_test(NAME anof_m2_credentials_unittest COMMAND anof_m2_credentials_unittest)
+set_tests_properties(anof_m2_credentials_unittest PROPERTIES TIMEOUT 15 LABELS "unit;crypto")

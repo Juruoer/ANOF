@@ -2,6 +2,14 @@ add_library(anof_http STATIC
     BearerCredentials.cc
     CreateDirectoryJson.cc
     JsonResponse.cc
+    IdentityStream.cc
+    AccountResponse.cc
+    AccountRequest.cc
+    IdentityRequest.cc
+    IdentityResponse.cc
+    Pagination.cc
+    internal/IdentityJson.cc
+    internal/FlatJson.cc
     RequestTrace.cc
     HttpApi.cc
     CreateDirectoryHandler.cc

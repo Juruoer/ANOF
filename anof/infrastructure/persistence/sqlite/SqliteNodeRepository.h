@@ -9,6 +9,9 @@ namespace anof::infrastructure::sqlite {
 class SqliteNodeRepository final : public NodeRepository {
 public:
     explicit SqliteNodeRepository(SqliteTransactionContext& context) : context_(context) {}
+    Result<std::optional<NodeDetails>> find(NodeId) override;
+    Result<Page<NodeDetails, ChildPosition>> listChildren(SpaceId, NodeId, PageSize, std::optional<ChildPosition>) override;
+    Result<void> insertRoot(const RootDirectory&) override;
     Result<DirectoryPath> findActiveDirectoryPath(SpaceId spaceId, NodeId parentId) override;
     Result<DirectorySnapshot> insertDirectory(const NewDirectory& directory) override;
     Result<Revision> advanceRevision(NodeId id, Revision expected, UtcTime now) override;

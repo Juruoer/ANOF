@@ -18,7 +18,7 @@ Result<std::unique_ptr<SqliteStatement>> SqliteStatement::prepare(SqliteConnecti
         sqlite3_finalize(statement);
         return connection.recordError(code, SqliteOperation::Prepare);
     }
-    // 不允许无意中只执行多条 SQL 的第一条；迁移脚本由 execute 专门处理。
+    // 不允许无意中只执行多条 SQL 的第一条；建库脚本由 execute 专门处理。
     const auto consumed = static_cast<std::size_t>(tail - sql.data());
     if (!statement || sql.substr(consumed).find_first_not_of(" \t\r\n") != sql.npos) {
         sqlite3_finalize(statement);
@@ -86,6 +86,16 @@ Result<std::string> SqliteStatement::text(int column) const {
     const auto* bytes = sqlite3_column_text(statement_, column);
     if (!bytes) return connection_.recordError(SQLITE_NOMEM, SqliteOperation::Step);
     return std::string(reinterpret_cast<const char*>(bytes), static_cast<std::size_t>(sqlite3_column_bytes(statement_, column)));
+}
+
+Result<std::string_view> SqliteStatement::boundedTextView(int column, std::size_t limit) const {
+    if (!validColumn(column)) return ErrorCode::InvalidArgument;
+    if (sqlite3_column_type(statement_, column) != SQLITE_TEXT) return ErrorCode::IntegrityError;
+    const int size = sqlite3_column_bytes(statement_, column);
+    if (size < 0 || static_cast<std::size_t>(size) > limit) return ErrorCode::IntegrityError;
+    const auto* bytes = sqlite3_column_text(statement_, column);
+    if (!bytes) return connection_.recordError(SQLITE_NOMEM, SqliteOperation::Step);
+    return std::string_view(reinterpret_cast<const char*>(bytes), static_cast<std::size_t>(size));
 }
 
 Result<std::vector<std::uint8_t>> SqliteStatement::blob(int column) const {

@@ -1,23 +1,26 @@
 # Runtime 模块
 
-本模块为创建目录用例提供有界异步调度、完成结果回投和生命周期协调。业务操作在独立的元数据 worker 执行，完成回调在所属 muduox EventLoop 执行。本文面向维护和扩展该模块的开发人员，说明现有接口、并发约束及测试入口。
+本模块为创建目录及身份／读取用例提供有界异步调度、完成结果回投和生命周期协调。业务操作在独立的元数据 worker 执行，完成回调在所属 muduox EventLoop 执行。本文面向维护和扩展该模块的开发人员，说明现有接口、并发约束及测试入口。
 
 ## 1. 接口与依赖
 
 | 文件 | 作用 |
 |---|---|
+| [TaskDispatcher.h](../application/ports/TaskDispatcher.h) | 公共任务句柄、TaskSubmission 接纳结果与类型化完成值 |
 | [CreateDirectoryDispatcher.h](../application/ports/CreateDirectoryDispatcher.h) | transport 依赖的提交／取消／完成端口，无 muduox、SQLite 或 JSON 类型 |
 | [MetadataExecutor.h](MetadataExecutor.h) | 实现调度端口，管理一个 metadata worker、待执行及完成 ring |
+| [IdentityExecutor.h](IdentityExecutor.h) | 身份／账户端口、多阶段任务及独立密码 worker |
+| [AuthenticationLimiter.h](AuthenticationLimiter.h) | 来源／登录名有界令牌桶 |
 | [CompletionPump.h](CompletionPump.h) | 合并跨线程通知、每轮有界消费、投递异常恢复 |
 | [AnofRuntime.h](AnofRuntime.h) | worker-ready、HTTP-started、HTTP-stopped 与 worker-stopped 的生命周期协调 |
 
-[CMakeLists.txt](CMakeLists.txt) 定义静态库 `anof_runtime`，依赖 `anof_application`、`muduox_net` 和 `Threads::Threads`，使用 C++17。数据库、时钟和节点 ID 生成器由工厂注入；模块不依赖具体数据库或 crypto 实现。
+[CMakeLists.txt](CMakeLists.txt) 定义静态库 `anof_runtime`，依赖 `anof_application`、`muduox_net` 和 `Threads::Threads`，使用 C++17。数据库、时钟和节点 ID 生成器由工厂注入；基础库不依赖具体数据库或 crypto 实现。`anof_identity_resources` 中的 [InstanceIdentity](InstanceIdentity.h) 承担具体资源工厂。
 
 ## 2. 调度与容量
 
 `MetadataExecutor(loop, options)` 在 loop 线程构造。`maxPending` 默认 256，必须大于 0 且其加一可表示；`drainBatch` 默认 32，允许 1～32。两个 ring 在构造时分配，启动前分配失败会抛异常；不会接纳业务后再扩容完成存储。
 
-`start(factory, started, stopped)` 只接受一次启动。空工厂、重复启动为同步 `InvalidArgument`，线程创建失败为同步 `InternalError`；这些拒绝不触发回调。启动被接受后，factory 在 worker 调用，返回独占的 `MetadataStore`、`Clock`、`NodeIdGenerator`。三个对象都在 worker 使用和销毁；禁止把 loop 中已打开的数据库放入工厂闭包再搬到 worker。空资源或工厂抛异常产生异步启动失败，仍完成停止清理。
+`start(factory, started, stopped)` 只接受一次启动。空工厂、重复启动为同步 `InvalidArgument`，线程创建失败为同步 `InternalError`；这些拒绝不触发回调。启动被接受后，factory 在 worker 调用，返回独占的 `MetadataStore`、`Clock`、`NodeIdGenerator`。可选 identity 资源包含身份 ID、凭证签发和邀请码 codec；身份任务要求这些资源非空。所有对象都在 worker 使用和销毁；禁止把 loop 中已打开的数据库放入工厂闭包再搬到 worker。空资源或工厂抛异常产生异步启动失败，仍完成停止清理。
 
 成功打开资源后在 loop 延后调用 `started(Result<void>)`。其成功只代表 metadata 初始化完成，不能当作整个 HTTP 服务 READY；若已请求停止，成功的初始化通知也不会重新开放准入。用户回调可提交任务或请求停止，但必须短小、不阻塞，不能在回调内销毁 executor／runtime。loop 必须比这些对象活得更久。
 
@@ -75,14 +78,57 @@ HTTP 和 metadata 的停止完成顺序可以互换。调用方在 `requestStop(
 
 ## 6. 实例装配
 
-`anof_instance_runtime` 在基础调度库之上链接 HTTP 和基础设施适配器，提供 [InstanceServer](InstanceServer.h)。构造参数为持有实例锁的 `PreparedInstance`、loop 侧 crypto 和 metadata worker 工厂；[makeInstanceServer](InstanceServer.cc) 使用生产 libsodium、SystemClock 和 SQLite 工厂，数据库固定为实例根下的 `.anof/metadata.sqlite3`。它不创建数据库、账户或默认凭据。
+`anof_instance_runtime` 在基础调度库之上链接 HTTP 和基础设施适配器，提供 [InstanceServer](InstanceServer.h)。构造参数为持有实例锁的 `PreparedInstance`、loop 侧 crypto、metadata worker 工厂和密码 worker 工厂；[makeInstanceServer](InstanceServer.cc) 使用生产 libsodium、SystemClock 和 SQLite 工厂，数据库固定为实例根下的 `.anof/metadata.sqlite3`。它不创建数据库、账户或默认凭据。
 
 [prepareInstance](../application/maintenance/PrepareInstance.h) 按取得排他 lease、读取配置、校验配置、执行维护检查的顺序准备实例。锁、配置与维护是独立类型化端口；具体 Linux 锁、TOML 和 SQLite 维护适配由 [infrastructure](../infrastructure/README.md) 提供，入口负责组合。准备操作在监听之前同步完成，不在请求回调内执行。配置只接纳显式启用的 `127.0.0.1` HTTP，队列上限 256、HTTP 在途上限 128、停止宽限 0～30 秒；端口 0 由内核分配。未启用本机开发 HTTP 的配置会被拒绝。
 
-InstanceServer 构造不绑定端口。`start()` 接纳启动后在 worker 创建业务资源，初始化成功才构造、配置并启动 HttpServer，随后公开 ready 和实际端口。`port()` 在首次成功启动前为空，停止后保留原端口供诊断。同步拒绝不调用通知；接纳启动后 ready 通知一次，初始化中停止以 Retryable 表示取消。ready 通知抛异常会触发停止，停止通知抛异常计入 `notificationExceptions()`。
+InstanceServer 构造不绑定端口。`start()` 接纳启动后在 worker 创建业务资源，metadata 和密码资源初始化均成功才构造、配置并启动 HttpServer，随后公开 ready 和实际端口。`port()` 在首次成功启动前为空，停止后保留原端口供诊断。同步拒绝不调用通知；接纳启动后 ready 通知一次，初始化中停止以 Retryable 表示取消。ready 通知抛异常会触发停止，停止通知抛异常计入 `notificationExceptions()`。
 
-`requestStop()` 先关闭业务准入，再请求真实 HTTP 清理。实例停止必须同时满足 metadata 退出与 HTTP 清理屏障；HTTP 部分启动后抛出的可捕获异常也走清理路径。调用者保持 loop 运行至 `state()==Stopped`，在回调栈外销毁 InstanceServer，最后销毁 loop。实例 lease 在 HTTP、runtime、crypto 和回调闭包销毁之后释放；仅到 Stopped 不会提前释放锁。对象不能重启。
+`requestStop()` 先关闭业务准入，再请求真实 HTTP 清理。身份请求终态回收及密码线程退出后才停止 metadata；实例停止必须同时满足密码／metadata 退出与 HTTP 清理屏障；HTTP 部分启动后抛出的可捕获异常也走清理路径。调用者保持 loop 运行至 `state()==Stopped`，在回调栈外销毁 InstanceServer，最后销毁 loop。实例 lease 在 HTTP、runtime、crypto 和回调闭包销毁之后释放；仅到 Stopped 不会提前释放锁。对象不能重启。
 
 当前 muduox 的 HttpServer 构造即执行 bind，socket／bind／listen 失败可能直接 fatal 终止进程。这类失败不能转换成 ready 错误回调；操作系统会回收文件描述符，但这不等同于正常执行了停止屏障。装配不做存在竞争窗口的“预先探测端口”，也没有修改 muduox。
 
 [InstanceServer 集成测试](../../tests/integration/InstanceServer_unittest.cc) 使用真实 SQLite、crypto、时钟和回环 HTTP，覆盖延迟绑定、缺失数据库、worker 初始化异常、启动中取消、重复停止及回调异常；基础案例的 lease 使用测试替身，另有真实 lease 与 worker gate 的组合案例检查初始化取消和析构释放；跨进程排他及信号关闭由 [serve 进程集成测试](../../tests/integration/ServeProcess_unittest.cc) 覆盖。命令行使用说明见 [前台服务入口](../../apps/anof/README.md)。
+
+## 7. 离线初始化与密码策略
+
+`anof_instance_setup` 提供 [initializeInstance / finishInitialization](InstanceInitialization.h)，只链接 application 与 infrastructure，不创建 EventLoop 或 HTTP。它构造真实文件初始化、数据库 Bootstrap、时钟、身份 ID 与密码适配器，调用 [初始化用例](../application/maintenance/InitializeInstance.h)。初始化 request ID 从独立请求身份适配器生成，不充当实体 ID。
+
+[InstancePasswordPolicy.h](InstancePasswordPolicy.h) 是装配的唯一密码参数入口：新建 Argon2id v19 使用 65536 KiB、2 次、parallelism=1，verification 的三个上限分别为 65536/2/1。Store、Bootstrap、Maintenance 的 passwordHashLimits 与此一致。接纳上限允许范围内的小参数编码，但新初始化始终使用 hashing 参数；测试小参数不能改变生产装配策略。没有自动硬件校准；在线预算由 IdentityExecutor 另行限制。
+
+普通初始化先校验参数、计算密码及生成 ID，再创建 .anof 并持同一 lease 执行配置写入、事务化引导、格式发布和 pending 清理。任何失败停止后续阶段；lease 析构只释放锁，不删除现场。finish 不构造密码适配器、不产生新身份，先验证当前 pending 的完整引导才发布。
+
+[真实初始化测试](../../tests/integration/InitializeInstance_unittest.cc) 覆盖统一预算、密码验证、三组根计费、无默认 Session、重复 init、pending 拒绝启动及 finish 后可准备实例；不证明硬件掉电持久性。
+
+
+## 8. 身份多阶段调度
+
+[IdentityExecutor](IdentityExecutor.h) 实现 IdentityDispatcher 的十种身份／读取操作与七种账户操作。它借用已经 Ready 的 MetadataExecutor；所有数据库阶段使用其 `submitOperation`，与目录共用一个连接所属 worker、pending 和 completion 预算。transport 仅依赖 typed dispatcher，不能提交任意闭包。
+
+一个密码 worker 使用与初始化相同的策略，启动时创建 hasher 和新盐 dummy hash；不存在账户也执行验证。最多8个密码请求包含读快照、等待计算、计算、最终事务及未消费完成；所有身份任务最多128个。这两个值可通过构造选项收紧。密码工作区至多一个64 MiB，另外保存有界输入、快照、dummy和结果；这不是进程 RSS 上限。
+
+登录先读取并关闭快照，再验证密码，最后在新写事务复核 enabled、passwordVersion、authEpoch 和 revision 后签发七天绝对有效期 Session；每用户最多32个活跃 Session。注册先计算密码，再原子消费邀请、创建用户／私有根和额度、记录审计，不自动登录。登录／注册最终阶段之前至多每分钟执行一次独立清理事务，最多删除200个失效 Session；没有空闲周期清理。清理失败不会绕过限制。
+
+AuthenticationSource 只接受可信 socket 地址，IPv4 统一为 mapped IPv6。令牌桶共享于登录、注册和改密：全局突发16、30次/分钟，来源突发5、10次/分钟，来源加规范登录名突发3、5次/分钟。最多1024条来源及组合记录，闲置10分钟回收，满表拒绝；时钟使用 steady_clock。登录／注册的限流在接纳前返回 SubmitError::RateLimited；改密先在metadata认证并取得规范登录名，再在所属loop检查同一限流器，以 Result 的 ErrorCode::RateLimited 延后完成。两者均表示速率拒绝（429），不同于 QueueFull（503）。
+
+接纳前预留外层固定槽，跨阶段只有一个任务身份；完成通过 CompletionPump 合并通知，每轮最多32项。回调与闭包释放后才归还名额。取消可以与密码验证并行，避免进入最终事务；开始最终 metadata 阶段后的取消返回 AlreadyRunning，不能推断回滚。密码仍会运行到返回，停止屏障等待真实线程退出和全部完成。回调异常被隔离，不会再次完成。
+
+InstanceServer 拥有该执行器并通过 `identityDispatcher()` 注入 HttpApi；构造参数位于目录 stream 之后、可选 observation/options 之前。生产实例暴露十九个身份／读取／账户HTTP操作及 mkdir/health，共二十二个操作。HTTP cleanup 与密码／metadata 线程退出共同约束实例停止及 lease 的最终释放。
+
+[身份服务集成测试](../../tests/integration/IdentityService_unittest.cc) 使用真实 SQLite／crypto，覆盖注册邀请回滚、空间隔离、分页绑定、快照版本复核、Session上限及已提交但确认未知时不返回秘密；[身份执行器测试](../../tests/integration/IdentityExecutor_unittest.cc) 覆盖真实登录／邀请／注册／读取、dummy验证、限流与容量、密码期间 metadata 可进展、取消和停止屏障、工厂失败。[限流测试](tests/AuthenticationLimiter_unittest.cc) 使用受控时间验证有界准入与来源规范化。没有性能或物理机持久性结论。
+
+
+[HTTP 身份集成测试](../../tests/integration/HttpIdentity_unittest.cc) 从真实初始化实例及排他 lease 出发，使用生产 HTTP、SQLite、crypto 和 worker，验证两用户邀请注册／登录、私有空间隔离、公共目录协作、游标绑定、邀请消费回滚／耗尽／撤销、登出及重启后的 Session 状态。实际32条已提交 Session 的上限响应是409，来源／登录名限流是429，伪造转发头不能重置来源预算。
+
+受控密码 gate 验证真实 HTTP 已关闭时密码 worker 仍阻止实例进入 Stopped，锁保持到对象析构；取消的验证不会生成 Session。测试用事务包装器模拟“真实提交成功但确认丢失”，验证 HTTP 返回 COMMIT_OUTCOME_UNKNOWN 且不返回 token、不重复签发。该故障注入不是硬件掉电证据。实例服务测试也验证密码资源启动失败不会绑定端口。
+
+
+账户管理通过同一 IdentityDispatcher 与 IdentityExecutor 提供，简单操作在metadata worker临时构造 [AccountService](../application/identity/AccountService.h)，无需额外资源工厂或线程。改密共享8个密码工作流与128个总任务上限，单个任务在password worker顺序验证和哈希；旧密码错误不执行hash，取消后不进入最终事务。秘密输入在密码阶段用完后销毁。改密不触发登录／注册的周期清理事务。
+
+账户方法通过生产实例现有identityDispatcher接入九个账户HTTP操作，无额外构造参数。IdentityExecutor集成测试还覆盖所有账户调度重载、真实改密与重新登录、共享限流、错误旧密码不哈希、密码gate期间metadata进展和版本冲突、取消／停止等待worker与恰一次完成。
+
+真实HTTP身份集成还覆盖改密计算期间资料更新使最终提交返回412、改密关停等待密码worker且持续持有lease，以及密码实际提交但确认未知时撤销旧Session并只递增一次版本。实际CLI进程验证账户更新、管理额度与mkdir先后顺序、启禁／重新登录及本地凭据处理。
+
+设置 `ANOF_SHUTDOWN_TRACE` 可按需输出关停阶段的双时钟记录，包括 HTTP stop 回调、worker 最后通知、
+退出 future 的确认及实例停止条件。默认关闭；不记录业务数据，不改变 grace 或退出条件。
+诊断字段和只读进程快照的用法见 [诊断工具说明](../../tests/diagnostics/README.md)。

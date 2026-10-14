@@ -80,7 +80,7 @@ void stageCreation(MetadataTransaction& tx, const Scenario& s) {
     auto revision = tx.nodes().advanceRevision(s.root, Revision{}, s.now);
     BOOST_REQUIRE(revision);
     BOOST_TEST(revision.value().value() == 2);
-    BOOST_REQUIRE(tx.audit().append(s.event()));
+    BOOST_REQUIRE(tx.directoryAudit().append(s.event()));
 }
 
 void checkCreation(TestMetadataBackend& backend, const Scenario& s, bool committed) {
@@ -139,7 +139,7 @@ BOOST_AUTO_TEST_CASE(destructor_rolls_back_each_partial_stage) {
             if (stage >= 1) BOOST_REQUIRE(tx->quotas().chargeUsed(PublicContributionQuota{ s.space, s.user }, amount(0, 1)));
             if (stage >= 2) BOOST_REQUIRE(tx->nodes().insertDirectory(s.directory()));
             if (stage >= 3) BOOST_REQUIRE(tx->nodes().advanceRevision(s.root, Revision{}, s.now));
-            if (stage >= 4) BOOST_REQUIRE(tx->audit().append(s.event()));
+            if (stage >= 4) BOOST_REQUIRE(tx->directoryAudit().append(s.event()));
         }
         checkCreation(*backend, s, false);
     }
@@ -202,13 +202,17 @@ BOOST_AUTO_TEST_CASE(auth_state_is_checked_inside_transaction) {
         Scenario s;
         if (invalid == 1) s.seed.sessions[0].expiresAt = s.now;
         if (invalid == 2) s.seed.sessions[0].revoked = true;
-        if (invalid == 3) s.seed.users[0].enabled = false;
+        if (invalid == 3) {
+            // 禁用鉴权使用普通成员；管理员必须保持启用，不能以非法种子绕过此约束。
+            s.seed.users[0].principal.role = UserRole::Member;
+            s.seed.users[0].enabled = false;
+        }
         if (invalid == 4) s.seed.users[0].principal.authEpoch = AuthEpoch::from(1).value();
         if (invalid == 5) s.seed.sessions.clear();
         auto backend = backendFor(s.seed);
         auto store = connect(*backend);
         auto tx = begin(*store);
-        auto principal = tx->authorization().requireActiveSession(s.digest, s.now);
+        auto principal = tx->authorization().requireActiveSession({ s.digest, CredentialMode::Bearer }, s.now);
         if (invalid == 0) {
             BOOST_REQUIRE(principal);
             BOOST_CHECK(principal.value().userId == s.user);

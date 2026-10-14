@@ -4,7 +4,8 @@ namespace anof::infrastructure::sqlite {
 
 SqliteTransactionContext::~SqliteTransactionContext() {
     if (!open_) return;
-    (void)connection_.rollback();
+    if (readOnly_) (void)connection_.endRead();
+    else (void)connection_.rollback();
     storeActive_ = false;
 }
 
@@ -13,6 +14,17 @@ Result<void> SqliteTransactionContext::begin() {
     started_ = true;
     auto result = connection_.beginWrite();
     if (!result) return result.error();
+    open_ = true;
+    storeActive_ = true;
+    return {};
+}
+
+Result<void> SqliteTransactionContext::beginRead() {
+    if (started_ || storeActive_) return ErrorCode::InvalidArgument;
+    started_ = true;
+    auto result = connection_.beginRead();
+    if (!result) return result.error();
+    readOnly_ = true;
     open_ = true;
     storeActive_ = true;
     return {};
@@ -33,7 +45,7 @@ Error SqliteTransactionContext::fail(Error error) {
 }
 
 Result<void> SqliteTransactionContext::commit() {
-    if (!open_) return ErrorCode::InvalidArgument;
+    if (!open_ || readOnly_) return ErrorCode::InvalidArgument;
     auto ready = requireOpen();
     // 关闭标志先独立于底层连接，保证旧事务析构不会回滚后继事务。
     open_ = false;

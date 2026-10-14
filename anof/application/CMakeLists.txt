@@ -1,5 +1,9 @@
 add_library(anof_application STATIC
     drive/CreateDirectory.cc
+    identity/AccountService.cc
+    identity/IdentityService.cc
+    maintenance/InitializeInstance.cc
+    maintenance/Initialization.cc
     maintenance/PrepareInstance.cc
 )
 target_link_libraries(anof_application PUBLIC anof_domain)

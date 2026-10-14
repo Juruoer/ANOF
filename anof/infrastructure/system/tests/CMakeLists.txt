@@ -18,3 +18,11 @@ target_compile_options(anof_instance_lock_unittest PRIVATE -Wall -Wextra -Wconve
 add_dependencies(anof_instance_lock_unittest anof_instance_lock_probe)
 add_test(NAME anof_instance_lock_unittest COMMAND anof_instance_lock_unittest)
 set_tests_properties(anof_instance_lock_unittest PROPERTIES TIMEOUT 30 LABELS "unit;system")
+
+add_executable(anof_instance_initializer_unittest InstanceInitializer_unittest.cc)
+target_link_libraries(anof_instance_initializer_unittest PRIVATE anof_infrastructure Boost::unit_test_framework)
+target_compile_definitions(anof_instance_initializer_unittest PRIVATE BOOST_TEST_DYN_LINK INSTANCE_LOCK_PROBE="$<TARGET_FILE:anof_instance_lock_probe>")
+target_compile_options(anof_instance_initializer_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_dependencies(anof_instance_initializer_unittest anof_instance_lock_probe)
+add_test(NAME anof_instance_initializer_unittest COMMAND anof_instance_initializer_unittest)
+set_tests_properties(anof_instance_initializer_unittest PROPERTIES TIMEOUT 30 LABELS "unit;system;instance")

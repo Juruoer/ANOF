@@ -2,15 +2,17 @@
 
 本文固定 infrastructure 启动适配器的接口、文件格式与安全边界，供实现和验收使用。Linux 实例锁及安全打开工具已有实现，接口和测试说明见 system/README.md；TOML 配置加载已有实现，接口和测试见 config/README.md；实例格式和 SQLite 维护已有实现，接口和测试见 persistence/sqlite/README.md。现有 SQLite、crypto 和系统时钟行为不受此契约改动。
 
+当前格式和 schema 均为 2；事务化引导、格式发布及 M2 启动维护已实现。启动必须拒绝 pending，并核对 settings 与格式 ID、完整身份／空间／额度及初始化审计。旧开发实例只拒绝，不升级、不删除。
+
 ## 接口与内部组织
 
 | 位置 | 工厂 | 返回端口 |
 |---|---|---|
 | [system/LinuxInstanceLock.h](system/LinuxInstanceLock.h) | `system::makeLinuxInstanceLockProvider()` | InstanceLockProvider |
 | [config/TomlInstanceConfiguration.h](config/TomlInstanceConfiguration.h) | `config::makeTomlInstanceConfigurationLoader()` | InstanceConfigurationLoader |
-| [persistence/sqlite/SqliteInstanceMaintenance.h](persistence/sqlite/SqliteInstanceMaintenance.h) | `sqlite::makeSqliteInstanceMaintenance()` | InstanceMaintenance |
+| [persistence/sqlite/SqliteInstanceMaintenance.h](persistence/sqlite/SqliteInstanceMaintenance.h) | `sqlite::makeSqliteInstanceMaintenance(options)` | InstanceMaintenance |
 
-命名空间前缀为 `anof::infrastructure`。工厂统一返回 `Result<std::unique_ptr<端口>>`，成功值非空，可报告的分配失败为 InternalError。构造不访问实例、不获取锁、不打开数据库；实际操作发生在 acquire／load／verify。
+命名空间前缀为 `anof::infrastructure`。工厂统一返回 `Result<std::unique_ptr<端口>>`，成功值非空，可报告的分配失败为 InternalError。维护工厂显式接受 SqliteMaintenanceOptions 中的密码编码读取预算与连接选项。构造不访问实例、不获取锁、不打开数据库；实际操作发生在 acquire／load／verify。
 
 system 内部负责描述符 RAII、逐级目录打开、安全文件读取和具体 LinuxInstanceLease。lease 独占根目录、`.anof` 目录及锁描述符，公开只暴露已校验的绝对 root。config 和 sqlite 通过 infrastructure 内部访问器借用 `.anof` 描述符，不暴露 fd 到公共端口，也不另建以路径为键的全局注册表。非本适配器的 lease 返回 InvalidArgument；调用方必须保证借用期间 lease 存活，不支持并发析构。
 
@@ -63,16 +65,16 @@ shutdown_grace_seconds = 30
 固定读取 `.anof/instance.json`，包括增长在内最多 4096 字节，UTF-8 JSON，顶层必须是对象且恰好含以下两项：
 
 ```json
-{"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":1}
+{"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":2}
 ```
 
-instance_id 必须是小写规范分组、非 nil UUID 字符串，不强制 UUID 版本；不把它当 UserId 或节点 ID，公共端口不增加字段。format_version 必须是 JSON 整数 1，布尔、浮点数及字符串均不接受。拒绝未知／重复字段、超范围数字、额外尾随 JSON、BOM 和格式错误；前后 JSON 空白允许。使用有界解析并拒绝字段值中的嵌套结构。
+instance_id 必须是小写规范分组、非 nil UUID 字符串，不强制 UUID 版本；不把它当 UserId 或节点 ID，公共端口不增加字段。format_version 必须是 JSON 整数 2，布尔、浮点数及字符串均不接受。拒绝未知／重复字段、超范围数字、额外尾随 JSON、BOM 和格式错误；前后 JSON 空白允许。使用有界解析并拒绝字段值中的嵌套结构。
 
-此文件是独立实例格式标记，不代替 SQLite schema 版本；不隐含校验对象目录、上传恢复、GC 状态或完整 init 工作流。没有文件创建或自动生成 instance_id 的生产入口。
+此文件是独立实例格式标记，不代替 SQLite schema 版本；不隐含校验对象目录、上传恢复、GC 状态或完整 init 工作流。初始化文件由 LinuxInstanceInitializer 创建；数据库引导由 SqliteInstanceBootstrap 完成，均使用调用方提供的 typed ID。
 
 ## 维护与错误边界
 
-调用顺序使用现有 prepareInstance：acquire → load → 公共配置校验 → verify。verify 检查 instance.json、metadata.sqlite3 和存在的 WAL／SHM 的安全属性，验证已有 schema／迁移历史／设置及数据库结构完整性与外键。仅复用不带 CREATE 的数据库打开路径；禁止用 migrateSqliteDatabase 代替验证。完整性 SQL 位于 sqlite 内，读取结果有界；数据库扫描耗时与实际数据量相关，不能把结果数量限制说成恒定耗时保证。
+调用顺序使用现有 prepareInstance：acquire → load → 公共配置校验 → verify。verify 先拒绝任何类型的 initialization.pending，再检查 instance.json、metadata.sqlite3 和存在的 WAL／SHM 的安全属性，验证已有 schema／建库定义／设置及数据库结构完整性与外键，并检查 settings 的实例 ID、唯一管理员／公共空间、用户私有空间／根、必需额度和初始化审计；密码编码必须符合显式读取预算。仅复用不带 CREATE 的数据库打开路径；禁止用 createSqliteDatabase 代替验证。完整性 SQL 位于 sqlite 内，读取结果有界；数据库扫描耗时与实际数据量相关，不能把结果数量限制说成恒定耗时保证。
 
 SQLite 文件打开及伴随文件处理必须结合经过验证的目录身份实现，不假定 SQLite 可以直接接管一个已打开的普通文件 fd，也不能通过替换随机临时文件名破坏 WAL 身份。维护使用原有绝对文件名打开 SQLite，保留其 WAL／SHM 命名关系。打开前重新校验绝对目录与 lease 所持目录身份，打开前后核对主文件身份；验证用主文件 fd 持有到维护连接关闭后，避免提前 close 释放进程级 POSIX 锁。安全检查和已有树不可替换约定同时成立；不宣称抵御具有同一 UID／特权的恶意并发修改。
 
@@ -92,10 +94,10 @@ verify 返回前销毁全部维护连接、语句及事务；业务连接由 wor
 | 创建锁文件时 ENOSPC／EDQUOT | StorageFull |
 | SQLite 打开／验证错误 | 保留后端现有分类，包括 Retryable、StorageFull 等 |
 
-现有 SQLite 校验把不支持的未来 schema 版本归为 InternalError，本适配器不改变既有语义；格式标记的未来版本为 IntegrityError。错误不回显配置／格式内容，也不把无法确认的提交结果转换为可安全重试。锁和普通文件系统操作不额外引入业务重试循环。
+当前 schema 2 校验对不支持的版本返回 IntegrityError；格式标记的未来版本为 IntegrityError。错误不回显配置／格式内容，也不把无法确认的提交结果转换为可安全重试。锁和普通文件系统操作不额外引入业务重试循环。
 
 ## 构建与验证边界
 
-三个适配器使用同一 anof_infrastructure 目标；TOML 依赖 `tomlplusplus::tomlplusplus`，JSON 依赖 `nlohmann_json::nlohmann_json`，均私有链接。公开头只依赖现有 application 端口和标准库。
+启动与初始化适配器使用同一 anof_infrastructure 目标；TOML 依赖 `tomlplusplus::tomlplusplus`，JSON 依赖 `nlohmann_json::nlohmann_json`，均私有链接。公开头只依赖现有 application 端口和标准库。
 
 锁和安全文件打开已接入局部真实进程／文件测试。TOML 配置的有界读取和解析已有局部测试；instance.json 格式校验、维护关闭、真实 schema／外键／完整性检查已有局部测试。InstancePreparation_unittest.cc 通过实际 prepareInstance 组合三个生产适配器，覆盖成功移交、配置短路、维护失败、异常释放、跨进程再取锁及另一线程独立打开业务仓储；边界注入的错误只验证分类透传，不冒充真实 OS 故障。完整 serve／信号停止组合保持在根集成范围。

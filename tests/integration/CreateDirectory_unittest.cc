@@ -51,18 +51,24 @@ struct Control {
     int commits = 0;
     std::function<void()> onFirstCharge;
 };
-class ObservedTransaction final : public MetadataTransaction, public AuthorizationRepository,
+class ObservedTransaction final : public MetadataTransaction, public AuthorizationReader,
                                   public SpaceRepository, public NodeRepository, public QuotaRepository,
                                   public AuditRepository {
 public:
     ObservedTransaction(std::unique_ptr<MetadataTransaction> inner, Control& control)
         : inner_(std::move(inner)), control_(control) {}
-    AuthorizationRepository& authorization() override { return *this; }
+    AuthorizationReader& authorization() override { return *this; }
+    UserRepository& users() override { return inner_->users(); }
+    SessionRepository& sessions() override { return inner_->sessions(); }
+    InviteRepository& invites() override { return inner_->invites(); }
+    SettingsRepository& settings() override { return inner_->settings(); }
+    IdentityAuditRepository& identityAudit() override { return inner_->identityAudit(); }
+
     SpaceRepository& spaces() override { return *this; }
     NodeRepository& nodes() override { return *this; }
     QuotaRepository& quotas() override { return *this; }
-    AuditRepository& audit() override { return *this; }
-    Result<Principal> requireActiveSession(const SessionDigest& digest, UtcTime now) override {
+    AuditRepository& directoryAudit() override { return *this; }
+    Result<Principal> requireActiveSession(const SessionCredential& digest, UtcTime now) override {
         ++control_.authorizations;
         auto result = inner_->authorization().requireActiveSession(digest, now);
         if (result && control_.fault == Fault::ChangedIdentity && control_.authorizations == 2) {
@@ -71,6 +77,19 @@ public:
         return result;
     }
     Result<std::optional<Space>> find(SpaceId space) override { return inner_->spaces().find(space); }
+    Result<std::optional<Space>> findPrivate(UserId user) override { return inner_->spaces().findPrivate(user); }
+    Result<std::vector<Space>> listAccessible(UserId user) override { return inner_->spaces().listAccessible(user); }
+    Result<void> insert(const Space& space) override { return inner_->spaces().insert(space); }
+    Result<std::optional<NodeDetails>> find(NodeId node) override { return inner_->nodes().find(node); }
+    Result<Page<NodeDetails, ChildPosition>> listChildren(SpaceId space, NodeId parent, PageSize size,
+        std::optional<ChildPosition> after) override { return inner_->nodes().listChildren(space, parent, size, after); }
+    Result<void> insertRoot(const RootDirectory& root) override { return inner_->nodes().insertRoot(root); }
+    Result<QuotaSnapshot> get(const QuotaScope& scope) override { return inner_->quotas().get(scope); }
+    Result<void> insert(const QuotaScope& scope, const QuotaSnapshot& value) override { return inner_->quotas().insert(scope, value); }
+    Result<QuotaSnapshot> setLimit(const QuotaScope& scope, Revision revision, QuotaDelta value) override {
+        return inner_->quotas().setLimit(scope, revision, value);
+    }
+
     Result<DirectoryPath> findActiveDirectoryPath(SpaceId space, NodeId parent) override {
         return inner_->nodes().findActiveDirectoryPath(space, parent);
     }
@@ -95,7 +114,7 @@ public:
         return result;
     }
     Result<void> append(const DirectoryCreatedEvent& event) override {
-        auto result = inner_->audit().append(event);
+        auto result = inner_->directoryAudit().append(event);
         if (result && control_.fault == Fault::ThrowAfterAudit) throw std::runtime_error("Injected audit boundary failure");
         if (result && control_.fault == Fault::Audit) return ErrorCode::InternalError;
         return result;
@@ -117,6 +136,7 @@ private:
 class ObservedStore final : public MetadataStore {
 public:
     ObservedStore(MetadataStore& inner, Control& control) : inner_(inner), control_(control) {}
+    Result<std::unique_ptr<MetadataReadSnapshot>> beginRead() override { return inner_.beginRead(); }
     Result<std::unique_ptr<MetadataTransaction>> beginWrite() override {
         ++control_.begins;
         if (control_.fault == Fault::Begin) return ErrorCode::Retryable;
@@ -166,7 +186,7 @@ struct Fixture {
         store = std::move(connected).value();
     }
     RequestContext context(bool asAdmin = false) const {
-        return { asAdmin ? adminSession : ownerSession, id<RequestId>(1) };
+        return { { asAdmin ? adminSession : ownerSession, CredentialMode::Bearer }, id<RequestId>(1) };
     }
     CreateDirectoryCommand command(bool isPublic = true) const {
         return { isPublic ? publicSpace : privateSpace, isPublic ? publicRoot : privateRoot, "new directory" };

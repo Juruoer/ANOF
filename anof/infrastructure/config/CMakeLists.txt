@@ -1,4 +1,4 @@
-target_sources(anof_infrastructure PRIVATE TomlInstanceConfiguration.h TomlInstanceConfiguration.cc)
+target_sources(anof_infrastructure PRIVATE TomlInstanceConfiguration.h TomlInstanceConfiguration.cc internal/ConfigurationText.h internal/ConfigurationText.cc)
 target_link_libraries(anof_infrastructure PRIVATE tomlplusplus::tomlplusplus)
 
 if (ANOF_BUILD_TESTS)

@@ -1,0 +1,4 @@
+#pragma once
+namespace anof::infrastructure::sqlite {
+inline constexpr char kSchemaSql[] = R"anof_sql(@ANOF_SQLITE_SCHEMA@)anof_sql";
+}

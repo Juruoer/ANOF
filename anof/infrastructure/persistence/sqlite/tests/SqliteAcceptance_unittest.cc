@@ -4,7 +4,7 @@
 #include <anof/infrastructure/persistence/sqlite/tests/SqliteFaultVfs.h>
 #include <anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataTransaction.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteMigration.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
 
 #include <fstream>
@@ -67,7 +67,7 @@ void stage(MetadataTransaction& transaction, const Scenario& s) {
     BOOST_REQUIRE(transaction.quotas().chargeUsed(s.contribution, amount(1)));
     BOOST_REQUIRE(transaction.nodes().insertDirectory({ s.child, s.space, s.root, "child", s.user, s.now }));
     BOOST_REQUIRE(transaction.nodes().advanceRevision(s.root, Revision{}, s.now));
-    BOOST_REQUIRE(transaction.audit().append({ s.user, s.space, s.child, s.root, id<RequestId>(1), s.now }));
+    BOOST_REQUIRE(transaction.directoryAudit().append({ s.user, s.space, s.child, s.root, id<RequestId>(1), s.now }));
 }
 
 void checkConsistent(SqliteTestMetadataBackend& backend, const Scenario& s) {
@@ -99,7 +99,7 @@ void verifyWalFailure(SqliteFaultVfs::Failure failure, int extendedCode) {
     {
         auto connection = connect(backend);
         bool active = false;
-        SqliteMetadataTransaction transaction(*connection, active);
+        SqliteMetadataTransaction transaction(*connection, active, { 8192, 1, 1 });
         BOOST_REQUIRE(transaction.begin());
         stage(transaction, s);
         vfs.arm(failure);
@@ -130,7 +130,7 @@ BOOST_AUTO_TEST_CASE(wal_reader_snapshot_does_not_block_commit_and_pins_checkpoi
     BOOST_REQUIRE(reader->execute("BEGIN"));
     BOOST_TEST(scalar(*reader, "SELECT count(*) FROM nodes") == 1);
     bool active = false;
-    SqliteMetadataTransaction transaction(*writer, active);
+    SqliteMetadataTransaction transaction(*writer, active, { 8192, 1, 1 });
     BOOST_REQUIRE(transaction.begin());
     stage(transaction, s);
     BOOST_REQUIRE(transaction.commit());
@@ -156,10 +156,10 @@ BOOST_AUTO_TEST_CASE(bounded_busy_wait_and_migration_contention_preserve_history
     BOOST_TEST(scalar(*waiter, "PRAGMA busy_timeout") == 20);
     BOOST_REQUIRE(writer->beginWrite());
     errorIs(waiter->beginWrite(), ErrorCode::Retryable);
-    errorIs(applySqliteMigrations(*waiter), ErrorCode::Retryable);
+    errorIs(createSqliteSchema(*waiter), ErrorCode::Retryable);
     BOOST_REQUIRE(writer->rollback());
-    BOOST_REQUIRE(applySqliteMigrations(*waiter));
-    BOOST_TEST(scalar(*waiter, "SELECT count(*) FROM schema_migrations") == 1);
+    BOOST_REQUIRE(createSqliteSchema(*waiter));
+    BOOST_TEST(scalar(*waiter, "SELECT count(*) FROM schema_info") == 1);
     BOOST_TEST(scalar(*waiter, "SELECT count(*) FROM nodes") == 1);
     BOOST_CHECK(!waiter->inTransaction());
 }

@@ -1,3 +1,4 @@
+#include <anof/runtime/internal/ShutdownTrace.h>
 #include <anof/runtime/MetadataExecutor.h>
 #include <anof/runtime/CompletionPump.h>
 
@@ -40,11 +41,42 @@ private:
 };
 
 struct Job {
+    std::shared_ptr<TaskControl> control;
+    explicit Job(std::shared_ptr<TaskControl> value) : control(std::move(value)) {}
+    virtual ~Job() = default;
+    virtual void execute(MetadataWorkerResources&) = 0;
+    virtual void failed() noexcept = 0;
+    virtual void cancelled() noexcept = 0;
+    virtual void deliver() = 0;
+};
+struct DirectoryJob final : Job {
     RequestContext context;
     CreateDirectoryCommand command;
     CreateDirectoryCallback callback;
-    std::shared_ptr<TaskControl> control;
     CreateDirectoryCompletion completion;
+    DirectoryJob(RequestContext c, CreateDirectoryCommand cmd, CreateDirectoryCallback cb, std::shared_ptr<TaskControl> task)
+        : Job(std::move(task)), context(std::move(c)), command(std::move(cmd)), callback(std::move(cb)),
+          completion{control->id, Result<CreateDirectoryResult>(ErrorCode::InternalError), std::nullopt} {}
+    void execute(MetadataWorkerResources& resources) override {
+        CreateDirectory useCase(*resources.metadata, *resources.clock, *resources.nodeIds);
+        completion.outcome = useCase.execute(context, command, &completion.attempt);
+    }
+    void failed() noexcept override { completion.outcome = Result<CreateDirectoryResult>(ErrorCode::CommitOutcomeUnknown); }
+    void cancelled() noexcept override { completion.outcome = CancelledBeforeStart{}; }
+    void deliver() override { callback(std::move(completion)); }
+};
+struct OperationJob final : Job {
+    MetadataExecutor::Operation operation;
+    Completion<void> callback;
+    TaskCompletion<void> completion;
+    ErrorCode exceptionCode;
+    OperationJob(MetadataExecutor::Operation work, Completion<void> cb, ErrorCode error, std::shared_ptr<TaskControl> task)
+        : Job(std::move(task)), operation(std::move(work)), callback(std::move(cb)),
+          completion{control->id, Result<void>(ErrorCode::InternalError)}, exceptionCode(error) {}
+    void execute(MetadataWorkerResources& resources) override { completion.outcome = operation(resources); }
+    void failed() noexcept override { completion.outcome = Result<void>(exceptionCode); }
+    void cancelled() noexcept override { completion.outcome = CancelledBeforeStart{}; }
+    void deliver() override { callback(std::move(completion)); }
 };
 
 std::size_t capacity(MetadataExecutorOptions options) {
@@ -125,9 +157,8 @@ struct MetadataExecutor::Impl {
                     resources.emplace(std::move(opened).value());
                     if (!resources->metadata || !resources->clock || !resources->nodeIds) publishStartup(ErrorCode::InternalError);
                     else {
-                        CreateDirectory useCase(*resources->metadata, *resources->clock, *resources->nodeIds);
                         publishStartup({});
-                        runJobs(useCase);
+                        runJobs(*resources);
                     }
                 }
             } catch (...) {
@@ -140,7 +171,7 @@ struct MetadataExecutor::Impl {
         finishWorker();
     }
 
-    void runJobs(CreateDirectory& useCase) noexcept {
+    void runJobs(MetadataWorkerResources& resources) noexcept {
         for (;;) {
             std::unique_ptr<Job> job;
             bool execute;
@@ -157,14 +188,14 @@ struct MetadataExecutor::Impl {
             }
             if (execute) {
                 try {
-                    job->completion.outcome = useCase.execute(job->context, job->command, &job->completion.attempt);
+                    job->execute(resources);
                 } catch (...) {
                     // execute 抛异常时不得猜测是否已提交；保留已生成的诊断 ID，不重试。
-                    job->completion.outcome = Result<CreateDirectoryResult>(ErrorCode::CommitOutcomeUnknown);
+                    job->failed();
                     std::lock_guard<std::mutex> lock(mutex);
                     ++taskExceptions;
                 }
-            } else job->completion.outcome = CancelledBeforeStart{};
+            } else job->cancelled();
             job->control->state.store(TaskState::Terminal);
             {
                 std::lock_guard<std::mutex> lock(mutex);
@@ -181,7 +212,9 @@ struct MetadataExecutor::Impl {
             std::lock_guard<std::mutex> lock(mutex);
             workerFinished = true;
         }
+        internal::shutdownTrace("metadata", "worker_final_notify", &pump);
         pump.notify();
+        internal::shutdownTrace("metadata", "worker_returning", &pump);
     }
 
     bool drain() noexcept {
@@ -212,7 +245,7 @@ struct MetadataExecutor::Impl {
                 completedHead = (completedHead + 1) % completed.size();
                 --completedCount;
             }
-            try { job->callback(std::move(job->completion)); }
+            try { job->deliver(); }
             catch (...) { ++callbackExceptions; }
             // 回调及其闭包均在 loop 销毁；直到回调结束才归还总名额。
             job.reset();
@@ -231,11 +264,16 @@ struct MetadataExecutor::Impl {
             std::lock_guard<std::mutex> lock(mutex);
             if (!workerFinished || outstanding != 0 || !startupDelivered) return;
         }
-        if (exited.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+        if (exited.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            internal::shutdownTrace("metadata", "exit_future_pending", &pump);
+            return;
+        }
+        internal::shutdownTrace("metadata", "exit_future_ready", &pump);
         // future 在真实线程退出时就绪；无连接、任务或后续 worker 投递存活。
         if (worker.joinable()) worker.join();
         if (!pump.idle()) return;
         state = MetadataExecutorState::Stopped;
+        internal::shutdownTrace("metadata", "stopped", &pump);
         auto callback = std::move(onStopped);
         try { if (callback) callback(); }
         catch (...) { ++callbackExceptions; }
@@ -248,6 +286,7 @@ struct MetadataExecutor::Impl {
             state = MetadataExecutorState::Stopped;
             return;
         }
+        internal::shutdownTrace("metadata", "stop_requested", &pump);
         state = MetadataExecutorState::Stopping;
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -288,7 +327,7 @@ Result<void> MetadataExecutor::start(Factory factory, Started started, Stopped s
     return {};
 }
 
-CreateDirectorySubmission MetadataExecutor::trySubmit(RequestContext context, CreateDirectoryCommand command,
+TaskSubmission MetadataExecutor::trySubmit(RequestContext context, CreateDirectoryCommand command,
                                                        CreateDirectoryCallback completion) {
     auto& self = *impl_;
     self.loop.assertInLoopThread();
@@ -299,8 +338,7 @@ CreateDirectorySubmission MetadataExecutor::trySubmit(RequestContext context, Cr
         if (self.pendingCount == self.pending.size() || self.outstanding == self.completed.size()) return SubmitError::QueueFull;
         auto control = std::make_shared<TaskControl>(self.nextId);
         auto handle = std::make_unique<Handle>(control);
-        auto job = std::make_unique<Job>(Job{ std::move(context), std::move(command), std::move(completion), control,
-                                             { self.nextId, Result<CreateDirectoryResult>(ErrorCode::InternalError), std::nullopt } });
+        auto job = std::make_unique<DirectoryJob>(std::move(context), std::move(command), std::move(completion), control);
         self.pending[(self.pendingHead + self.pendingCount) % self.pending.size()] = std::move(job);
         ++self.pendingCount;
         ++self.outstanding;
@@ -310,6 +348,24 @@ CreateDirectorySubmission MetadataExecutor::trySubmit(RequestContext context, Cr
     } catch (...) {
         return SubmitError::InternalError;
     }
+}
+
+TaskSubmission MetadataExecutor::submitOperation(Operation operation, Completion<void> completion, ErrorCode exceptionCode) {
+    auto& self = *impl_;
+    self.loop.assertInLoopThread();
+    if (self.state != MetadataExecutorState::Ready) return SubmitError::Stopping;
+    if (!operation || !completion || self.nextId == std::numeric_limits<std::uint64_t>::max()) return SubmitError::InternalError;
+    try {
+        std::lock_guard<std::mutex> lock(self.mutex);
+        if (self.pendingCount == self.pending.size() || self.outstanding == self.completed.size()) return SubmitError::QueueFull;
+        auto control = std::make_shared<TaskControl>(self.nextId);
+        auto handle = std::make_unique<Handle>(control);
+        auto job = std::make_unique<OperationJob>(std::move(operation), std::move(completion), exceptionCode, control);
+        self.pending[(self.pendingHead + self.pendingCount) % self.pending.size()] = std::move(job);
+        ++self.pendingCount; ++self.outstanding; ++self.nextId;
+        self.changed.notify_one();
+        return AcceptedTask{std::move(handle)};
+    } catch (...) { return SubmitError::InternalError; }
 }
 
 void MetadataExecutor::requestStop() { impl_->stop(); }

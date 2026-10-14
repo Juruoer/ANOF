@@ -1,6 +1,0 @@
-#pragma once
-
-namespace anof::infrastructure::sqlite {
-inline constexpr char kMigrationName[] = "0001_create_directory.sql";
-inline constexpr char kMigrationSql[] = R"anof_sql(@ANOF_SQLITE_MIGRATION@)anof_sql";
-}  // namespace anof::infrastructure::sqlite

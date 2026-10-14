@@ -1,13 +1,15 @@
 #define BOOST_TEST_MODULE AnofSqliteFoundation
 #include <boost/test/unit_test.hpp>
 
-#include <anof/infrastructure/persistence/sqlite/SqliteMigration.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
 
 #include <sqlite3.h>
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -35,8 +37,8 @@ public:
         BOOST_REQUIRE(result);
         return std::move(result).value();
     }
-    std::unique_ptr<SqliteConnection> migrated() {
-        BOOST_REQUIRE(migrateSqliteDatabase(path(), { 0 }));
+    std::unique_ptr<SqliteConnection> current() {
+        BOOST_REQUIRE(createSqliteDatabase(path(), { 0 }));
         auto result = openSqliteDatabase(path(), { 0 });
         BOOST_REQUIRE(result);
         return std::move(result).value();
@@ -66,6 +68,7 @@ std::int64_t scalar(SqliteConnection& connection, std::string_view sql) {
     return value.value();
 }
 
+constexpr const char* kHash = "$argon2id$v=19$m=8192,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 constexpr const char* kUser = "00000000-0000-4000-8000-000000000001";
 constexpr const char* kSpace = "00000000-0000-4000-8000-000000000002";
 constexpr const char* kRoot = "00000000-0000-4000-8000-000000000003";
@@ -98,7 +101,7 @@ Result<void> insertNode(SqliteConnection& connection, const char* id, std::strin
 
 void seed(SqliteConnection& connection) {
     BOOST_REQUIRE(connection.beginWrite());
-    BOOST_REQUIRE(connection.execute("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0)"));
+    BOOST_REQUIRE(connection.execute("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0, 'admin', 'Administrator', '" + std::string(kHash) + "', 1, 1, 0, 0)"));
     BOOST_REQUIRE(connection.execute("INSERT INTO spaces VALUES (" + quoted(kSpace) + ", 1, NULL, " + quoted(kRoot) + ")"));
     BOOST_REQUIRE(insertNode(connection, kRoot, "", false, false, nullptr));
     BOOST_REQUIRE(connection.execute("INSERT INTO blobs VALUES (" + quoted(kBlob) + ", 0, zeroblob(32))"));
@@ -107,20 +110,20 @@ void seed(SqliteConnection& connection) {
 
 }  // namespace
 
-BOOST_AUTO_TEST_CASE(migration_settings_repeat_and_reopen_preserve_data) {
+BOOST_AUTO_TEST_CASE(schema_settings_repeat_and_reopen_preserve_data) {
     Database database;
     {
-        auto connection = database.migrated();
+        auto connection = database.current();
         BOOST_REQUIRE(connection->verifySettings());
         BOOST_TEST(scalar(*connection, "PRAGMA foreign_keys") == 1);
         BOOST_TEST(scalar(*connection, "PRAGMA synchronous") == 2);
-        BOOST_TEST(scalar(*connection, "SELECT count(*) FROM schema_migrations") == 1);
+        BOOST_TEST(scalar(*connection, "SELECT count(*) FROM schema_info") == 1);
         seed(*connection);
-        BOOST_REQUIRE(applySqliteMigrations(*connection));
+        BOOST_REQUIRE(createSqliteSchema(*connection));
         BOOST_TEST(scalar(*connection, "SELECT count(*) FROM users") == 1);
         BOOST_CHECK(!connection->inTransaction());
     }
-    BOOST_REQUIRE(migrateSqliteDatabase(database.path()));
+    errorIs(createSqliteDatabase(database.path()), ErrorCode::Conflict);
     auto reopened = openSqliteDatabase(database.path());
     BOOST_REQUIRE(reopened);
     BOOST_TEST(scalar(*reopened.value(), "SELECT count(*) FROM nodes") == 1);
@@ -136,7 +139,7 @@ BOOST_AUTO_TEST_CASE(open_validates_arguments_and_does_not_implicitly_migrate) {
     errorIs(SqliteConnection::open(":memory:"), ErrorCode::InvalidArgument);
     errorIs(SqliteConnection::open(std::filesystem::path(std::string("bad\0path", 8))), ErrorCode::InvalidArgument);
     auto connection = database.raw();
-    errorIs(openSqliteDatabase(database.path()), ErrorCode::InternalError);
+    errorIs(openSqliteDatabase(database.path()), ErrorCode::IntegrityError);
     BOOST_TEST(scalar(*connection, "SELECT count(*) FROM sqlite_schema") == 0);
     BOOST_REQUIRE(connection->execute("PRAGMA foreign_keys=OFF"));
     errorIs(connection->verifySettings(), ErrorCode::InternalError);
@@ -205,21 +208,21 @@ BOOST_AUTO_TEST_CASE(value_decoding_rejects_corrupt_persistent_values) {
     BOOST_TEST(readTime(*statement, 11).value().time_since_epoch().count() == std::numeric_limits<std::int64_t>::min());
 }
 
-BOOST_AUTO_TEST_CASE(migration_rejects_unknown_history_and_missing_objects) {
+BOOST_AUTO_TEST_CASE(schema_rejects_unknown_definition_and_missing_objects) {
     const std::pair<const char*, ErrorCode> changes[] = {
-        { "UPDATE schema_migrations SET version=2", ErrorCode::InternalError },
-        { "UPDATE schema_migrations SET name='changed'", ErrorCode::IntegrityError },
-        { "UPDATE schema_migrations SET definition='changed'", ErrorCode::IntegrityError },
-        { "DELETE FROM schema_migrations", ErrorCode::IntegrityError },
+        { "UPDATE schema_info SET version=3", ErrorCode::IntegrityError },
+        { "UPDATE schema_info SET version=1", ErrorCode::IntegrityError },
+        { "UPDATE schema_info SET definition='changed'", ErrorCode::IntegrityError },
+        { "DELETE FROM schema_info", ErrorCode::IntegrityError },
         { "DROP INDEX nodes_active_name", ErrorCode::IntegrityError },
         { "DROP TRIGGER nodes_shape_insert", ErrorCode::IntegrityError }
     };
     for (const auto& change : changes) {
         Database database;
-        auto connection = database.migrated();
+        auto connection = database.current();
         BOOST_REQUIRE(connection->execute(change.first));
         errorIs(verifySqliteSchema(*connection), change.second);
-        errorIs(applySqliteMigrations(*connection), change.second);
+        errorIs(createSqliteSchema(*connection), change.second);
         BOOST_CHECK(!connection->inTransaction());
         errorIs(openSqliteDatabase(database.path()), change.second);
     }
@@ -229,12 +232,12 @@ BOOST_AUTO_TEST_CASE(unknown_existing_database_is_not_overwritten) {
     Database database;
     auto connection = database.raw();
     BOOST_REQUIRE(connection->execute("CREATE TABLE sqlitex(value); INSERT INTO sqlitex VALUES (42)"));
-    errorIs(applySqliteMigrations(*connection), ErrorCode::InternalError);
+    errorIs(createSqliteSchema(*connection), ErrorCode::IntegrityError);
     BOOST_TEST(scalar(*connection, "SELECT value FROM sqlitex") == 42);
-    BOOST_TEST(scalar(*connection, "SELECT count(*) FROM sqlite_schema WHERE name='schema_migrations'") == 0);
+    BOOST_TEST(scalar(*connection, "SELECT count(*) FROM sqlite_schema WHERE name='schema_info'") == 0);
 }
 
-BOOST_AUTO_TEST_CASE(real_mid_migration_failure_rolls_back_all_ddl) {
+BOOST_AUTO_TEST_CASE(real_mid_creation_failure_rolls_back_all_ddl) {
     Database database;
     auto connection = database.raw();
     // 在最后一张表处拒绝 DDL：先前已建的表、索引和触发器必须一起回滚。
@@ -242,19 +245,19 @@ BOOST_AUTO_TEST_CASE(real_mid_migration_failure_rolls_back_all_ddl) {
         return operation == SQLITE_CREATE_TABLE && first && std::string_view(first) == "audit_events" ? SQLITE_DENY : SQLITE_OK;
     };
     BOOST_REQUIRE_EQUAL(sqlite3_set_authorizer(connection->handle(), denyAudit, nullptr), SQLITE_OK);
-    errorIs(applySqliteMigrations(*connection), ErrorCode::InternalError);
+    errorIs(createSqliteSchema(*connection), ErrorCode::InternalError);
     BOOST_CHECK(!connection->inTransaction());
     BOOST_TEST(scalar(*connection, "SELECT count(*) FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'") == 0);
     BOOST_REQUIRE_EQUAL(sqlite3_set_authorizer(connection->handle(), nullptr, nullptr), SQLITE_OK);
-    BOOST_REQUIRE(applySqliteMigrations(*connection));
+    BOOST_REQUIRE(createSqliteSchema(*connection));
     BOOST_REQUIRE(verifySqliteSchema(*connection));
 }
 
 BOOST_AUTO_TEST_CASE(root_foreign_keys_and_commit_failure_are_atomic) {
     Database database;
-    auto connection = database.migrated();
+    auto connection = database.current();
     BOOST_REQUIRE(connection->beginWrite());
-    BOOST_REQUIRE(connection->execute("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0)"));
+    BOOST_REQUIRE(connection->execute("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0, 'admin', 'Administrator', '" + std::string(kHash) + "', 1, 1, 0, 0)"));
     BOOST_REQUIRE(connection->execute("INSERT INTO spaces VALUES (" + quoted(kSpace) + ", 1, NULL, " + quoted(kRoot) + ")"));
     errorIs(connection->commit(), ErrorCode::IntegrityError);
     BOOST_CHECK(!connection->inTransaction());
@@ -276,7 +279,7 @@ BOOST_AUTO_TEST_CASE(root_foreign_keys_and_commit_failure_are_atomic) {
 
 BOOST_AUTO_TEST_CASE(active_names_share_namespace_and_preserve_bytes) {
     Database database;
-    auto connection = database.migrated();
+    auto connection = database.current();
     seed(*connection);
     BOOST_REQUIRE(insertNode(*connection, kChild, "child", true));
     errorIs(insertNode(*connection, kOther, "child"), ErrorCode::IntegrityError);
@@ -297,9 +300,9 @@ BOOST_AUTO_TEST_CASE(active_names_share_namespace_and_preserve_bytes) {
 
 BOOST_AUTO_TEST_CASE(schema_types_quota_and_blob_constraints_reject_invalid_data) {
     Database database;
-    auto connection = database.migrated();
+    auto connection = database.current();
     seed(*connection);
-    errorIs(connection->execute("INSERT INTO users VALUES ('bad', 0, 1, 0)"), ErrorCode::IntegrityError);
+    errorIs(connection->execute("UPDATE users SET id='bad'"), ErrorCode::IntegrityError);
     errorIs(connection->execute("UPDATE users SET enabled=2"), ErrorCode::IntegrityError);
     errorIs(connection->execute("UPDATE users SET auth_epoch=9223372036854775807+1"), ErrorCode::IntegrityError);
     errorIs(connection->execute("UPDATE blobs SET sha256=zeroblob(31)"), ErrorCode::IntegrityError);
@@ -307,7 +310,7 @@ BOOST_AUTO_TEST_CASE(schema_types_quota_and_blob_constraints_reject_invalid_data
     errorIs(connection->execute("UPDATE nodes SET revision=0"), ErrorCode::IntegrityError);
     errorIs(connection->execute("UPDATE nodes SET blob_id=" + quoted(kBlob)), ErrorCode::IntegrityError);
     BOOST_REQUIRE(connection->execute("INSERT INTO space_quotas VALUES (" + quoted(kSpace) +
-        ", 9223372036854775807, 10, 1099511627776, 1, 0, 9)"));
+        ", 9223372036854775807, 10, 1099511627776, 1, 0, 9, 1)"));
     errorIs(connection->execute("UPDATE space_quotas SET used_nodes=2"), ErrorCode::IntegrityError);
     errorIs(connection->execute("UPDATE space_quotas SET used_bytes=9223372036854775807, reserved_bytes=1"), ErrorCode::IntegrityError);
     BOOST_REQUIRE(connection->execute("UPDATE space_quotas SET used_bytes=9223372036854775807"));
@@ -317,14 +320,14 @@ BOOST_AUTO_TEST_CASE(schema_types_quota_and_blob_constraints_reject_invalid_data
 
 BOOST_AUTO_TEST_CASE(independent_writers_contend_and_destructor_rolls_back) {
     Database database;
-    auto first = database.migrated();
+    auto first = database.current();
     auto secondResult = openSqliteDatabase(database.path(), { 0 });
     BOOST_REQUIRE(secondResult);
     auto second = std::move(secondResult).value();
     BOOST_REQUIRE(first->beginWrite());
     errorIs(first->beginWrite(), ErrorCode::InvalidArgument);
     errorIs(second->beginWrite(), ErrorCode::Retryable);
-    BOOST_REQUIRE(first->execute("INSERT INTO users VALUES (" + quoted(kUser) + ", 0, 1, 0)"));
+    BOOST_REQUIRE(first->execute("INSERT INTO users VALUES (" + quoted(kUser) + ", 0, 1, 0, 'member', 'Member', '" + std::string(kHash) + "', 1, 1, 0, 0)"));
     BOOST_TEST(scalar(*second, "SELECT count(*) FROM users") == 0);
     first.reset();
     BOOST_REQUIRE(second->beginWrite());
@@ -369,11 +372,170 @@ BOOST_AUTO_TEST_CASE(commit_unknown_and_rollback_failure_do_not_allow_reuse) {
 
 BOOST_AUTO_TEST_CASE(schema_verification_detects_foreign_key_corruption) {
     Database database;
-    auto connection = database.migrated();
+    auto connection = database.current();
     BOOST_REQUIRE(connection->execute("PRAGMA foreign_keys=OFF"));
-    BOOST_REQUIRE(connection->execute("INSERT INTO sessions VALUES (zeroblob(32), " + quoted(kUser) + ", 0, 1, 0)"));
+    BOOST_REQUIRE(connection->execute("INSERT INTO sessions VALUES (zeroblob(32), " + quoted(kUser) + ", 0, 1, 0, 0, 'bearer')"));
     BOOST_REQUIRE(connection->execute("PRAGMA foreign_keys=ON"));
     errorIs(verifySqliteSchema(*connection), ErrorCode::IntegrityError);
+}
+
+BOOST_AUTO_TEST_CASE(schema2_identity_values_reject_invalid_encodings_and_ranges) {
+    Database database;
+    auto connection = database.current();
+    seed(*connection);
+    BOOST_TEST(scalar(*connection, "SELECT version FROM schema_info") == 2);
+    BOOST_TEST(scalar(*connection, "SELECT count(*) FROM instance_settings") == 0);
+    // 未引导库仅供 schema 层测试；没有管理员空间完整性的生产通过结论。
+    for (const char* change : {
+             "display_name=''", "display_name=char(0)", "display_name=char(31)", "display_name=char(127)",
+             "display_name=char(159)", "display_name=CAST(x'ff' AS TEXT)", "display_name=zeroblob(10)",
+             "password_hash='plaintext'", "password_hash=''", "password_hash=zeroblob(32)",
+             "password_version=0", "revision=0", "password_version=1.5", "enabled=0", "auth_epoch=-1" }) {
+        errorIs(connection->execute(std::string("UPDATE users SET ") + change), ErrorCode::IntegrityError);
+    }
+    BOOST_REQUIRE(connection->execute("UPDATE users SET display_name='家庭用户😀'"));
+    auto insert = [&](std::string_view login, std::string_view hash) {
+        auto s = prepare(*connection, "INSERT INTO users VALUES(?1,0,1,0,?2,'Member',?3,1,1,0,0)");
+        BOOST_REQUIRE(s->bindText(1, kOther));
+        BOOST_REQUIRE(s->bindText(2, login));
+        BOOST_REQUIRE(s->bindText(3, hash));
+        return s->step();
+    };
+    for (const auto& login : { std::string("Admin"), std::string("ab"), std::string("1abc"), std::string("abc "), std::string("a.b"), std::string("a\0bc",4), std::string(33,'a'), std::string("admin") }) {
+        errorIs(insert(login, kHash), ErrorCode::IntegrityError);
+    }
+    for (const char* parameter : { "m=262145,t=1,p=1", "m=8192,t=11,p=1", "m=8192,t=1,p=2", "m=7,t=1,p=1" }) {
+        const auto hash = std::string("$argon2id$v=19$") + parameter + "$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        errorIs(insert("member", hash), ErrorCode::IntegrityError);
+    }
+    BOOST_REQUIRE(insert("member", kHash));
+    errorIs(connection->execute("UPDATE users SET login='renamed'"), ErrorCode::IntegrityError);
+    errorIs(connection->execute("DELETE FROM users"), ErrorCode::IntegrityError);
+    BOOST_REQUIRE(verifySqliteSchema(*connection));
+}
+
+BOOST_AUTO_TEST_CASE(schema2_sessions_enforce_bearer_and_temporal_shape) {
+    Database database;
+    auto connection = database.current();
+    seed(*connection);
+    const auto sql = "INSERT INTO sessions VALUES(zeroblob(32)," + quoted(kUser) + ",0,10,0,0,'bearer')";
+    BOOST_REQUIRE(connection->execute(sql));
+    for (const char* change : { "credential_mode='cookie'", "credential_mode=''", "created_at=10", "expires_at=-1", "revoked=2", "auth_epoch=-1", "token_hash=zeroblob(31)", "created_at=0.5" }) {
+        errorIs(connection->execute(std::string("UPDATE sessions SET ") + change), ErrorCode::IntegrityError);
+    }
+    errorIs(connection->execute(sql), ErrorCode::IntegrityError);
+    BOOST_REQUIRE(verifySqliteSchema(*connection));
+}
+
+BOOST_AUTO_TEST_CASE(schema2_invites_enforce_administrator_uniqueness_and_usage) {
+    Database database;
+    auto connection = database.current();
+    seed(*connection);
+    const auto sql = "INSERT INTO invites VALUES(" + quoted(kOther) + ",zeroblob(32)," + quoted(kUser) + ",0,2592000000000,2,0,NULL)";
+    BOOST_REQUIRE(connection->execute(sql));
+    for (const char* change : { "used_count=3", "used_count=-1", "used_count=0.5", "max_uses=0", "max_uses=10001", "revoked_at=0.5", "expires_at=2592000000001", "created_at=1" }) {
+        errorIs(connection->execute(std::string("UPDATE invites SET ") + change), ErrorCode::IntegrityError);
+    }
+    BOOST_REQUIRE(connection->execute("UPDATE invites SET used_count=2,revoked_at=5"));
+    errorIs(connection->execute("UPDATE invites SET used_count=1"), ErrorCode::IntegrityError);
+    errorIs(connection->execute("UPDATE invites SET revoked_at=NULL"), ErrorCode::IntegrityError);
+    errorIs(connection->execute("INSERT INTO invites SELECT " + quoted(kChild) + ",token_hash,created_by,created_at,expires_at,max_uses,0,NULL FROM invites"), ErrorCode::IntegrityError);
+    BOOST_REQUIRE(connection->execute("INSERT INTO users VALUES(" + quoted(kChild) + ",0,1,0,'member','Member','" + std::string(kHash) + "',1,1,0,0)"));
+    errorIs(connection->execute("INSERT INTO invites VALUES(" + quoted(kBlob) + ",randomblob(32)," + quoted(kChild) + ",0,1,1,0,NULL)"), ErrorCode::IntegrityError);
+    errorIs(connection->execute("INSERT INTO invites VALUES(" + quoted(kBlob) + ",randomblob(32)," + quoted(kUser) + ",0,2592000000001,1,0,NULL)"), ErrorCode::IntegrityError);
+    BOOST_REQUIRE(verifySqliteSchema(*connection));
+}
+
+BOOST_AUTO_TEST_CASE(schema2_settings_and_identity_audit_have_typed_shapes) {
+    Database database;
+    auto connection = database.current();
+    seed(*connection);
+    const auto settings = "INSERT INTO instance_settings VALUES(1," + quoted(kOther) + "," + quoted(kChild) + ",0,10,0,1,0,1,1)";
+    BOOST_REQUIRE(connection->execute(settings));
+    errorIs(connection->execute(settings), ErrorCode::IntegrityError);
+    for (const char* change : { "max_users=0", "max_users=10001", "default_private_nodes=0", "default_contribution_nodes=0", "default_private_bytes=-1", "revision=0", "instance_id='bad'" }) {
+        errorIs(connection->execute(std::string("UPDATE instance_settings SET ") + change), ErrorCode::IntegrityError);
+    }
+    BOOST_REQUIRE(connection->execute("INSERT INTO identity_audit_events(subject_user_id,instance_id,request_id,action,occurred_at) VALUES(" + quoted(kUser) + "," + quoted(kOther) + "," + quoted(kChild) + ",'instance_initialized',0)"));
+    errorIs(connection->execute("INSERT INTO identity_audit_events(request_id,action,occurred_at) VALUES(" + quoted(kChild) + ",'session_created',0)"), ErrorCode::IntegrityError);
+    BOOST_REQUIRE(connection->execute("INSERT INTO identity_audit_events(actor_id,subject_user_id,request_id,action,occurred_at) VALUES(" + quoted(kUser) + "," + quoted(kUser) + "," + quoted(kChild) + ",'session_created',0)"));
+    errorIs(connection->execute("UPDATE identity_audit_events SET action='arbitrary'"), ErrorCode::IntegrityError);
+    errorIs(connection->execute("UPDATE identity_audit_events SET invite_id=" + quoted(kOther)), ErrorCode::IntegrityError);
+    BOOST_TEST(scalar(*connection, "SELECT count(*) FROM identity_audit_events") == 2);
+    BOOST_REQUIRE(verifySqliteSchema(*connection));
+}
+
+BOOST_AUTO_TEST_CASE(schema_verification_compares_real_definitions_not_just_names) {
+    for (const char* change : {
+             "DROP INDEX nodes_active_name; CREATE INDEX nodes_active_name ON nodes(name)",
+             "DROP TRIGGER nodes_root_delete; CREATE TRIGGER nodes_root_delete BEFORE DELETE ON nodes BEGIN SELECT 1; END",
+             "ALTER TABLE users ADD COLUMN hidden TEXT",
+             "CREATE TABLE unexpected(value)",
+             "PRAGMA writable_schema=ON; UPDATE sqlite_schema SET sql=replace(sql,'max_users BETWEEN 1 AND 10000','max_users BETWEEN 0 AND 10000') WHERE name='instance_settings'; PRAGMA writable_schema=OFF" }) {
+        Database database;
+        auto connection = database.current();
+        BOOST_REQUIRE(connection->execute(change));
+        errorIs(verifySqliteSchema(*connection), ErrorCode::IntegrityError);
+        errorIs(createSqliteSchema(*connection), ErrorCode::IntegrityError);
+        BOOST_CHECK(!connection->inTransaction());
+    }
+}
+
+BOOST_AUTO_TEST_CASE(full_integrity_check_detects_bypassed_check_constraint) {
+    Database database;
+    auto connection = database.current();
+    seed(*connection);
+    BOOST_REQUIRE(connection->execute("PRAGMA ignore_check_constraints=ON; UPDATE users SET password_version=0; PRAGMA ignore_check_constraints=OFF"));
+    errorIs(verifySqliteSchema(*connection), ErrorCode::IntegrityError);
+    BOOST_TEST(scalar(*connection, "SELECT password_version FROM users") == 0);
+    BOOST_CHECK(!connection->inTransaction());
+    BOOST_REQUIRE(connection->beginWrite());
+    BOOST_REQUIRE(connection->rollback());
+}
+
+BOOST_AUTO_TEST_CASE(verify_only_rejects_legacy_without_changing_file_or_journal_mode) {
+    Database database;
+    sqlite3* raw = nullptr;
+    BOOST_REQUIRE_EQUAL(sqlite3_open(database.path().c_str(), &raw), SQLITE_OK);
+    const int created = sqlite3_exec(raw, "CREATE TABLE schema_migrations(version INTEGER); INSERT INTO schema_migrations VALUES(1)", nullptr,nullptr,nullptr);
+    const int closed = sqlite3_close(raw);
+    BOOST_REQUIRE_EQUAL(created, SQLITE_OK);
+    BOOST_REQUIRE_EQUAL(closed, SQLITE_OK);
+    auto bytes = [&] {
+        std::ifstream file(database.path(), std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    };
+    const auto before = bytes();
+    errorIs(openSqliteDatabase(database.path()), ErrorCode::InternalError);
+    errorIs(createSqliteDatabase(database.path()), ErrorCode::Conflict);
+    BOOST_CHECK(bytes() == before);
+    BOOST_CHECK(!std::filesystem::exists(database.path().string() + "-wal"));
+    BOOST_CHECK(!std::filesystem::exists(database.path().string() + "-journal"));
+    // 已在 WAL 的旧布局同样拒绝；不把版本记录视作升级入口。
+    auto connection = SqliteConnection::open(database.path());
+    BOOST_REQUIRE(connection);
+    errorIs(verifySqliteSchema(*connection.value()), ErrorCode::IntegrityError);
+    errorIs(createSqliteSchema(*connection.value()), ErrorCode::IntegrityError);
+    BOOST_TEST(scalar(*connection.value(), "SELECT version FROM schema_migrations") == 1);
+}
+
+BOOST_AUTO_TEST_CASE(exclusive_creation_rejects_even_empty_existing_files) {
+    Database database;
+    { std::ofstream file(database.path()); }
+    errorIs(createSqliteDatabase(database.path()), ErrorCode::Conflict);
+    BOOST_TEST(std::filesystem::file_size(database.path()) == 0);
+    auto missing = database.path().parent_path() / "absent" / "db";
+    errorIs(createSqliteDatabase(missing), ErrorCode::NotFound);
+    BOOST_CHECK(!std::filesystem::exists(missing.parent_path()));
+    std::filesystem::remove(database.path());
+    for (const char* suffix : { "-wal", "-shm", "-journal" }) {
+        const auto sidecar = database.path().string() + suffix;
+        { std::ofstream file(sidecar); file << "preserve"; }
+        errorIs(createSqliteDatabase(database.path()), ErrorCode::Conflict);
+        BOOST_CHECK(!std::filesystem::exists(database.path()));
+        BOOST_TEST(std::filesystem::file_size(sidecar) == 8);
+        std::filesystem::remove(sidecar);
+    }
 }
 
 }  // namespace anof::infrastructure::sqlite

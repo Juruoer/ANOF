@@ -18,7 +18,7 @@ Result<CreateDirectoryResult> CreateDirectory::execute(const RequestContext& con
 
     // 所有提前返回都由同一事务的 RAII 析构回滚；这里不自动重试任何一步。
     const auto createdAt = clock_.now();
-    auto principal = transaction->authorization().requireActiveSession(context.sessionDigest, createdAt);
+    auto principal = transaction->authorization().requireActiveSession(context.credential, createdAt);
     if (!principal) return principal.error();
     auto found = transaction->spaces().find(command.spaceId);
     if (!found) return found.error();
@@ -44,13 +44,13 @@ Result<CreateDirectoryResult> CreateDirectory::execute(const RequestContext& con
 
     // 复验自然到期及身份一致性；账户／权限的并发修改仍由事务隔离保护。
     const auto checkedAt = clock_.now();
-    auto verified = transaction->authorization().requireActiveSession(context.sessionDigest, checkedAt);
+    auto verified = transaction->authorization().requireActiveSession(context.credential, checkedAt);
     if (!verified) return verified.error();
     if (verified.value().userId != principal.value().userId || verified.value().authEpoch != principal.value().authEpoch ||
         verified.value().role != principal.value().role) {
         return ErrorCode::Unauthenticated;
     }
-    auto audited = transaction->audit().append({ principal.value().userId, space.id, nodeId.value(),
+    auto audited = transaction->directoryAudit().append({ principal.value().userId, space.id, nodeId.value(),
                                                 command.parentId, context.requestId, checkedAt });
     if (!audited) return audited.error();
 

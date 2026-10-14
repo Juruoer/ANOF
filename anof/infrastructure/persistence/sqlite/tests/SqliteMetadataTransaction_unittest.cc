@@ -1,9 +1,10 @@
+#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestStore.h>
 #define BOOST_TEST_MODULE AnofSqliteMetadataTransaction
 #include <boost/test/unit_test.hpp>
 
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataTransaction.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteMigration.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
 
 #include <sqlite3.h>
@@ -78,18 +79,18 @@ public:
         return std::move(result).value();
     }
     std::unique_ptr<MetadataStore> store() {
-        auto result = openSqliteMetadataStore(path(), { 0 });
+        auto result = testing::openTestMetadataStore(path(), { 0 });
         BOOST_REQUIRE(result);
         return std::move(result).value();
     }
     void seed() {
-        BOOST_REQUIRE(migrateSqliteDatabase(path(), { 0 }));
+        BOOST_REQUIRE(createSqliteDatabase(path(), { 0 }));
         auto connection = raw();
         BOOST_REQUIRE(connection->beginWrite());
-        BOOST_REQUIRE(connection->execute("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0), (" + quoted(kMember) + ", 0, 1, 0)"));
+        BOOST_REQUIRE(connection->execute("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0, 'admin', 'Administrator', '" + std::string("$argon2id$v=19$m=8192,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") + "', 1, 1, 0, 0), (" + quoted(kMember) + ", 0, 1, 0, 'member', 'Member', '" + std::string("$argon2id$v=19$m=8192,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") + "', 1, 1, 0, 0)"));
         addSpace(*connection, kPrivate, kPrivateRoot, false);
         addSpace(*connection, kPublic, kPublicRoot, true);
-        auto statement = prepare(*connection, "INSERT INTO sessions VALUES (?1, ?2, 0, ?3, 0)");
+        auto statement = prepare(*connection, "INSERT INTO sessions VALUES (?1, ?2, 0, ?3, 0, -9223372036854775808, 'bearer')");
         BOOST_REQUIRE(statement->bindBlob(1, kDigest.bytes().data(), kDigest.bytes().size()));
         BOOST_REQUIRE(statement->bindText(2, kUser));
         BOOST_REQUIRE(statement->bindInt64(3, kExpires.time_since_epoch().count()));
@@ -109,7 +110,7 @@ private:
 };
 
 void expectIdentity(MetadataTransaction& transaction, const char* user, UserRole role, std::int64_t epoch = 0) {
-    auto identity = transaction.authorization().requireActiveSession(kDigest, kNow);
+    auto identity = transaction.authorization().requireActiveSession({ kDigest, CredentialMode::Bearer }, kNow);
     BOOST_REQUIRE(identity);
     BOOST_CHECK(identity.value().userId == UserId::parse(user).value());
     BOOST_CHECK(identity.value().role == role);
@@ -118,9 +119,9 @@ void expectIdentity(MetadataTransaction& transaction, const char* user, UserRole
 
 }  // namespace
 
-BOOST_AUTO_TEST_CASE(store_requires_migrated_database_and_exposes_typed_ports) {
+BOOST_AUTO_TEST_CASE(store_requires_existing_database_and_exposes_typed_ports) {
     Database database;
-    errorIs(openSqliteMetadataStore(database.path()), ErrorCode::InternalError);
+    errorIs(testing::openTestMetadataStore(database.path()), ErrorCode::InternalError);
     BOOST_CHECK(!std::filesystem::exists(database.path()));
     database.seed();
     auto store = database.store();
@@ -151,17 +152,17 @@ BOOST_AUTO_TEST_CASE(session_failures_are_uniform_and_failed_transactions_cannot
         "UPDATE sessions SET expires_at=1000000",
         "UPDATE sessions SET expires_at=999999",
         "UPDATE sessions SET revoked=1",
-        "UPDATE users SET enabled=0 WHERE id=" + quoted(kUser),
-        "UPDATE users SET auth_epoch=1 WHERE id=" + quoted(kUser),
+        "UPDATE users SET enabled=0 WHERE id=" + quoted(kMember),
+        "UPDATE users SET auth_epoch=1 WHERE id=" + quoted(kMember),
         "UPDATE sessions SET auth_epoch=1"
     };
     for (const auto& change : changes) {
         Database database;
         database.seed();
-        { auto connection = database.raw(); BOOST_REQUIRE(connection->execute(change)); }
+        { auto connection = database.raw(); BOOST_REQUIRE(connection->execute("UPDATE sessions SET user_id=" + quoted(kMember))); BOOST_REQUIRE(connection->execute(change)); }
         auto store = database.store();
         auto transaction = begin(*store);
-        errorIs(transaction->authorization().requireActiveSession(kDigest, kNow), ErrorCode::Unauthenticated);
+        errorIs(transaction->authorization().requireActiveSession({ kDigest, CredentialMode::Bearer }, kNow), ErrorCode::Unauthenticated);
         errorIs(transaction->commit(), ErrorCode::InternalError);
         errorIs(transaction->spaces().find(SpaceId::parse(kPublic).value()), ErrorCode::InvalidArgument);
         auto next = begin(*store);
@@ -177,12 +178,12 @@ BOOST_AUTO_TEST_CASE(session_digest_is_exact_and_expiry_is_rechecked_with_suppli
         auto transaction = begin(*store);
         auto bytes = kDigest.bytes();
         bytes.back() = 1;
-        errorIs(transaction->authorization().requireActiveSession(SessionDigest(bytes), kNow), ErrorCode::Unauthenticated);
+        errorIs(transaction->authorization().requireActiveSession({ SessionDigest(bytes), CredentialMode::Bearer }, kNow), ErrorCode::Unauthenticated);
     }
     auto transaction = begin(*store);
-    auto almostExpired = transaction->authorization().requireActiveSession(kDigest, kExpires - std::chrono::microseconds(1));
+    auto almostExpired = transaction->authorization().requireActiveSession({ kDigest, CredentialMode::Bearer }, kExpires - std::chrono::microseconds(1));
     BOOST_REQUIRE(almostExpired);
-    errorIs(transaction->authorization().requireActiveSession(kDigest, kExpires), ErrorCode::Unauthenticated);
+    errorIs(transaction->authorization().requireActiveSession({ kDigest, CredentialMode::Bearer }, kExpires), ErrorCode::Unauthenticated);
     errorIs(transaction->commit(), ErrorCode::InternalError);
 }
 
@@ -220,7 +221,7 @@ BOOST_AUTO_TEST_CASE(old_transaction_cannot_read_commit_or_rollback_new_transact
     errorIs(store->beginWrite(), ErrorCode::InvalidArgument);
     BOOST_REQUIRE(old->commit());
     auto current = begin(*store);
-    errorIs(oldAuthorization.requireActiveSession(kDigest, kNow), ErrorCode::InvalidArgument);
+    errorIs(oldAuthorization.requireActiveSession({ kDigest, CredentialMode::Bearer }, kNow), ErrorCode::InvalidArgument);
     errorIs(oldSpaces.find(SpaceId::parse(kPublic).value()), ErrorCode::InvalidArgument);
     errorIs(old->commit(), ErrorCode::InvalidArgument);
     old.reset();
@@ -247,7 +248,7 @@ BOOST_AUTO_TEST_CASE(independent_connection_cannot_revoke_between_authentication
     BOOST_REQUIRE(writer->execute("UPDATE sessions SET revoked=1"));
     BOOST_REQUIRE(writer->commit());
     auto next = begin(*store);
-    errorIs(next->authorization().requireActiveSession(kDigest, kNow), ErrorCode::Unauthenticated);
+    errorIs(next->authorization().requireActiveSession({ kDigest, CredentialMode::Bearer }, kNow), ErrorCode::Unauthenticated);
 }
 
 BOOST_AUTO_TEST_CASE(read_repositories_use_the_same_connection_and_destructor_rolls_back) {
@@ -257,7 +258,7 @@ BOOST_AUTO_TEST_CASE(read_repositories_use_the_same_connection_and_destructor_ro
     auto observer = database.raw();
     bool active = false;
     {
-        SqliteMetadataTransaction transaction(*connection, active);
+        SqliteMetadataTransaction transaction(*connection, active, { 8192, 1, 1 });
         BOOST_REQUIRE(transaction.begin());
         BOOST_CHECK(active);
         BOOST_REQUIRE(connection->execute("UPDATE sessions SET user_id=" + quoted(kMember)));
@@ -272,7 +273,7 @@ BOOST_AUTO_TEST_CASE(read_repositories_use_the_same_connection_and_destructor_ro
     BOOST_CHECK(!active);
     BOOST_CHECK(!connection->inTransaction());
     BOOST_TEST(scalar(*observer, "SELECT count(*) FROM spaces") == 2);
-    SqliteMetadataTransaction next(*connection, active);
+    SqliteMetadataTransaction next(*connection, active, { 8192, 1, 1 });
     BOOST_REQUIRE(next.begin());
     expectIdentity(next, kUser, UserRole::Administrator);
     BOOST_REQUIRE(next.commit());
@@ -284,22 +285,22 @@ BOOST_AUTO_TEST_CASE(commit_persists_and_constraint_failure_closes_transaction) 
     auto connection = database.raw();
     bool active = false;
     {
-        SqliteMetadataTransaction transaction(*connection, active);
+        SqliteMetadataTransaction transaction(*connection, active, { 8192, 1, 1 });
         BOOST_REQUIRE(transaction.begin());
         BOOST_REQUIRE(connection->execute("UPDATE sessions SET user_id=" + quoted(kMember)));
         BOOST_REQUIRE(transaction.commit());
     }
     { auto observer = database.store(); auto transaction = begin(*observer); expectIdentity(*transaction, kMember, UserRole::Member); }
-    SqliteMetadataTransaction failed(*connection, active);
+    SqliteMetadataTransaction failed(*connection, active, { 8192, 1, 1 });
     BOOST_REQUIRE(failed.begin());
-    BOOST_REQUIRE(connection->execute("UPDATE users SET enabled=0 WHERE id=" + quoted(kUser)));
+    BOOST_REQUIRE(connection->execute("UPDATE users SET enabled=0 WHERE id=" + quoted(kMember)));
     BOOST_REQUIRE(connection->execute("INSERT INTO spaces VALUES (" + quoted(kMissing) + ", 0, " + quoted(kMember) + ", " + quoted(kMissing) + ")"));
     errorIs(failed.commit(), ErrorCode::IntegrityError);
     BOOST_CHECK(!active);
-    errorIs(failed.authorization().requireActiveSession(kDigest, kNow), ErrorCode::InvalidArgument);
+    errorIs(failed.authorization().requireActiveSession({ kDigest, CredentialMode::Bearer }, kNow), ErrorCode::InvalidArgument);
     errorIs(failed.commit(), ErrorCode::InvalidArgument);
-    BOOST_TEST(scalar(*connection, "SELECT enabled FROM users WHERE id=" + quoted(kUser)) == 1);
-    SqliteMetadataTransaction next(*connection, active);
+    BOOST_TEST(scalar(*connection, "SELECT enabled FROM users WHERE id=" + quoted(kMember)) == 1);
+    SqliteMetadataTransaction next(*connection, active, { 8192, 1, 1 });
     BOOST_REQUIRE(next.begin());
     BOOST_REQUIRE(next.commit());
 }
@@ -320,10 +321,10 @@ BOOST_AUTO_TEST_CASE(corrupt_authentication_values_are_integrity_errors) {
         auto store = database.store();
         auto connection = database.raw();
         // 仅测试故意制造持久化损坏；先打开 store，避免启动外键检查提前拒绝坏库。
-        BOOST_REQUIRE(connection->execute("PRAGMA ignore_check_constraints=ON; PRAGMA foreign_keys=OFF"));
+        BOOST_REQUIRE(connection->execute("PRAGMA ignore_check_constraints=ON; PRAGMA foreign_keys=OFF; DROP TRIGGER users_identity_update; DROP TRIGGER users_delete"));
         BOOST_REQUIRE(connection->execute(change));
         auto transaction = begin(*store);
-        errorIs(transaction->authorization().requireActiveSession(kDigest, kNow), ErrorCode::IntegrityError);
+        errorIs(transaction->authorization().requireActiveSession({ kDigest, CredentialMode::Bearer }, kNow), ErrorCode::IntegrityError);
         errorIs(transaction->commit(), ErrorCode::InternalError);
     }
 }
@@ -354,13 +355,13 @@ BOOST_AUTO_TEST_CASE(automatic_rollback_cannot_fall_through_to_implicit_reads_or
     database.seed();
     auto connection = database.raw();
     bool active = false;
-    auto old = std::make_unique<SqliteMetadataTransaction>(*connection, active);
+    auto old = std::make_unique<SqliteMetadataTransaction>(*connection, active, PasswordHashLimits{ 8192, 1, 1 });
     BOOST_REQUIRE(old->begin());
-    errorIs(connection->execute("INSERT OR ROLLBACK INTO users VALUES (" + quoted(kUser) + ", 0, 1, 0)"), ErrorCode::IntegrityError);
+    errorIs(connection->execute("INSERT OR ROLLBACK INTO users SELECT * FROM users WHERE id=" + quoted(kUser)), ErrorCode::IntegrityError);
     BOOST_CHECK(!connection->inTransaction());
-    errorIs(old->authorization().requireActiveSession(kDigest, kNow), ErrorCode::InternalError);
+    errorIs(old->authorization().requireActiveSession({ kDigest, CredentialMode::Bearer }, kNow), ErrorCode::InternalError);
     errorIs(old->commit(), ErrorCode::InternalError);
-    SqliteMetadataTransaction next(*connection, active);
+    SqliteMetadataTransaction next(*connection, active, { 8192, 1, 1 });
     BOOST_REQUIRE(next.begin());
     old.reset();
     expectIdentity(next, kUser, UserRole::Administrator);
@@ -373,7 +374,7 @@ BOOST_AUTO_TEST_CASE(commit_failure_closes_repositories_and_preserves_uncertain_
         database.seed();
         auto connection = database.raw();
         bool active = false;
-        SqliteMetadataTransaction transaction(*connection, active);
+        SqliteMetadataTransaction transaction(*connection, active, { 8192, 1, 1 });
         BOOST_REQUIRE(transaction.begin());
         auto denyEnd = [](void* state, int operation, const char* first, const char*, const char*, const char*) -> int {
             if (operation != SQLITE_TRANSACTION || !first) return SQLITE_OK;
@@ -386,7 +387,7 @@ BOOST_AUTO_TEST_CASE(commit_failure_closes_repositories_and_preserves_uncertain_
         errorIs(transaction.spaces().find(SpaceId::parse(kPublic).value()), ErrorCode::InvalidArgument);
         errorIs(transaction.commit(), ErrorCode::InvalidArgument);
         BOOST_REQUIRE_EQUAL(sqlite3_set_authorizer(connection->handle(), nullptr, nullptr), SQLITE_OK);
-        SqliteMetadataTransaction next(*connection, active);
+        SqliteMetadataTransaction next(*connection, active, { 8192, 1, 1 });
         if (denyRollback) errorIs(next.begin(), ErrorCode::InternalError);
         else { BOOST_REQUIRE(next.begin()); BOOST_REQUIRE(next.commit()); }
     }
@@ -400,7 +401,7 @@ BOOST_AUTO_TEST_CASE(closed_quota_and_audit_repositories_cannot_use_a_successor_
     const auto root = NodeId::parse(kPublicRoot).value();
     auto old = begin(*store);
     auto& quotas = old->quotas();
-    auto& audit = old->audit();
+    auto& audit = old->directoryAudit();
     BOOST_REQUIRE(old->commit());
     auto next = begin(*store);
     errorIs(quotas.chargeUsed(SpaceQuota{ space }, { ByteCount{}, NodeCount::from(1).value() }), ErrorCode::InvalidArgument);

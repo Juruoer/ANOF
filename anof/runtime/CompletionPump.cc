@@ -1,3 +1,4 @@
+#include <anof/runtime/internal/ShutdownTrace.h>
 #include <anof/runtime/CompletionPump.h>
 
 #include <muduox/net/EventLoop.h>
@@ -22,6 +23,7 @@ struct CompletionPump::State : std::enable_shared_from_this<State> {
     bool recovery = false;
     bool draining = false;
     std::size_t failures = 0;
+    std::chrono::steady_clock::time_point lastRecovery = std::chrono::steady_clock::now();
 
     State(muduox::net::EventLoop& owner, Drain consume, Idle idleCallback, Post enqueue)
         : loop(owner), drain(std::move(consume)), onIdle(std::move(idleCallback)), post(std::move(enqueue)) {}
@@ -71,6 +73,12 @@ struct CompletionPump::State : std::enable_shared_from_this<State> {
     }
 
     void recover() noexcept {
+        if (internal::shutdownTraceEnabled()) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto gap = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastRecovery).count();
+            if (gap > 100) internal::shutdownTrace("pump", "recovery_gap_ms", this, static_cast<long>(gap));
+            lastRecovery = now;
+        }
         loop.assertInLoopThread();
         bool retry;
         bool isIdle;
@@ -91,6 +99,8 @@ CompletionPump::CompletionPump(muduox::net::EventLoop& loop, Drain drain, Idle i
     if (!post) post = [&loop](std::function<void()> callback) { loop.queueInLoop(std::move(callback)); };
     state_ = std::make_shared<State>(loop, std::move(drain), std::move(idleCallback), std::move(post));
     std::weak_ptr<State> weak = state_;
+    internal::shutdownTrace("pump", "bind_state", this);
+    internal::shutdownTrace("pump", "state", state_.get());
     state_->recoveryTimer = loop.runEvery(0.01, [weak] {
         if (auto self = weak.lock()) self->recover();
     });

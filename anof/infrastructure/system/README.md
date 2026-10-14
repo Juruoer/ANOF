@@ -31,7 +31,7 @@
 
 [CMakeLists.txt](CMakeLists.txt) 把实现加入 `anof_infrastructure`，无需新增系统库依赖。开启 `ANOF_BUILD_TESTS` 时提供：
 
-- `anof_system_headers_check`：SystemClock.h 与 LinuxInstanceLock.h 独立编译，仅依赖 `anof_application`。
+- `anof_system_headers_check`：SystemClock.h、LinuxInstanceLock.h 与 LinuxInstanceInitializer.h 独立编译，仅依赖 `anof_application`。
 - `anof_system_clock_unittest`：[4 个 Boost.Test 案例](tests/SystemClock_unittest.cc)，CTest 超时 15 秒。覆盖类型与生产工厂调用、epoch 前后的取整、2038／2106 数值及负时间、倒退输入、原生最小／最大值和邻近整微秒边界。
 
 从项目根目录运行：
@@ -75,3 +75,32 @@ lease 保留根目录、`.anof` 目录及锁描述符，供内部工具稳定访
 cmake --build cmake-build-debug --target anof_instance_lock_unittest anof_system_clock_unittest anof_system_headers_check --parallel 2
 ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_(instance_lock|system_clock)_unittest$' -j 1
 ```
+
+## 初始化文件与 lease
+
+[LinuxInstanceInitializer.h](LinuxInstanceInitializer.h) 提供 `makeLinuxInstanceInitializer()`，返回 `InitResult<std::unique_ptr<InstanceInitializer>>`。构造不访问文件系统；`create(root, identity)` 要求既有、当前 UID 所有的空 0700 根，原子创建 `.anof` 并持有与普通运行相同的稳定内核锁。InitializationLease 独占 InstanceLease，`lease()` 仅供借用；工厂对象可先销毁，lease 析构只关闭资源，不清理半成品。文件操作同步执行，不属于 HTTP I/O loop。
+
+创建成功意味着锁文件及 pending 已同步。已有 `.anof`（包括其他类型）返回 AlreadyExists，锁竞争返回 Busy。不会创建任意祖先、修改 umask、补改权限或覆盖已有文件。`openPending(root)` 只打开已有锁，不补建缺失锁文件，要求可信 pending 和完整配置；缺失必要文件返回 IncompleteInitialization。每次写操作复验根、实例目录、锁文件及 pending 的身份。
+
+| 文件 | 当前表示与上限 |
+|---|---|
+| initialization.pending | 最多 4096 字节；精确五字段：version=1、operation_id、instance_id、target_schema=2、target_format=2 |
+| config.toml | 最多 65536 字节；完整六个配置键，见[配置参考](../config/README.md) |
+| instance.json | 最多 4096 字节；仅 instance_id、format_version=2 |
+
+JSON 严格拒绝 BOM、重复／未知字段、嵌套值、非整数版本及尾随 JSON；ID 为小写规范非 nil UUID。格式不合法为 IntegrityError，不支持的整数版本为 UnsupportedFormat。新文件均为 0600、单链接普通文件，描述符带 CLOEXEC；只读检查沿用既有工具允许 0400 或 0600。
+
+`writeConfiguration` 校验并写出完整 TOML，只能在新 lease 上成功一次；重新打开的 lease 不允许改写配置。文件发布使用包含 operation ID 的同目录临时名，独占创建、完整写入、fsync、renameat2(RENAME_NOREPLACE)，再同步 `.anof` 和根。失败保留现场，不自动重试、截断或清理临时文件。格式发布可复用同一操作留下的完整、匹配且安全的格式临时文件；损坏或不匹配的临时文件保留并拒绝。
+
+`publishFormat()` 要求配置仍与 lease 保留的值一致；已有匹配格式只复验和同步，不重写内容。成功后才允许 `clearPending()`；后者核对 pending 的 ID 和 inode、配置及格式，删除 pending 并同步目录。发布后同步失败，以及无法确认 rename／unlink 结果的错误，返回 PublicationOutcomeUnknown，不表示回滚；其他错误保留对应 stage。错误结果不包含文件内容。
+
+这些接口只实现文件协议，不打开数据库，也不证明引导完成。装配方必须在同一 lease 下完成数据库引导或 `InstanceBootstrap::verifyComplete`，关闭维护连接后才能发布格式并清除 pending。[SQLite Bootstrap 与启动维护](../persistence/sqlite/README.md) 已实现上述数据库检查；文件模块测试本身不代表根 CLI 的 `init`、`--finish` 或 serve 已接通。
+
+`anof_instance_initializer_unittest` 的 [19 个案例](tests/InstanceInitializer_unittest.cc) 使用小型私有临时目录，覆盖重复创建、文件权限／路径／大小、严格 JSON、配置不覆盖、标记和锁替换、跨进程锁、短写与 EINTR、写入／同步／rename／unlink 故障及格式发布前后进程终止。内部 syscall 替身只用于故障测试；进程退出与故障注入不证明硬件断电持久性。CTest 超时 30 秒，子进程 alarm 为 5 秒。
+
+```sh
+cmake --build cmake-build-debug --target anof_instance_initializer_unittest anof_instance_lock_unittest anof_instance_configuration_unittest anof_system_headers_check anof_config_headers_check --parallel 2
+ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_(instance_initializer|instance_lock|instance_configuration)_unittest$' -j 1
+```
+
+Release 使用现有 `cmake-build-release` 及相同目标。测试中的文件发布独立于数据库，仅验证上述文件边界。

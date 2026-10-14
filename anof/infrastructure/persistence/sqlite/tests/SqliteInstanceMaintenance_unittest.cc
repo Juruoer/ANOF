@@ -1,8 +1,9 @@
 #define BOOST_TEST_MODULE AnofSqliteInstanceMaintenance
 #include <boost/test/unit_test.hpp>
+#include <anof/infrastructure/persistence/sqlite/tests/BootstrapFixture.h>
 
 #include <anof/infrastructure/persistence/sqlite/SqliteInstanceMaintenance.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteMigration.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
 
@@ -19,7 +20,7 @@
 
 namespace anof::infrastructure::sqlite {
 namespace {
-constexpr const char* kFormat = R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":1})";
+constexpr const char* kFormat = R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":2})";
 
 template <typename T>
 void errorIs(const Result<T>& result, ErrorCode code) {
@@ -44,7 +45,7 @@ struct Instance {
         auto acquired = locks->acquire(root);
         BOOST_REQUIRE(acquired);
         lease = std::move(acquired).value();
-        auto factory = makeSqliteInstanceMaintenance();
+        auto factory = makeSqliteInstanceMaintenance({ testing::bootstrapBudget, {} });
         BOOST_REQUIRE(factory && factory.value());
         maintenance = std::move(factory).value();
         write("instance.json", kFormat);
@@ -63,8 +64,7 @@ struct Instance {
         BOOST_REQUIRE(::chmod(path(name).c_str(), 0600) == 0);
     }
     void database() {
-        write("metadata.sqlite3", "");
-        BOOST_REQUIRE(migrateSqliteDatabase(path("metadata.sqlite3")));
+        testing::createBootstrappedTestDatabase(path("metadata.sqlite3"));
     }
     std::unique_ptr<SqliteConnection> open() {
         auto result = openSqliteDatabase(path("metadata.sqlite3"));
@@ -99,7 +99,7 @@ BOOST_AUTO_TEST_CASE(valid_instance_closes_resources_and_retains_lease) {
     {
         auto connection = instance.open();
         BOOST_REQUIRE(connection->beginWrite());
-        BOOST_CHECK_EQUAL(scalar(*connection, "SELECT count(*) FROM users"), 0);
+        BOOST_CHECK_EQUAL(scalar(*connection, "SELECT count(*) FROM users"), 1);
         BOOST_CHECK_EQUAL(scalar(*connection, "SELECT count(*) FROM sessions"), 0);
         BOOST_REQUIRE(connection->rollback());
     }
@@ -111,7 +111,7 @@ BOOST_AUTO_TEST_CASE(format_is_strict_and_precedes_database_open) {
     Instance instance;
     const std::string id = R"("12345678-1234-4234-8234-123456789abc")";
     const std::string prefix = "{\"instance_id\":" + id + ",\"format_version\":";
-    for (const char* value : { "0", "2", "-1", "true", "1.0", "1e0", "\"1\"", "null", "[]", "{}", "18446744073709551616" }) {
+    for (const char* value : { "0", "1", "-1", "true", "2.0", "2e0", "\"2\"", "null", "[]", "{}", "18446744073709551616" }) {
         instance.write("instance.json", prefix + value + "}");
         errorIs(instance.verify(), ErrorCode::IntegrityError);
     }
@@ -119,10 +119,10 @@ BOOST_AUTO_TEST_CASE(format_is_strict_and_precedes_database_open) {
              std::string(""), std::string("[]"), std::string("{}"),
              prefix + "1,\"format_version\":1}", prefix + "1,\"instance_id\":" + id + "}",
              prefix + "1,\"unknown\":0}", std::string(kFormat) + "{}", std::string("\xef\xbb\xbf") + kFormat,
-             std::string(R"({"instance_id":"00000000-0000-0000-0000-000000000000","format_version":1})"),
-             std::string(R"({"instance_id":"12345678-1234-4234-8234-123456789ABC","format_version":1})"),
-             std::string(R"({"instance_id":true,"format_version":1})"),
-             std::string(R"({"instance_id":{},"format_version":1})"),
+             std::string(R"({"instance_id":"00000000-0000-0000-0000-000000000000","format_version":2})"),
+             std::string(R"({"instance_id":"12345678-1234-4234-8234-123456789ABC","format_version":2})"),
+             std::string(R"({"instance_id":true,"format_version":2})"),
+             std::string(R"({"instance_id":{},"format_version":2})"),
              std::string("{\"instance_id\":\"\xff\",\"format_version\":1}"),
              std::string(R"({"instance_id":"12345678-1234-4234-8234-123456789abc"})") }) {
         instance.write("instance.json", text);
@@ -164,12 +164,12 @@ BOOST_AUTO_TEST_CASE(future_schema_is_not_migrated) {
     instance.database();
     {
         auto connection = instance.open();
-        BOOST_REQUIRE(connection->execute("UPDATE schema_migrations SET version=2"));
+        BOOST_REQUIRE(connection->execute("UPDATE schema_info SET version=3"));
     }
-    errorIs(instance.verify(), ErrorCode::InternalError);
+    errorIs(instance.verify(), ErrorCode::IntegrityError);
     auto raw = SqliteConnection::open(instance.path("metadata.sqlite3"));
     BOOST_REQUIRE(raw);
-    BOOST_CHECK_EQUAL(scalar(*raw.value(), "SELECT version FROM schema_migrations"), 2);
+    BOOST_CHECK_EQUAL(scalar(*raw.value(), "SELECT version FROM schema_info"), 3);
 }
 
 BOOST_AUTO_TEST_CASE(schema_and_foreign_key_damage_are_rejected) {
@@ -189,25 +189,21 @@ BOOST_AUTO_TEST_CASE(schema_and_foreign_key_damage_are_rejected) {
     errorIs(instance.verify(), ErrorCode::IntegrityError);
 }
 
-BOOST_AUTO_TEST_CASE(full_integrity_check_detects_damage_not_found_by_schema_check) {
+BOOST_AUTO_TEST_CASE(full_integrity_check_rejects_invalid_data_with_unchanged_schema) {
     Instance instance;
     instance.database();
     {
         auto connection = instance.open();
-        BOOST_REQUIRE(connection->execute("CREATE TABLE integrity_probe(value INTEGER CHECK(value>0))"));
-        BOOST_REQUIRE(connection->execute("PRAGMA ignore_check_constraints=ON"));
-        BOOST_REQUIRE(connection->execute("INSERT INTO integrity_probe VALUES(-1)"));
-    }
-    {
-        auto schemaOnly = instance.open();
+        BOOST_REQUIRE(connection->execute("PRAGMA ignore_check_constraints=ON; UPDATE space_quotas SET used_bytes=-1"));
     }
     auto before = fdCount();
     for (int i = 0; i != 8; ++i) errorIs(instance.verify(), ErrorCode::IntegrityError);
     BOOST_CHECK_EQUAL(fdCount(), before);
-    auto connection = instance.open();
-    BOOST_CHECK_EQUAL(scalar(*connection, "SELECT value FROM integrity_probe"), -1);
-    BOOST_REQUIRE(connection->beginWrite());
-    BOOST_REQUIRE(connection->rollback());
+    auto connection = SqliteConnection::open(instance.path("metadata.sqlite3"));
+    BOOST_REQUIRE(connection);
+    BOOST_CHECK_EQUAL(scalar(*connection.value(), "SELECT min(used_bytes) FROM space_quotas"), -1);
+    BOOST_REQUIRE(connection.value()->beginWrite());
+    BOOST_REQUIRE(connection.value()->rollback());
 }
 
 BOOST_AUTO_TEST_CASE(unsafe_files_and_sidecars_are_rejected_before_sqlite) {
@@ -255,7 +251,7 @@ BOOST_AUTO_TEST_CASE(existing_safe_wal_sidecars_are_accepted) {
     instance.database();
     {
         auto connection = instance.open();
-        BOOST_REQUIRE(connection->execute("CREATE TABLE retained(value INTEGER); INSERT INTO retained VALUES(7)"));
+        BOOST_REQUIRE(connection->execute("UPDATE users SET revision=7"));
         int persist = 1;
         BOOST_REQUIRE_EQUAL(sqlite3_file_control(connection->handle(), "main", SQLITE_FCNTL_PERSIST_WAL, &persist), SQLITE_OK);
     }
@@ -263,7 +259,7 @@ BOOST_AUTO_TEST_CASE(existing_safe_wal_sidecars_are_accepted) {
     BOOST_REQUIRE(std::filesystem::exists(instance.path("metadata.sqlite3-shm")));
     BOOST_REQUIRE(instance.verify());
     auto connection = instance.open();
-    BOOST_CHECK_EQUAL(scalar(*connection, "SELECT value FROM retained"), 7);
+    BOOST_CHECK_EQUAL(scalar(*connection, "SELECT revision FROM users"), 7);
 }
 
 BOOST_AUTO_TEST_CASE(rollback_mode_is_rejected_without_conversion) {

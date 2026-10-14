@@ -1,6 +1,7 @@
 #pragma once
 
 #include <anof/application/ports/MetadataStore.h>
+#include <anof/application/RequestContext.h>
 #include <anof/application/ports/NodeIdGenerator.h>
 
 namespace anof {
@@ -9,11 +10,6 @@ struct CreateDirectoryCommand {
     SpaceId spaceId;
     NodeId parentId;
     std::string name;
-};
-
-struct RequestContext {
-    SessionDigest sessionDigest;
-    RequestId requestId;
 };
 
 struct CreateDirectoryResult {

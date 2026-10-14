@@ -2,6 +2,7 @@
 
 #include <anof/application/maintenance/PrepareInstance.h>
 #include <anof/runtime/AnofRuntime.h>
+#include <anof/runtime/IdentityExecutor.h>
 #include <anof/transport/http/CreateDirectoryHandler.h>
 
 #include <memory>
@@ -19,7 +20,7 @@ struct InstanceCrypto {
 class InstanceServer {
 public:
     InstanceServer(muduox::net::EventLoop& loop, PreparedInstance prepared, InstanceCrypto crypto,
-                   MetadataExecutor::Factory worker, http::HttpObservation httpObservation = {},
+                   MetadataExecutor::Factory worker, IdentityExecutor::Factory passwordWorker, http::HttpObservation httpObservation = {},
                    http::DirectoryTaskObserver taskObservation = {});
     // 已启动时须先到 Stopped，并在自身回调外析构；lease 最后释放。
     ~InstanceServer();
@@ -34,18 +35,23 @@ public:
     std::optional<std::uint16_t> port() const;
     MetadataExecutorSnapshot metadataSnapshot() const;
     std::size_t notificationExceptions() const;
+    IdentityDispatcher& identityDispatcher();
 
 private:
     void initialized(Result<void> result);
+    void identityInitialized(Result<void> result);
+    void stopMetadata();
     void notifyReady(Result<void> result);
     void finishIfStopped();
     muduox::net::EventLoop& loop_;
     PreparedInstance prepared_;
     InstanceCrypto crypto_;
     MetadataExecutor::Factory worker_;
+    IdentityExecutor::Factory passwordWorker_;
     http::HttpObservation httpObservation_;
     http::DirectoryTaskObserver taskObservation_;
     AnofRuntime runtime_;
+    IdentityExecutor identity_;
     std::unique_ptr<http::HttpApi> api_;
     std::unique_ptr<muduox::net::HttpServer> server_;
     MetadataExecutor::Started onReady_;

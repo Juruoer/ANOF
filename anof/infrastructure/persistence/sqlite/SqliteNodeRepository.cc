@@ -1,6 +1,7 @@
 #include <anof/infrastructure/persistence/sqlite/SqliteNodeRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSpaceRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteIdentitySql.h>
 #include <anof/domain/drive/DirectoryPolicy.h>
 
 #include <sqlite3.h>
@@ -21,7 +22,7 @@ Result<StoredNode> decodeNode(const SqliteStatement& statement) {
     auto id = readId<NodeId>(statement, 0);
     auto space = readId<SpaceId>(statement, 1);
     auto parentNull = statement.isNull(2);
-    auto name = statement.text(3);
+    auto name = statement.boundedTextView(3, 255);
     auto creator = readId<UserId>(statement, 4);
     auto revision = readQuantity<Revision>(statement, 5);
     auto created = readTime(statement, 6);
@@ -44,7 +45,31 @@ Result<StoredNode> decodeNode(const SqliteStatement& statement) {
     }
     if (!name.value().empty() && !validateDirectoryName(name.value())) return ErrorCode::IntegrityError;
     if (name.value().empty() && (parent || file || trashed.value())) return ErrorCode::IntegrityError;
-    return StoredNode{ { id.value(), space.value(), parent, std::move(name).value(), creator.value(), revision.value(), created.value(), updated.value() }, file, trashed.value() };
+    return StoredNode{ { id.value(), space.value(), parent, std::string(name.value()), creator.value(), revision.value(), created.value(), updated.value() }, file, trashed.value() };
+}
+
+constexpr const char* detailsQuery =
+    "SELECT n.id,n.space_id,n.parent_id,n.name,n.created_by,n.revision,n.created_at,n.updated_at,n.kind,n.trashed,n.blob_id,b.size,b.sha256 "
+    "FROM nodes n LEFT JOIN blobs b ON b.id=n.blob_id ";
+
+Result<NodeDetails> decodeDetails(const SqliteStatement& statement) {
+    auto node = decodeNode(statement);
+    if (!node) return node.error();
+    if (node.value().trashed) return ErrorCode::IntegrityError;
+    NodeDetails result{ std::move(node.value().metadata), DirectoryContent{} };
+    if (node.value().file) {
+        auto size = readQuantity<ByteCount>(statement, 11);
+        auto digest = statement.blob(12);
+        if (!size || !digest || digest.value().size() != 32) return ErrorCode::IntegrityError;
+        FileContentMetadata content{ size.value(), {} };
+        std::copy(digest.value().begin(), digest.value().end(), content.sha256.begin());
+        result.content = content;
+    } else {
+        auto size = statement.isNull(11);
+        auto digest = statement.isNull(12);
+        if (!size || !digest || !size.value() || !digest.value()) return ErrorCode::IntegrityError;
+    }
+    return result;
 }
 
 Result<bool> idExists(SqliteConnection& connection, NodeId id) {
@@ -122,6 +147,72 @@ Result<DirectoryPath> SqliteNodeRepository::findActiveDirectoryPath(SpaceId spac
     auto path = readPath(*space.value(), parentId);
     if (!path) return context_.fail(path.error());
     return std::move(path).value();
+}
+
+Result<std::optional<NodeDetails>> SqliteNodeRepository::find(NodeId id) {
+    auto query = detail::query(context_, std::string(detailsQuery) + "WHERE n.id=?1 AND n.trashed=0", { id.toString() });
+    if (!query) return query.error();
+    auto row = query.value()->step();
+    if (!row) return context_.fail(row.error());
+    if (!row.value()) return std::optional<NodeDetails>{};
+    auto node = decodeDetails(*query.value());
+    if (!node) return context_.fail(node.error());
+    SqliteSpaceRepository spaces(context_);
+    auto space = spaces.find(node.value().metadata.spaceId);
+    if (!space) return space.error();
+    if (!space.value()) return context_.fail(ErrorCode::IntegrityError);
+    auto path = readPath(*space.value(), id);
+    if (!path) {
+        if (path.error().code == ErrorCode::NotFound) return std::optional<NodeDetails>{};
+        if (path.error().code != ErrorCode::ParentNotDirectory) return context_.fail(path.error());
+    }
+    return std::optional<NodeDetails>{ std::move(node).value() };
+}
+
+Result<Page<NodeDetails, ChildPosition>> SqliteNodeRepository::listChildren(
+    SpaceId space, NodeId parent, PageSize size, std::optional<ChildPosition> after) {
+    auto path = findActiveDirectoryPath(space, parent);
+    if (!path) return path.error();
+    if (after && !validateDirectoryName(after->name)) return context_.fail(ErrorCode::InvalidArgument);
+    auto query = after ? detail::query(context_, std::string(detailsQuery) +
+        "WHERE n.space_id=?1 AND n.parent_id=?2 AND n.trashed=0 AND (n.name COLLATE BINARY,n.id)>(?3,?4) ORDER BY n.name COLLATE BINARY,n.id LIMIT ?5",
+        { space.toString(), parent.toString(), after->name, after->id.toString(), size.value() + 1 }) :
+        detail::query(context_, std::string(detailsQuery) +
+        "WHERE n.space_id=?1 AND n.parent_id=?2 AND n.trashed=0 ORDER BY n.name COLLATE BINARY,n.id LIMIT ?3",
+        { space.toString(), parent.toString(), size.value() + 1 });
+    if (!query) return query.error();
+    Page<NodeDetails, ChildPosition> result;
+    for (;;) {
+        auto row = query.value()->step();
+        if (!row) return context_.fail(row.error());
+        if (!row.value()) return result;
+        auto node = decodeDetails(*query.value());
+        if (!node) return context_.fail(node.error());
+        if (result.items.size() == static_cast<std::size_t>(size.value())) {
+            const auto& last = result.items.back().metadata;
+            result.next = ChildPosition{ last.name, last.id };
+            return result;
+        }
+        result.items.push_back(std::move(node).value());
+    }
+}
+
+Result<void> SqliteNodeRepository::insertRoot(const RootDirectory& root) {
+    SqliteSpaceRepository spaces(context_);
+    auto space = spaces.find(root.spaceId);
+    if (!space) return space.error();
+    if (!space.value() || space.value()->rootNodeId != root.id) return context_.fail(ErrorCode::IntegrityError);
+    if (space.value()->ownerId && *space.value()->ownerId != root.createdBy) return context_.fail(ErrorCode::IntegrityError);
+    if (space.value()->kind == SpaceKind::Public) {
+        auto creator = detail::query(context_, "SELECT 1 FROM users WHERE id=?1 AND role=1 AND enabled=1", { root.createdBy.toString() });
+        if (!creator) return creator.error();
+        auto row = creator.value()->step();
+        if (!row) return context_.fail(row.error());
+        if (!row.value()) return context_.fail(ErrorCode::IntegrityError);
+    }
+    return detail::one(context_, detail::write(context_,
+        "INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES(?1,?2,NULL,'',0,?3,NULL,1,0,?4,?4)",
+        { root.id.toString(), root.spaceId.toString(), root.createdBy.toString(), root.createdAt.time_since_epoch().count() }));
 }
 
 Result<DirectorySnapshot> SqliteNodeRepository::insertDirectory(const NewDirectory& directory) {

@@ -12,10 +12,11 @@ struct sqlite3;
 
 namespace anof::infrastructure::sqlite {
 
-enum class SqliteOpenMode { Existing, Create };
+// Inspect 不设置持久 journal_mode；其他模式只用于显式建库或内部原始连接。
+enum class SqliteOpenMode { Existing, Create, Inspect };
 
 // SQLite 内部基础设施，不是业务端口；连接必须比借用它的语句活得久。
-// 单线程使用，禁止共享到其他 worker。open 只配置连接，不执行 schema 迁移。
+// 单线程使用，禁止共享到其他 worker。open 只配置连接，不执行建库或 schema 升级。
 class SqliteConnection {
 public:
     static Result<std::unique_ptr<SqliteConnection>> open(
@@ -27,6 +28,8 @@ public:
     Result<void> execute(std::string_view sql);
     Result<void> verifySettings();
     Result<void> beginWrite();
+    Result<void> beginRead();
+    Result<void> endRead();
     Result<void> commit();
     Result<void> rollback();
     bool inTransaction() const noexcept;
@@ -39,7 +42,7 @@ public:
 
 private:
     explicit SqliteConnection(sqlite3* handle) : handle_(handle) {}
-    Result<void> configure(SqliteOptions options);
+    Result<void> configure(SqliteOptions options, SqliteOpenMode mode);
     sqlite3* handle_;
     bool usable_ = true;
     SqliteDiagnostic diagnostic_;

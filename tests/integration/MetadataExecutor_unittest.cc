@@ -40,6 +40,7 @@ public:
         inner_.reset();
         lifetime_.closedOn = std::this_thread::get_id();
     }
+    Result<std::unique_ptr<MetadataReadSnapshot>> beginRead() override { return inner_->beginRead(); }
     Result<std::unique_ptr<MetadataTransaction>> beginWrite() override { return inner_->beginWrite(); }
 private:
     std::unique_ptr<MetadataStore> inner_;
@@ -95,7 +96,7 @@ BOOST_AUTO_TEST_CASE(real_sqlite_worker_commits_and_closes_before_loop_stop) {
     }));
     BOOST_REQUIRE(drive(loop, [&] { return executor.snapshot().state == MetadataExecutorState::Ready; }));
     const auto submit = [&](SessionDigest digest, const std::string& name) {
-        auto accepted = executor.trySubmit({ digest, id<RequestId>(1) }, { space, root, name }, [&](auto completion) {
+        auto accepted = executor.trySubmit({ { digest, CredentialMode::Bearer }, id<RequestId>(1) }, { space, root, name }, [&](auto completion) {
             BOOST_CHECK(std::this_thread::get_id() == loopThread);
             results.push_back(std::move(completion));
         });

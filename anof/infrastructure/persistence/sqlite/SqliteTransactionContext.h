@@ -4,7 +4,7 @@
 
 namespace anof::infrastructure::sqlite {
 
-// 每个事务独立保存状态；旧事务结束后不得借连接的新事务继续读写。
+// 每个读快照／写事务独立保存状态；旧作用域结束后不得借连接的新事务继续访问。
 class SqliteTransactionContext {
 public:
     SqliteTransactionContext(SqliteConnection& connection, bool& storeActive) : connection_(connection), storeActive_(storeActive) {}
@@ -13,6 +13,7 @@ public:
     SqliteTransactionContext& operator=(const SqliteTransactionContext&) = delete;
 
     Result<void> begin();
+    Result<void> beginRead();
     Result<void> requireOpen();
     Result<void> commit();
     Error fail(Error error);
@@ -25,6 +26,7 @@ private:
     bool open_ = false;
     bool started_ = false;
     bool failed_ = false;
+    bool readOnly_ = false;
 };
 
 }  // namespace anof::infrastructure::sqlite

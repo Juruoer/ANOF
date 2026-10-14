@@ -1,6 +1,7 @@
 #pragma once
 
 #include <anof/application/ports/SessionTokenCodec.h>
+#include <anof/application/ports/IdentityDispatcher.h>
 #include <anof/transport/http/RequestTrace.h>
 #include <anof/application/drive/CreateDirectory.h>
 #include <muduox/net/http/HttpServer.h>
@@ -22,7 +23,7 @@ public:
     // ready 和 stream 必填；stream 收到自有身份上下文，但请求仍为借用。
     // 注入依赖及回调捕获资源须活过 server 的 HTTP 清理和全部外部任务完成。
     HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity,
-            std::function<bool()> ready, CreateDirectoryStream stream,
+            std::function<bool()> ready, CreateDirectoryStream stream, IdentityDispatcher& identityDispatcher,
             HttpObservation observation = {}, HttpApiOptions options = {});
     HttpApi(const HttpApi&) = delete;
     HttpApi& operator=(const HttpApi&) = delete;
@@ -30,6 +31,7 @@ public:
     void configure(muduox::net::HttpServer& server);
 
 private:
+    IdentityDispatcher& identityDispatcher_;
     muduox::net::HttpRequestSelector selector_;
     RequestTrace trace_;
     bool configured_ = false;

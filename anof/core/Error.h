@@ -5,6 +5,14 @@ namespace anof {
 enum class ErrorCode {
     InvalidArgument,
     InvalidName,
+    LoginConflict,
+    InviteUnavailable,
+    UserLimitReached,
+    Forbidden,
+    PreconditionFailed,
+    PreconditionRequired,
+    SessionLimitReached,
+    RateLimited, // 已接纳的多阶段任务可在身份读取后触发限流。
     Unauthenticated,
     NotFound,
     ParentNotDirectory,

@@ -1,0 +1,1 @@
+anof_add_unit_test(anof_identity_values_unittest IdentityValues_unittest.cc)

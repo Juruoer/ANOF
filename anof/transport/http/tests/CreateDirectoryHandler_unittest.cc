@@ -1,3 +1,4 @@
+#include <tests/diagnostics/WaitTrace.h>
 #define BOOST_TEST_MODULE CreateDirectoryHttp
 #include <boost/test/unit_test.hpp>
 #include <anof/transport/http/CreateDirectoryHandler.h>
@@ -55,7 +56,7 @@ public:
     int cancels = 0;
     std::vector<std::shared_ptr<Job>> jobs;
     explicit Dispatcher(EventLoop& value) : loop(value) {}
-    CreateDirectorySubmission trySubmit(RequestContext context, CreateDirectoryCommand command, CreateDirectoryCallback callback) override {
+    TaskSubmission trySubmit(RequestContext context, CreateDirectoryCommand command, CreateDirectoryCallback callback) override {
         loop.assertInLoopThread();
         ++submissions;
         if (throwOnSubmit) throw std::runtime_error("injected submit failure");
@@ -93,6 +94,7 @@ public:
     EventLoop loop;
     Codec codec;
     Identity identity;
+    UnexpectedIdentityDispatcher identityDispatcher;
     bool ready = true;
     bool throwReady = false;
     bool throwTaskObserver = false;
@@ -117,7 +119,7 @@ public:
               [this, stream = handler.stream()](auto context, const auto& request, const auto& writer) {
                   writers.push_back(writer);
                   return stream(context, request, writer);
-              }, {{}, [this](auto record) {
+              }, identityDispatcher, {{}, [this](auto record) {
                   exchanges.push_back(std::move(record));
                   if (throwHttpObserver) throw std::runtime_error("injected HTTP observer failure");
               }}, options) {
@@ -140,11 +142,21 @@ public:
         loop.loop();
         loop.cancel(poll); loop.cancel(deadline);
     }
-    void until(const std::function<bool()>& done) {
+    void until(const std::function<bool()>& done,
+               const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
+        anof::test::WaitTrace trace(file, line);
+        trace.event("begin");
         bool expired = false;
-        const auto poll = loop.runEvery(0.001, [&] { if (done()) loop.quit(); });
-        const auto deadline = loop.runAfter(3, [&] { expired = true; loop.quit(); });
-        loop.loop(); loop.cancel(poll); loop.cancel(deadline);
+        bool observedDone = false;
+        const auto poll = loop.runEvery(0.001, [&] {
+            observedDone = done();
+            if (observedDone) { trace.event("done", true); loop.quit(); }
+        });
+        const auto timeout = loop.runAfter(3, [&] {
+            trace.event("deadline", observedDone); expired = true; loop.quit();
+        });
+        loop.loop(); loop.cancel(poll); loop.cancel(timeout);
+        trace.event(expired ? "expired" : "returned", observedDone);
         BOOST_REQUIRE(!expired);
     }
     std::string exchange(std::string payload) {
@@ -215,10 +227,10 @@ BOOST_AUTO_TEST_CASE(invalidJsonNeverSubmits) {
 }
 BOOST_AUTO_TEST_CASE(submissionRejectionsHaveNoCompletion) {
     Fixture fixture;
-    for (auto error : {SubmitError::QueueFull, SubmitError::Stopping, SubmitError::InternalError}) {
+    for (auto error : {SubmitError::QueueFull, SubmitError::Stopping, SubmitError::InternalError, SubmitError::RateLimited}) {
         fixture.dispatcher.rejection = error;
         const auto wire = fixture.exchange(head(body().size()) + body());
-        status(wire, error == SubmitError::InternalError ? "500 Internal Server Error" : "503 Service Unavailable");
+        status(wire, error == SubmitError::InternalError ? "500 Internal Server Error" : error == SubmitError::RateLimited ? "429 Too Many Requests" : "503 Service Unavailable");
     }
     BOOST_CHECK_EQUAL(fixture.dispatcher.deliveries, 0);
     BOOST_CHECK(fixture.tasks.empty());

@@ -25,6 +25,8 @@ public:
     Result<bool> step();
     Result<std::int64_t> integer(int column) const;
     Result<std::string> text(int column) const;
+    // 仅 SQLite 内部即时解码；视图到下次 step/finalize 为止，不得返回业务调用方。
+    Result<std::string_view> boundedTextView(int column, std::size_t limit) const;
     Result<std::vector<std::uint8_t>> blob(int column) const;
     Result<bool> isNull(int column) const;
 

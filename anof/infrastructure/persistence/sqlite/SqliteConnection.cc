@@ -1,6 +1,8 @@
 #include <anof/infrastructure/persistence/sqlite/SqliteConnection.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
 
+#include <anof/infrastructure/persistence/sqlite/SqliteFunctions.h>
+
 #include <sqlite3.h>
 
 #include <string>
@@ -41,7 +43,7 @@ Result<std::unique_ptr<SqliteConnection>> SqliteConnection::open(
         return sqliteError(extended, SqliteOperation::Open);
     }
     auto connection = std::unique_ptr<SqliteConnection>(new SqliteConnection(handle));
-    auto configured = connection->configure(options);
+    auto configured = connection->configure(options, mode);
     if (!configured) return configured.error();
     return connection;
 }
@@ -57,12 +59,16 @@ Error SqliteConnection::recordError(int code, SqliteOperation operation) {
     return sqliteError(code, operation);
 }
 
-Result<void> SqliteConnection::configure(SqliteOptions options) {
+Result<void> SqliteConnection::configure(SqliteOptions options, SqliteOpenMode mode) {
     int code = sqlite3_extended_result_codes(handle_, 1);
     if (code != SQLITE_OK) return recordError(code, SqliteOperation::Configure);
     code = sqlite3_busy_timeout(handle_, options.busyTimeoutMs);
     if (code != SQLITE_OK) return recordError(code, SqliteOperation::Configure);
-    auto configured = execute("PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
+    auto functions = registerSqliteFunctions(handle_);
+    if (!functions) return functions.error();
+    auto configured = execute(mode == SqliteOpenMode::Inspect
+        ? "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;"
+        : "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
     if (!configured) return configured.error();
     return verifySettings();
 }
@@ -104,6 +110,29 @@ Result<void> SqliteConnection::beginWrite() {
     const int code = sqlite3_exec(handle_, "BEGIN IMMEDIATE", nullptr, nullptr, nullptr);
     if (code != SQLITE_OK) return recordError(code, SqliteOperation::Begin);
     return {};
+}
+
+Result<void> SqliteConnection::beginRead() {
+    if (!usable_) return ErrorCode::InternalError;
+    if (inTransaction()) return ErrorCode::InvalidArgument;
+    auto settings = verifySettings();
+    if (!settings) return settings.error();
+    auto restricted = execute("PRAGMA query_only=ON");
+    if (!restricted) return restricted.error();
+    auto begun = execute("BEGIN");
+    if (!begun) {
+        if (!execute("PRAGMA query_only=OFF")) usable_ = false;
+        return begun.error();
+    }
+    return {};
+}
+
+Result<void> SqliteConnection::endRead() {
+    auto ended = rollback();
+    if (!ended) return ended.error();
+    auto restored = execute("PRAGMA query_only=OFF");
+    if (!restored) usable_ = false;
+    return restored;
 }
 
 Result<void> SqliteConnection::rollback() {

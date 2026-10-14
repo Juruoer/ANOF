@@ -19,6 +19,11 @@ private:
     int fd_;
 };
 
+struct InstanceRoot {
+    std::filesystem::path root;
+    OwnedFd rootFd;
+};
+
 struct InstanceDirectories {
     std::filesystem::path root;
     OwnedFd rootFd;
@@ -26,11 +31,16 @@ struct InstanceDirectories {
 };
 
 ErrorCode filesystemError(int error) noexcept;
+Result<InstanceRoot> openInstanceRoot(const std::filesystem::path& root);
 Result<InstanceDirectories> openInstanceDirectories(const std::filesystem::path& root);
 // name 必须是单个普通路径组件；不创建。检查类型后才以读写模式打开，拒绝硬链接。
 Result<OwnedFd> openPrivateFile(int directory, const char* name, bool writable);
 Result<void> validatePrivateFile(int fd, bool writable);
 // 仅借用本适配器的 lease；借用期间必须保持 lease 存活。
 Result<int> instanceDirectory(const InstanceLease& lease);
+Result<int> instanceRootDirectory(const InstanceLease& lease);
+Result<int> instanceLockFile(const InstanceLease& lease);
+Result<void> validateInstanceLease(const InstanceLease& lease);
+Result<std::unique_ptr<InstanceLease>> acquireInstanceLease(InstanceDirectories directories, bool createLock);
 
 }  // namespace anof::infrastructure::system::detail

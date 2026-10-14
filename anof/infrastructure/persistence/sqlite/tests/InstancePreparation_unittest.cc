@@ -1,11 +1,13 @@
+#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestStore.h>
 #define BOOST_TEST_MODULE RealInstancePreparation
 #include <boost/test/unit_test.hpp>
+#include <anof/infrastructure/persistence/sqlite/tests/BootstrapFixture.h>
 
 #include <anof/application/maintenance/PrepareInstance.h>
 #include <anof/infrastructure/config/TomlInstanceConfiguration.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteInstanceMaintenance.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteMigration.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
 
 #include <sys/stat.h>
@@ -26,7 +28,7 @@
 namespace anof::infrastructure::sqlite {
 namespace {
 namespace fs = std::filesystem;
-constexpr const char* kFormat = R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":1})";
+constexpr const char* kFormat = R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":2})";
 
 template <typename T>
 void errorIs(const Result<T>& result, ErrorCode code) {
@@ -68,7 +70,7 @@ struct Fixture {
         BOOST_REQUIRE(::mkdir((root / ".anof").c_str(), 0700) == 0);
         auto lockFactory = system::makeLinuxInstanceLockProvider();
         auto configFactory = config::makeTomlInstanceConfigurationLoader();
-        auto maintenanceFactory = makeSqliteInstanceMaintenance();
+        auto maintenanceFactory = makeSqliteInstanceMaintenance({ testing::bootstrapBudget, {} });
         BOOST_REQUIRE(lockFactory && lockFactory.value());
         BOOST_REQUIRE(configFactory && configFactory.value());
         BOOST_REQUIRE(maintenanceFactory && maintenanceFactory.value());
@@ -96,8 +98,7 @@ struct Fixture {
         return { std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>() };
     }
     void database() {
-        write("metadata.sqlite3", "");
-        BOOST_REQUIRE(migrateSqliteDatabase(path("metadata.sqlite3")));
+        testing::createBootstrappedTestDatabase(path("metadata.sqlite3"));
     }
     Result<PreparedInstance> prepare() { return prepareInstance(root, *locks, *configuration, *maintenance); }
     void released(std::size_t descriptors) {
@@ -156,7 +157,7 @@ BOOST_AUTO_TEST_CASE(real_preparation_transfers_lock_and_worker_opens_its_own_st
         // 所有维护资源已关闭，只留下 lease 的根目录、.anof 和锁三个描述符。
         BOOST_CHECK_EQUAL(fdCount(), descriptors + 3);
         auto worker = std::async(std::launch::async, [path = fixture.path("metadata.sqlite3")] {
-            auto store = openSqliteMetadataStore(path);
+            auto store = openSqliteMetadataStore(path, { testing::bootstrapBudget, {} });
             if (!store) return false;
             auto transaction = store.value()->beginWrite();
             if (!transaction) return false;
@@ -243,7 +244,7 @@ BOOST_AUTO_TEST_CASE(maintenance_failures_preserve_categories_release_resources_
     };
     fs::remove(fixture.path("instance.json"));
     reject(ErrorCode::NotFound);
-    fixture.write("instance.json", R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":2})");
+    fixture.write("instance.json", R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":1})");
     reject(ErrorCode::IntegrityError);
     BOOST_CHECK(!fs::exists(fixture.path("metadata.sqlite3")));
     fixture.write("instance.json", kFormat);
@@ -257,16 +258,16 @@ BOOST_AUTO_TEST_CASE(maintenance_failures_preserve_categories_release_resources_
     {
         auto connection = openSqliteDatabase(fixture.path("metadata.sqlite3"));
         BOOST_REQUIRE(connection);
-        BOOST_REQUIRE(connection.value()->execute("UPDATE schema_migrations SET version=2"));
+        BOOST_REQUIRE(connection.value()->execute("UPDATE schema_info SET version=3"));
     }
     const auto futureDatabase = fixture.read("metadata.sqlite3");
-    reject(ErrorCode::InternalError);
+    reject(ErrorCode::IntegrityError);
     BOOST_CHECK(fixture.read("metadata.sqlite3") == futureDatabase);
     {
         // 仅测试夹具显式修复；生产准备流程不得自动修改版本。
         auto connection = SqliteConnection::open(fixture.path("metadata.sqlite3"));
         BOOST_REQUIRE(connection);
-        BOOST_REQUIRE(connection.value()->execute("UPDATE schema_migrations SET version=1; CREATE TABLE damaged(value INTEGER CHECK(value>0)); PRAGMA ignore_check_constraints=ON; INSERT INTO damaged VALUES(-1)"));
+        BOOST_REQUIRE(connection.value()->execute("UPDATE schema_info SET version=2; CREATE TABLE damaged(value INTEGER CHECK(value>0)); PRAGMA ignore_check_constraints=ON; INSERT INTO damaged VALUES(-1)"));
     }
     reject(ErrorCode::IntegrityError);
     {

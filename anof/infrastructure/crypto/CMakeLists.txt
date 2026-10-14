@@ -1,4 +1,12 @@
 target_sources(anof_infrastructure PRIVATE
+    SodiumPasswordPolicy.cc
+    SodiumPasswordHasher.cc
+    SodiumCredentialIssuer.cc
+    SodiumInviteTokenCodec.cc
+    SodiumIdentityIdGenerator.cc
+    internal/SecretBuffer.h
+    internal/PasswordWork.h
+    internal/RandomUuid.h
     SodiumSessionTokenCodec.cc
     SodiumRequestIdentity.cc
     SodiumNodeIdGenerator.cc
@@ -16,6 +24,11 @@ target_link_libraries(anof_infrastructure PRIVATE PkgConfig::Sodium)
 
 if (ANOF_BUILD_TESTS)
     set(crypto_headers
+        SodiumPasswordPolicy.h
+        SodiumPasswordHasher.h
+        SodiumCredentialIssuer.h
+        SodiumInviteTokenCodec.h
+        SodiumIdentityIdGenerator.h
         SodiumSessionTokenCodec.h
         SodiumRequestIdentity.h
         SodiumNodeIdGenerator.h

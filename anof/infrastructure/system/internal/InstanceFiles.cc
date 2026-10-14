@@ -49,7 +49,7 @@ Result<void> directoryPermissions(int fd, bool privateDirectory) {
 }
 }
 
-Result<InstanceDirectories> openInstanceDirectories(const std::filesystem::path& root) {
+Result<InstanceRoot> openInstanceRoot(const std::filesystem::path& root) {
     if (!root.is_absolute() || root.native().find('\0') != std::string::npos) return ErrorCode::InvalidArgument;
     std::vector<std::string> components;
     for (const auto& part : root.relative_path()) {
@@ -69,11 +69,18 @@ Result<InstanceDirectories> openInstanceDirectories(const std::filesystem::path&
         absolute /= components[i];
         current = std::move(next);
     }
+    return InstanceRoot{ std::move(absolute), std::move(current) };
+}
+
+Result<InstanceDirectories> openInstanceDirectories(const std::filesystem::path& root) {
+    auto opened = openInstanceRoot(root);
+    if (!opened) return opened.error();
+    auto& current = opened.value().rootFd;
     OwnedFd anof(::openat(current.get(), ".anof", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
     if (anof.get() < 0) return filesystemError(errno);
-    valid = directoryPermissions(anof.get(), true);
+    auto valid = directoryPermissions(anof.get(), true);
     if (!valid) return valid.error();
-    return InstanceDirectories{ std::move(absolute), std::move(current), std::move(anof) };
+    return InstanceDirectories{ std::move(opened.value().root), std::move(current), std::move(anof) };
 }
 
 Result<void> validatePrivateFile(int fd, bool writable) {

@@ -1,3 +1,5 @@
+#include <anof/runtime/internal/ShutdownTrace.h>
+#include <anof/runtime/InstancePasswordPolicy.h>
 #include <apps/anof/Serve.h>
 #include <apps/anof/ShutdownSignals.h>
 #include <anof/application/maintenance/PrepareInstance.h>
@@ -36,7 +38,7 @@ int serve(const std::filesystem::path& root) {
     auto signals = std::move(signalFactory).value();
     auto locks = infrastructure::system::makeLinuxInstanceLockProvider();
     auto configuration = infrastructure::config::makeTomlInstanceConfigurationLoader();
-    auto maintenance = infrastructure::sqlite::makeSqliteInstanceMaintenance();
+    auto maintenance = infrastructure::sqlite::makeSqliteInstanceMaintenance({ runtime::instancePasswordPolicy().verification, {} });
     if (!locks || !configuration || !maintenance) return failure("adapters", ErrorCode::InternalError, 4);
     auto prepared = prepareInstance(root, *locks.value(), *configuration.value(), *maintenance.value());
     if (!prepared) return failure("prepare", prepared.error().code, 3);
@@ -60,6 +62,7 @@ int serve(const std::filesystem::path& root) {
                 server->requestStop();
             } else if (request.value()) {
                 if (!signalStop) {
+                    runtime::internal::shutdownTrace("serve", "signal_consumed");
                     std::puts("ANOF_STOPPING");
                     std::fflush(stdout);
                 }
@@ -80,16 +83,18 @@ int serve(const std::filesystem::path& root) {
                 std::printf("ANOF_READY address=127.0.0.1 port=%u\n", static_cast<unsigned>(*server->port()));
                 std::fflush(stdout);
             }
-        }, [&] { stopped = true; loop.quit(); });
+        }, [&] { runtime::internal::shutdownTrace("serve", "stop_callback_quit"); stopped = true; loop.quit(); });
         if (!started) {
             loop.cancel(timer);
             return failure("startup", started.error().code, 4);
         }
         // 只有完整服务停止回调才能退出；外部 grace 不限制正在运行的 worker I/O。
         if (!stopped) loop.loop();
+        runtime::internal::shutdownTrace("serve", "loop_returned");
         loop.cancel(timer);
         if (server->state() != runtime::RuntimeState::Stopped) std::terminate();
         if (server->notificationExceptions() != 0) exitCode = failure("notifications", ErrorCode::InternalError, 5);
+        runtime::internal::shutdownTrace("serve", "destroy_instance");
         server.reset();  // 回调栈外释放 HTTP、worker、crypto，最后释放实例锁。
     }
     std::puts("ANOF_STOPPED");

@@ -1,32 +1,39 @@
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteMetadataStoreInternal.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataTransaction.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteMigration.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteMetadataReadSnapshot.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteIdentitySql.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
+#include <new>
+#include <anof/infrastructure/persistence/sqlite/SqliteInitializedState.h>
 
 namespace anof::infrastructure::sqlite {
-namespace {
-
-class SqliteMetadataStore final : public MetadataStore {
-public:
-    explicit SqliteMetadataStore(std::unique_ptr<SqliteConnection> connection) : connection_(std::move(connection)) {}
-    Result<std::unique_ptr<MetadataTransaction>> beginWrite() override {
-        if (active_) return ErrorCode::InvalidArgument;
-        // 所有可能分配内存的构造先完成；BEGIN 后的失败路径由事务上下文回滚。
-        auto transaction = std::make_unique<SqliteMetadataTransaction>(*connection_, active_);
+Result<std::unique_ptr<MetadataTransaction>> detail::MetadataStoreImpl::beginWrite() {
+    if (active_) return ErrorCode::InvalidArgument;
+    try {
+        auto transaction = std::make_unique<SqliteMetadataTransaction>(*connection_, active_, limits_);
         auto begun = transaction->begin();
         if (!begun) return begun.error();
         return std::unique_ptr<MetadataTransaction>(std::move(transaction));
-    }
-private:
-    std::unique_ptr<SqliteConnection> connection_;
-    bool active_ = false;
-};
-
-}  // namespace
-
-Result<std::unique_ptr<MetadataStore>> openSqliteMetadataStore(const std::filesystem::path& path, SqliteOptions options) {
-    auto connection = openSqliteDatabase(path, options);
-    if (!connection) return connection.error();
-    return std::unique_ptr<MetadataStore>(new SqliteMetadataStore(std::move(connection).value()));
+    } catch (const std::bad_alloc&) { return ErrorCode::InternalError; }
+}
+Result<std::unique_ptr<MetadataReadSnapshot>> detail::MetadataStoreImpl::beginRead() {
+    if (active_) return ErrorCode::InvalidArgument;
+    try { return makeSqliteReadSnapshot(*connection_, active_, limits_); }
+    catch (const std::bad_alloc&) { return ErrorCode::InternalError; }
 }
 
+Result<std::unique_ptr<MetadataStore>> openSqliteMetadataStore(const std::filesystem::path& path, SqliteMetadataOptions options) {
+    const auto limits = options.passwordHashLimits;
+    if (!detail::validPasswordLimits(limits)) return ErrorCode::InvalidArgument;
+    try {
+        auto connection = openSqliteDatabase(path, options.connection);
+        if (!connection) return connection.error();
+        auto valid = detail::verifyInitialized(*connection.value(), limits);
+        if (!valid) return valid.error().code == ErrorCode::NotFound ? Error{ ErrorCode::IntegrityError } : valid.error();
+        if (!connection.value()->usable() || connection.value()->inTransaction()) return ErrorCode::InternalError;
+        return std::unique_ptr<MetadataStore>(new detail::MetadataStoreImpl(std::move(connection).value(), limits));
+    } catch (const std::bad_alloc&) { return ErrorCode::InternalError; }
+}
 }  // namespace anof::infrastructure::sqlite

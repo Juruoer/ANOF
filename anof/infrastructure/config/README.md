@@ -59,3 +59,7 @@ ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_instance_(confi
 ```
 
 Release 使用 `cmake-build-release` 和相同目标。未通过提权制造他人所有权、注入真实内存耗尽或磁盘故障，也未将完整 prepare／InstanceServer／信号停止作为局部测试结论。
+
+## 初始化配置写入
+
+内部 [ConfigurationText](internal/ConfigurationText.h) 集中解析、公共配置校验及完整 TOML 序列化。普通加载保持可省略有默认值字段的行为；[初始化 lease](../system/README.md) 写出全部六个键，重新打开 pending 时要求六键完整，不以默认值补齐半成品。序列化使用固定数值 locale 与可往返的 double 精度；文件创建、权限、同步与不覆盖发布由 system 管理，config 不持有锁或数据库。初始化配置往返及失败边界由 anof_instance_initializer_unittest 验证。

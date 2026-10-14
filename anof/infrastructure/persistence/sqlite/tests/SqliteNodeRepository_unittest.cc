@@ -1,9 +1,10 @@
+#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestStore.h>
 #define BOOST_TEST_MODULE AnofSqliteNodeRepository
 #include <boost/test/unit_test.hpp>
 
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataTransaction.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteMigration.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
 
 #include <cstdlib>
@@ -46,12 +47,12 @@ struct Database {
         const char* path = mkdtemp(pattern);
         if (!path) throw std::runtime_error("Cannot create test directory");
         directory = path;
-        BOOST_REQUIRE(migrateSqliteDatabase(file(), { 0 }));
+        BOOST_REQUIRE(createSqliteDatabase(file(), { 0 }));
         auto opened = openSqliteDatabase(file(), { 0 });
         BOOST_REQUIRE(opened);
         connection = std::move(opened).value();
         BOOST_REQUIRE(connection->beginWrite());
-        sql("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0)");
+        sql("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0, 'admin', 'Administrator', '" + std::string("$argon2id$v=19$m=8192,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") + "', 1, 1, 0, 0)");
         sql("INSERT INTO blobs VALUES (" + quoted(kBlob) + ", 0, zeroblob(32))");
         sql("INSERT INTO spaces VALUES (" + quoted(kSpace) + ", 1, NULL, " + quoted(kRoot) + ")");
         sql("INSERT INTO spaces VALUES (" + quoted(kOtherSpace) + ", 0, " + quoted(kUser) + ", " + quoted(kOtherRoot) + ")");
@@ -97,7 +98,7 @@ struct Database {
     }
     NodeRepository& start() {
         transaction.reset();
-        transaction = std::make_unique<SqliteMetadataTransaction>(*connection, active);
+        transaction = std::make_unique<SqliteMetadataTransaction>(*connection, active, PasswordHashLimits{ 8192, 1, 1 });
         BOOST_REQUIRE(transaction->begin());
         return transaction->nodes();
     }
@@ -105,7 +106,7 @@ struct Database {
         return { id<NodeId>(number), kSpace, parent, std::move(name), kUser, kNow };
     }
     std::unique_ptr<MetadataStore> store() {
-        auto result = openSqliteMetadataStore(file(), { 0 });
+        auto result = testing::openTestMetadataStore(file(), { 0 });
         BOOST_REQUIRE(result);
         return std::move(result).value();
     }
