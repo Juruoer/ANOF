@@ -1,4 +1,5 @@
 #include <anof/runtime/internal/ShutdownTrace.h>
+#include <anof/runtime/internal/ListenerFailure.h>
 #include <anof/runtime/InstanceIdentity.h>
 #include <anof/runtime/InstanceServer.h>
 
@@ -67,11 +68,18 @@ void InstanceServer::identityInitialized(Result<void> result) {
         http::CreateDirectoryHandler handler(runtime_.dispatcher(), [this] { return ready(); }, taskObservation_);
         api_ = std::make_unique<http::HttpApi>(*crypto_.tokens, *crypto_.requests, [this] { return ready(); },
             handler.stream(), identityDispatcher(), httpObservation_, http::HttpApiOptions{ prepared_.configuration.httpInFlight, 15, 30 });
-        // muduox 构造即 bind；必须延后到 worker 初始化成功。bind/listen 的 fatal 不可捕获。
-        server_ = std::make_unique<muduox::net::HttpServer>(&loop_,
+        server_ = std::make_unique<muduox::net::HttpServer>(muduox::net::HttpServer::DeferredListen{}, &loop_,
             muduox::net::InetAddress(prepared_.configuration.port, true), "anof");
         api_->configure(*server_);
-        server_->start();
+        const auto started = server_->tryStart();
+        if (!started) {
+            // 监听错误已同步释放库内资源；应用 worker 仍须退出，lease 留到实例析构。
+            if (started.status == muduox::net::HttpServer::StartStatus::ListenFailed) server_.reset();
+            else httpStopped_ = false;
+            requestStop();
+            notifyReady(internal::listenerFailure(started));
+            return;
+        }
         httpStarted_ = true;
         httpStopped_ = false;
         port_ = server_->listenAddress().port();

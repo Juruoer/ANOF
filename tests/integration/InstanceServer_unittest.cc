@@ -1,4 +1,5 @@
 #include <anof/runtime/InstanceIdentity.h>
+#include <anof/runtime/internal/ListenerFailure.h>
 #define BOOST_TEST_MODULE InstanceServerIntegration
 #include <boost/test/unit_test.hpp>
 
@@ -155,6 +156,87 @@ struct Socket {
     Socket() { if (fd < 0) throw std::runtime_error("socket failed"); }
     ~Socket() { ::close(fd); }
 };
+
+BOOST_AUTO_TEST_CASE(listener_errors_have_stable_application_categories) {
+    using internal::listenerFailure;
+    BOOST_CHECK(listenerFailure({}) == ErrorCode::InternalError);
+    for (const auto stage : { ListenerStage::Socket, ListenerStage::SocketSetup, ListenerStage::ReserveDescriptor,
+                             ListenerStage::Bind, ListenerStage::Listen, ListenerStage::LocalAddress }) {
+        const auto failure = [&](std::errc code) {
+            return listenerFailure({ HttpServer::StartStatus::ListenFailed, { stage, std::make_error_code(code) } });
+        };
+        BOOST_CHECK(failure(std::errc::permission_denied) == ErrorCode::Forbidden);
+        BOOST_CHECK(failure(std::errc::too_many_files_open) == ErrorCode::Retryable);
+        BOOST_CHECK(failure(std::errc::not_enough_memory) == ErrorCode::Retryable);
+        BOOST_CHECK(failure(std::errc::invalid_argument) == ErrorCode::InternalError);
+        BOOST_CHECK(failure(std::errc::address_in_use) ==
+                    (stage == ListenerStage::Bind ? ErrorCode::Conflict : ErrorCode::InternalError));
+    }
+}
+
+BOOST_AUTO_TEST_CASE(bind_failure_joins_both_workers_before_stop_and_keeps_real_lock_until_destruction) {
+    std::atomic<bool> metadataExited{false}, passwordExited{false};
+    Fixture fixture;
+    fixture.initialize();
+    Socket listener;
+    InetAddress address(0, true);
+    BOOST_REQUIRE_EQUAL(::bind(listener.fd, address.getSockAddr(), sizeof(sockaddr_in)), 0);
+    BOOST_REQUIRE_EQUAL(::listen(listener.fd, 1), 0);
+    sockaddr_in bound{};
+    socklen_t length = sizeof bound;
+    BOOST_REQUIRE_EQUAL(::getsockname(listener.fd, reinterpret_cast<sockaddr*>(&bound), &length), 0);
+    auto locks = infrastructure::system::makeLinuxInstanceLockProvider();
+    BOOST_REQUIRE(locks);
+    auto lease = locks.value()->acquire(fixture.root);
+    BOOST_REQUIRE(lease);
+    InstanceConfiguration configuration;
+    configuration.developmentHttp = true;
+    configuration.port = ntohs(bound.sin_port);
+    auto tokens = infrastructure::crypto::makeSodiumSessionTokenCodec();
+    auto requests = infrastructure::crypto::makeSodiumRequestIdentity();
+    BOOST_REQUIRE(tokens && requests);
+    struct ExitFlag {
+        std::atomic<bool>* flag;
+        ~ExitFlag() { *flag = true; }
+    };
+    fixture.server = std::make_unique<InstanceServer>(fixture.loop,
+        PreparedInstance{std::move(lease).value(), configuration},
+        InstanceCrypto{std::move(tokens).value(), std::move(requests).value()}, [&] {
+            thread_local ExitFlag exited{&metadataExited};
+            return fixture.resources();
+        }, [&] {
+            thread_local ExitFlag exited{&passwordExited};
+            return makeInstancePasswordResources();
+        });
+    const auto locked = [&] {
+        const auto second = locks.value()->acquire(fixture.root);
+        BOOST_REQUIRE(!second);
+        BOOST_CHECK(second.error().code == ErrorCode::Conflict);
+    };
+    BOOST_REQUIRE(fixture.server->start([&](Result<void> ready) {
+        ++fixture.readyCalls;
+        BOOST_REQUIRE(!ready);
+        BOOST_CHECK(ready.error().code == ErrorCode::Conflict);
+        BOOST_CHECK(!fixture.server->port());
+        locked();
+    }, [&] {
+        ++fixture.stoppedCalls;
+        BOOST_CHECK(metadataExited.load());
+        BOOST_CHECK(passwordExited.load());
+        locked();
+    }));
+    BOOST_REQUIRE(drive(fixture.loop, [&] { return fixture.stoppedCalls == 1; }));
+    BOOST_CHECK_EQUAL(fixture.readyCalls, 1U);
+    BOOST_CHECK(fixture.server->state() == RuntimeState::Stopped);
+    BOOST_CHECK(!fixture.server->ready());
+    BOOST_CHECK_EQUAL(fixture.server->metadataSnapshot().outstanding, 0U);
+    fixture.server->requestStop();
+    BOOST_CHECK(!fixture.server->start());
+    BOOST_CHECK_EQUAL(fixture.stoppedCalls, 1U);
+    locked();
+    fixture.server.reset();
+    BOOST_CHECK(locks.value()->acquire(fixture.root));
+}
 
 BOOST_AUTO_TEST_CASE(production_factory_delays_http_until_worker_ready_and_keeps_lease_through_stop) {
     Fixture fixture;

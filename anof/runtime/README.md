@@ -86,9 +86,11 @@ InstanceServer 构造不绑定端口。`start()` 接纳启动后在 worker 创�
 
 `requestStop()` 先关闭业务准入，再请求真实 HTTP 清理。身份请求终态回收及密码线程退出后才停止 metadata；实例停止必须同时满足密码／metadata 退出与 HTTP 清理屏障；HTTP 部分启动后抛出的可捕获异常也走清理路径。调用者保持 loop 运行至 `state()==Stopped`，在回调栈外销毁 InstanceServer，最后销毁 loop。实例 lease 在 HTTP、runtime、crypto 和回调闭包销毁之后释放；仅到 Stopped 不会提前释放锁。对象不能重启。
 
-当前 muduox 的 HttpServer 构造即执行 bind，socket／bind／listen 失败可能直接 fatal 终止进程。这类失败不能转换成 ready 错误回调；操作系统会回收文件描述符，但这不等同于正常执行了停止屏障。装配不做存在竞争窗口的“预先探测端口”，也没有修改 muduox。
+HttpServer 使用 `DeferredListen` 构造和主 loop 同步 `tryStart()`，成功后才公布 ready。监听失败通过 ready 的稳定错误分类返回：bind 地址占用为 `Conflict`，权限不足为 `Forbidden`，文件描述符／内存／缓冲等临时资源不足或系统调用中断为 `Retryable`，其余错误及无效启动状态为 `InternalError`。不传播底层错误文本，不自动重试或预探测端口。监听系统错误返回前 muduox 已释放监听资源；InstanceServer 继续驱动 loop，等待密码和 metadata worker 退出及完成项回收，最后通知 Stopped。实例析构才释放 lease。内存分配、线程创建和库内部不变量故障不属于可恢复监听错误的保证范围。
 
 [InstanceServer 集成测试](../../tests/integration/InstanceServer_unittest.cc) 使用真实 SQLite、crypto、时钟和回环 HTTP，覆盖延迟绑定、缺失数据库、worker 初始化异常、启动中取消、重复停止及回调异常；基础案例的 lease 使用测试替身，另有真实 lease 与 worker gate 的组合案例检查初始化取消和析构释放；跨进程排他及信号关闭由 [serve 进程集成测试](../../tests/integration/ServeProcess_unittest.cc) 覆盖。命令行使用说明见 [前台服务入口](../../apps/anof/README.md)。
+
+监听失败集成验收覆盖真实端口冲突、两条 worker 的线程退出、ready／stopped 各通知一次、Stopped 后仍持有真实实例锁，以及析构后可重新获取锁。进程验收覆盖退出码 4、无 READY、有 STOPPED、释放端口后原实例可重新启动，且端口冲突不影响另一实例继续提供 HTTP 服务。
 
 ## 7. 离线初始化与密码策略
 

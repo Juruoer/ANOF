@@ -109,7 +109,7 @@ ANOF_READY address=127.0.0.1 port=8080
 | 4 | 信号桥接初始化、适配构造、服务装配或启动失败，以及未分类入口异常 |
 | 5 | 服务期间信号读取或通知异常 |
 
-当前 muduox 在 socket／bind／listen 失败时可能直接终止进程，该行为不经过上述正常退出码和停止屏障。端口冲突可能表现为 SIGABRT，操作系统回收锁不等于执行了干净停止。程序使用现有公开接口，不预先探测端口或修改子模块。日志输出沿用 muduox 的默认行为，尚无独立的有界访问日志 worker。
+监听建立使用 muduox 的可恢复入口。端口占用输出 `ANOF_ERROR stage=startup code=CONFLICT`；权限不足为 `FORBIDDEN`，临时资源不足为 `RETRYABLE`，其余监听错误为 `INTERNAL_ERROR`，均退出 4，不自动重试或换端口。启动失败不会输出 `ANOF_READY`；等待 worker 退出和服务清理、析构实例并释放锁后输出 `ANOF_STOPPED`。日志输出沿用 muduox 默认行为，尚无独立的有界访问日志 worker。
 
 ## 停止信号组件
 

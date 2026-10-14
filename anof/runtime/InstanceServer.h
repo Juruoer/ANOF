@@ -28,6 +28,7 @@ public:
     InstanceServer& operator=(const InstanceServer&) = delete;
 
     // 接纳后 ready 恰好一次；启动中取消以 Retryable 通知，不能重启同一对象。
+    // 监听失败经 ready 返回分类；仍须等 stopped 并在回调外析构，才能释放实例锁。
     Result<void> start(MetadataExecutor::Started ready = {}, MetadataExecutor::Stopped stopped = {});
     void requestStop();
     RuntimeState state() const;

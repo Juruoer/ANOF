@@ -251,7 +251,7 @@ BOOST_AUTO_TEST_CASE(signal_waits_for_active_http_cleanup_before_unlocking) {
     BOOST_CHECK(process.text.find("ANOF_STOPPED") != std::string::npos);
 }
 
-BOOST_AUTO_TEST_CASE(current_library_bind_failure_is_fatal_but_os_releases_instance_lock) {
+BOOST_AUTO_TEST_CASE(bind_failure_exits_cleanly_releases_lock_and_allows_restart) {
     Fixture fixture;
     const int listener = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     BOOST_REQUIRE(listener >= 0);
@@ -264,11 +264,35 @@ BOOST_AUTO_TEST_CASE(current_library_bind_failure_is_fatal_but_os_releases_insta
     BOOST_REQUIRE_EQUAL(::getsockname(listener, reinterpret_cast<sockaddr*>(&address), &length), 0);
     fixture.write("config.toml", "development_http=true\nport=" + std::to_string(ntohs(address.sin_port)) + "\n");
     Process process(fixture.arguments());
-    BOOST_REQUIRE(process.wait([&] { return process.status.has_value(); }));
-    BOOST_REQUIRE(WIFSIGNALED(*process.status));
-    BOOST_CHECK_EQUAL(WTERMSIG(*process.status), SIGABRT);
+    process.exited(4);
+    BOOST_CHECK(process.text.find("ANOF_ERROR stage=startup code=CONFLICT") != std::string::npos);
     BOOST_CHECK(process.text.find("ANOF_READY") == std::string::npos);
-    BOOST_CHECK(process.text.find("ANOF_STOPPED") == std::string::npos);
+    BOOST_CHECK(process.text.find("ANOF_STOPPED") != std::string::npos);
     fixture.lockAvailable(true);
+    BOOST_REQUIRE_EQUAL(::close(close.fd), 0);
+    close.fd = -1;
+    Process restarted(fixture.arguments());
+    BOOST_CHECK_EQUAL(restarted.ready(), ntohs(address.sin_port));
+    restarted.stop(SIGTERM);
+    fixture.lockAvailable(true);
+}
+
+BOOST_AUTO_TEST_CASE(port_conflict_does_not_disturb_another_live_instance) {
+    Fixture firstRoot, secondRoot;
+    Process first(firstRoot.arguments());
+    const auto port = first.ready();
+    secondRoot.write("config.toml", "development_http=true\nport=" + std::to_string(port) + "\n");
+    Process second(secondRoot.arguments());
+    second.exited(4);
+    BOOST_CHECK(second.text.find("stage=startup code=CONFLICT") != std::string::npos);
+    BOOST_CHECK(second.text.find("ANOF_READY") == std::string::npos);
+    BOOST_CHECK(second.text.find("ANOF_STOPPED") != std::string::npos);
+    secondRoot.lockAvailable(true);
+    firstRoot.lockAvailable(false);
+    Client client(port, first);
+    client.send("GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    BOOST_CHECK(client.receive().find("HTTP/1.1 200 OK\r\n") == 0);
+    first.stop(SIGTERM);
+    firstRoot.lockAvailable(true);
 }
 }  // namespace

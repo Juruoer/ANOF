@@ -18,6 +18,7 @@ const char* errorName(ErrorCode error) {
     case ErrorCode::InvalidArgument: return "INVALID_ARGUMENT";
     case ErrorCode::NotFound: return "NOT_FOUND";
     case ErrorCode::Conflict: return "CONFLICT";
+    case ErrorCode::Forbidden: return "FORBIDDEN";
     case ErrorCode::Retryable: return "RETRYABLE";
     case ErrorCode::StorageFull: return "STORAGE_FULL";
     case ErrorCode::IntegrityError: return "INTEGRITY_ERROR";
