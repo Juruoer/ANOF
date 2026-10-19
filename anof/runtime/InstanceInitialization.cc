@@ -9,7 +9,7 @@
 #include <anof/infrastructure/system/SystemClock.h>
 
 namespace anof::runtime {
-InitResult<InitReceipt> initializeInstance(InitOptions options, PasswordInput password) {
+InitResult<InitReceipt> initializeInstance(TransferInitOptions options, PasswordInput password) {
     try {
         auto files = infrastructure::system::makeLinuxInstanceInitializer();
         auto database = infrastructure::sqlite::makeSqliteInstanceBootstrap({ instancePasswordPolicy().verification, {} });

@@ -1,4 +1,7 @@
 add_library(anof_application STATIC
+    transfer/TransferRecovery.cc
+    transfer/DownloadService.cc
+    transfer/UploadService.cc
     drive/CreateDirectory.cc
     identity/AccountService.cc
     identity/IdentityService.cc

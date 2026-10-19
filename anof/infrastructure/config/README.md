@@ -14,7 +14,7 @@
 
 ## 文件表示
 
-仅接受六个顶层键，示例：
+仅接受八个顶层键，示例：
 
 ```toml
 listen_address = "127.0.0.1"
@@ -23,6 +23,8 @@ development_http = true
 metadata_queue = 256
 http_in_flight = 128
 shutdown_grace_seconds = 30
+disk_safety_min_bytes = 1073741824
+disk_safety_percent = 5
 ```
 
 | 键 | 类型／范围 | 缺省行为 |
@@ -33,6 +35,10 @@ shutdown_grace_seconds = 30
 | metadata_queue | 整数，1～256 | 采用公共结构默认值 |
 | http_in_flight | 整数，1～128 | 同上 |
 | shutdown_grace_seconds | 整数或浮点数，有限 0～30 | 同上 |
+| disk_safety_min_bytes | 整数，0～INT64_MAX | 1073741824 |
+| disk_safety_percent | 整数，0～100 | 5 |
+
+内容预算只存于 SQLite，不接受 content_budget_bytes 配置键；不会依据测试磁盘大小自动降低余量。
 
 默认值唯一来自 [InstanceConfiguration](../../application/ports/InstancePreparation.h)。解析使用精确类型读取，不把字符串、布尔或浮点数隐式转换为整数；整数先检查非负及目标类型可表示范围再缩窄。最终调用 [validateInstanceConfiguration](../../application/maintenance/PrepareInstance.h) 校验监听和资源限额，不扩大已有公共约束。最小有效文件为 `development_http = true`。
 
@@ -49,7 +55,7 @@ load 不接触 SQLite、不调用维护、不创建实例或配置。失败保�
 
 ## 构建与测试
 
-[CMakeLists.txt](CMakeLists.txt) 注册生产实现和局部测试。开启 ANOF_BUILD_TESTS 时提供 `anof_config_headers_check`，只依赖 anof_application 独立编译公开头；`anof_instance_configuration_unittest` 包含 [10 个 Boost.Test 案例](tests/InstanceConfiguration_unittest.cc)，CTest 超时 30 秒。
+[CMakeLists.txt](CMakeLists.txt) 注册生产实现和局部测试。开启 ANOF_BUILD_TESTS 时提供 `anof_config_headers_check`，只依赖 anof_application 独立编译公开头；`anof_instance_configuration_unittest` 包含 [配置测试](tests/InstanceConfiguration_unittest.cc)，CTest 超时 30 秒。
 
 覆盖显式 opt-in 和公共默认值、全部字段边界及严格类型、错误语法与编码、未知／重复键、数值溢出及非有限值、精确 64 KiB／超限、真实文件读取期间增长、短读／EINTR／EIO、文件拒绝、外来 lease、fd 清理和持锁保持。增长和 I/O 故障使用逐次调用的内部读取接缝，不修改进程全局函数；生产始终调用系统 read。测试使用临时私有实例和 KiB 文件，结束后清理。
 
@@ -62,4 +68,4 @@ Release 使用 `cmake-build-release` 和相同目标。未通过提权制造他�
 
 ## 初始化配置写入
 
-内部 [ConfigurationText](internal/ConfigurationText.h) 集中解析、公共配置校验及完整 TOML 序列化。普通加载保持可省略有默认值字段的行为；[初始化 lease](../system/README.md) 写出全部六个键，重新打开 pending 时要求六键完整，不以默认值补齐半成品。序列化使用固定数值 locale 与可往返的 double 精度；文件创建、权限、同步与不覆盖发布由 system 管理，config 不持有锁或数据库。初始化配置往返及失败边界由 anof_instance_initializer_unittest 验证。
+内部 [ConfigurationText](internal/ConfigurationText.h) 集中解析、公共配置校验及完整 TOML 序列化。普通加载保持可省略有默认值字段的行为；[初始化 lease](../system/README.md) 写出全部八个键，重新打开 pending 时要求八键完整，不以默认值补齐半成品。序列化使用固定数值 locale 与可往返的 double 精度；文件创建、权限、同步与不覆盖发布由 system 管理，config 不持有锁或数据库。初始化配置往返及失败边界由 anof_instance_initializer_unittest 验证。

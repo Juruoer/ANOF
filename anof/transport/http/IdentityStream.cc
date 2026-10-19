@@ -88,7 +88,7 @@ void AsyncRequestState::send(JsonResponse response) {
     sender_ = HttpStreamSender::create(writer_, std::move(response.headers), [buffer = response_]() -> std::optional<std::string> {
         if (buffer->view().empty()) return std::nullopt;
         return buffer->take(HttpResponseWriter::kMaxWriteBytes);
-    }, length);
+    }, response.omitLength ? std::nullopt : std::optional<std::size_t>(length));
     sender_->send();
 }
 void AsyncRequestState::cancel() {

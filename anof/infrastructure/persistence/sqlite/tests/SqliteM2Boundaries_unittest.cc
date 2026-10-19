@@ -221,7 +221,7 @@ BOOST_AUTO_TEST_CASE(process_exit_at_publication_boundaries_preserves_completion
                 auto init = files::makeLinuxInstanceInitializerWith(ops); require(init);
                 auto seed = bootstrapSeed(); auto lease = init.value()->create(tree.root, seed.identity); require(lease);
                 require(lease.value()->writeConfiguration(config()));
-                auto backend = bootstrap(); require(backend->createCurrent(lease.value()->lease(), seed));
+                auto backend = bootstrap(); require(backend->createCurrent(lease.value()->lease(), TransferBootstrapSeed{ bootstrapSeed(), ByteCount::from(1024).value() }));
                 require(backend->verifyComplete(lease.value()->lease(), seed.identity));
                 require(lease.value()->publishFormat()); require(lease.value()->clearPending());
                 ::_exit(91); // 必须由指定边界终止，不能误把完整执行当覆盖。
@@ -278,7 +278,7 @@ BOOST_AUTO_TEST_CASE(simultaneous_creators_have_one_owner_without_replacing_lock
 
 BOOST_AUTO_TEST_CASE(finisher_excludes_other_finish_and_serve_until_lease_release) {
     Tree tree;
-    { auto lease = createPending(tree); require(bootstrap()->createCurrent(lease->lease(), bootstrapSeed())); }
+    { auto lease = createPending(tree); require(bootstrap()->createCurrent(lease->lease(), TransferBootstrapSeed{ bootstrapSeed(), ByteCount::from(1024).value() })); }
     Pipe ready, release;
     Child child([&] {
         auto init = system::makeLinuxInstanceInitializer(); require(init);

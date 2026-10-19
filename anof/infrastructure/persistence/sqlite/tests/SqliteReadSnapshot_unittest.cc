@@ -477,7 +477,7 @@ BOOST_AUTO_TEST_CASE(node_seek_pagination_has_binary_order_and_file_metadata) {
         BOOST_REQUIRE(tx->commit());
     }
     auto raw = f.raw();
-    BOOST_REQUIRE(raw->execute("INSERT INTO blobs VALUES('00000000-0000-4000-8000-000000000009',1099511627776,zeroblob(32)); "
+    BOOST_REQUIRE(raw->execute("INSERT INTO blobs(id,size,sha256) VALUES('00000000-0000-4000-8000-000000000009',1099511627776,zeroblob(32)); "
         "INSERT INTO nodes VALUES('00000000-0000-4000-8000-000000000009','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001','file',1,'00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000009',1,0,123,123)"));
     auto snapshot = f.read();
     std::vector<std::string> names;

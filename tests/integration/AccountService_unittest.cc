@@ -4,6 +4,7 @@
 #include <anof/runtime/InstanceIdentity.h>
 #include <anof/application/identity/IdentityService.h>
 #include <anof/application/identity/AccountService.h>
+#include <anof/application/transfer/UploadService.h>
 #include <anof/application/drive/CreateDirectory.h>
 #include <anof/infrastructure/crypto/SodiumSessionTokenCodec.h>
 #include <unistd.h>
@@ -17,7 +18,7 @@ LoginCommand loginCommand(std::string name = "administrator") {
     return {LoginName::parse(name).value(), PasswordInput::parse("fixture password only").value(), CredentialMode::Bearer, source()};
 }
 // 模拟真实提交成功后确认丢失；证明应用不会返回 token，也不自动重试。
-struct UnknownTransaction : MetadataTransaction {
+struct UnknownTransaction : TransferTransaction {
     std::unique_ptr<MetadataTransaction> inner;
     explicit UnknownTransaction(std::unique_ptr<MetadataTransaction> value) : inner(std::move(value)) {}
     AuthorizationReader& authorization() override { return inner->authorization(); }
@@ -25,8 +26,12 @@ struct UnknownTransaction : MetadataTransaction {
     SessionRepository& sessions() override { return inner->sessions(); }
     InviteRepository& invites() override { return inner->invites(); }
     SpaceRepository& spaces() override { return inner->spaces(); }
-    NodeRepository& nodes() override { return inner->nodes(); }
-    QuotaRepository& quotas() override { return inner->quotas(); }
+    FileNodeRepository& nodes() override { return dynamic_cast<TransferTransaction&>(*inner).nodes(); }
+    ReservationQuotaRepository& quotas() override { return dynamic_cast<TransferTransaction&>(*inner).quotas(); }
+    UploadRepository& uploads() override { return dynamic_cast<TransferTransaction&>(*inner).uploads(); }
+    BlobRepository& blobs() override { return dynamic_cast<TransferTransaction&>(*inner).blobs(); }
+    StorageRepository& storage() override { return dynamic_cast<TransferTransaction&>(*inner).storage(); }
+    TransferAuditRepository& transferAudit() override { return dynamic_cast<TransferTransaction&>(*inner).transferAudit(); }
     SettingsRepository& settings() override { return inner->settings(); }
     AuditRepository& directoryAudit() override { return inner->directoryAudit(); }
     IdentityAuditRepository& identityAudit() override { return inner->identityAudit(); }
@@ -290,4 +295,30 @@ BOOST_AUTO_TEST_CASE(application_noops_skip_audits_and_audit_failures_roll_back_
     auto read = f.resources->metadata->beginRead(); BOOST_REQUIRE(read);
     auto stored = read.value()->users().find(member.value().id); BOOST_REQUIRE(stored && stored.value());
     BOOST_CHECK(stored.value()->revision == member.value().revision);
+}
+BOOST_AUTO_TEST_CASE(disable_and_reenable_cannot_resurrect_uploads){
+    Fixture f;auto admin=f.login();auto ac=f.context(admin);auto invite=f.invite(ac);auto user=f.registerUser("upload_member",invite);BOOST_REQUIRE(user);
+    auto member=f.login("upload_member");auto mc=f.context(member);auto& r=*f.resources;
+    auto& store=dynamic_cast<TransferMetadataStore&>(*r.metadata);UploadService uploads(store,*r.clock,*r.transferIds,*r.nodeIds);
+    auto read=store.beginTransferRead();BOOST_REQUIRE(read);auto space=read.value()->spaces().findPrivate(user.value().id);BOOST_REQUIRE(space&&space.value());read.value().reset();
+    auto created=uploads.create(mc,{OperationId::parse("11111111-2222-4333-8444-555555555555").value(),{space.value()->id,{space.value()->rootNodeId,"pending"},FileLength::from(3).value(),{}}},ByteCount::from(1048576).value(),{});BOOST_REQUIRE(created);
+    auto hidden=uploads.get(ac,created.value().upload.id);BOOST_REQUIRE(!hidden);BOOST_CHECK(hidden.error().code==ErrorCode::NotFound);
+    auto disabled=f.accounts->execute(ac,SetUserEnabledCommand{user.value().id,condition(user.value()),false});BOOST_REQUIRE(disabled);
+    auto cancelled=uploads.read(created.value().upload.id);BOOST_REQUIRE(cancelled);BOOST_CHECK(cancelled.value().cancelRequested);BOOST_CHECK(cancelled.value().generation!=created.value().upload.generation);
+    auto enabled=f.accounts->execute(ac,SetUserEnabledCommand{user.value().id,condition(disabled.value().user),true});BOOST_REQUIRE(enabled);
+    cancelled=uploads.read(created.value().upload.id);BOOST_REQUIRE(cancelled);BOOST_CHECK(cancelled.value().cancelRequested);
+    auto stale=uploads.opened(created.value().upload.id,created.value().upload.generation);BOOST_REQUIRE(!stale);BOOST_CHECK(stale.error().code==ErrorCode::Conflict);
+}
+BOOST_AUTO_TEST_CASE(upload_query_expiry_retains_physical_budget_until_cleanup){
+    Fixture f;auto admin=f.login();auto ctx=f.context(admin);auto& r=*f.resources;
+    auto& store=dynamic_cast<TransferMetadataStore&>(*r.metadata);UploadService uploads(store,*r.clock,*r.transferIds,*r.nodeIds);
+    auto read=store.beginTransferRead();BOOST_REQUIRE(read);auto spaces=read.value()->spaces().listAccessible(admin.user.id);BOOST_REQUIRE(spaces);
+    auto space=spaces.value().front();read.value().reset();
+    auto created=uploads.create(ctx,{OperationId::parse("22222222-2222-4333-8444-555555555555").value(),{space.id,{space.rootNodeId,"expired"},FileLength::from(3).value(),{}}},ByteCount::from(1048576).value(),{});BOOST_REQUIRE(created);
+    f.clock->time+=std::chrono::hours(24*8);auto renewed=f.login();ctx=f.context(renewed);
+    auto view=uploads.get(ctx,created.value().upload.id);BOOST_REQUIRE(view);BOOST_CHECK(view.value().state==UploadState::Expired);
+    auto budget=uploads.storage(ctx);BOOST_REQUIRE(budget);BOOST_CHECK_EQUAL(budget.value().accounting.reserved.value(),3);
+    auto row=uploads.read(created.value().upload.id);BOOST_REQUIRE(row);BOOST_REQUIRE(row.value().cleanupPending);
+    auto cleared=uploads.confirmCleanup(row.value().id,row.value().generation);BOOST_REQUIRE(cleared);
+    budget=uploads.storage(ctx);BOOST_REQUIRE(budget);BOOST_CHECK_EQUAL(budget.value().accounting.reserved.value(),0);
 }

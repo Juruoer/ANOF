@@ -18,6 +18,12 @@ inline BootstrapSeed bootstrapSeed() {
         bootstrapId<SpaceId>(3), bootstrapId<SpaceId>(4), bootstrapId<NodeId>(5), bootstrapId<NodeId>(6), { quota, quota, quota },
         UserLimit::from(10).value(), bootstrapId<RequestId>(7), UtcTime{ std::chrono::microseconds{ 123 } } };
 }
+inline BootstrapSeed copyBootstrapSeed(const BootstrapSeed& seed) {
+    return { seed.identity, seed.adminUserId, seed.adminLogin, seed.adminDisplayName,
+        EncodedPasswordHash::parse(seed.encodedPassword.view(), bootstrapBudget).value(),
+        seed.publicSpaceId, seed.privateSpaceId, seed.publicRootId, seed.privateRootId,
+        seed.quotas, seed.maxUsers, seed.requestId, seed.createdAt };
+}
 // 既有维护回归只需当前已引导库；真正的文件+数据库初始化由 Bootstrap 专项覆盖。
 inline void createBootstrappedTestDatabase(const std::filesystem::path& path) {
     BOOST_REQUIRE(createSqliteDatabase(path));
@@ -39,6 +45,7 @@ inline void createBootstrappedTestDatabase(const std::filesystem::path& path) {
     }
     BOOST_REQUIRE(tx.quotas().insert(PublicContributionQuota{ seed.publicSpaceId, seed.adminUserId }, quota));
     BOOST_REQUIRE(tx.identityAudit().append({ seed.requestId, seed.createdAt, InstanceInitialized{ seed.adminUserId, seed.identity.instanceId } }));
+    BOOST_REQUIRE(db.value()->execute("INSERT INTO storage_accounting VALUES(1,1024,0,0,1)"));
     BOOST_REQUIRE(tx.commit());
 }
 }

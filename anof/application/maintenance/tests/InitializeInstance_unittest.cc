@@ -15,6 +15,8 @@ template<class T> T id(char digit = '1') {
 struct State {
     std::vector<InitStage> calls;
     std::optional<InitStage> fail;
+    std::optional<ByteCount> budget;
+    std::optional<DiskSafetyPolicy> safety;
     bool throws = false, held = false, badReceipt = false;
     std::optional<InitFailure> visit(InitStage stage) {
         calls.push_back(stage);
@@ -34,7 +36,8 @@ struct Lease final : InitializationLease, InstanceLease {
     const InstanceLease& lease() const override { return *this; }
     const std::filesystem::path& root() const noexcept override { return path; }
     const InitializationIdentity& identity() const override { return identityValue; }
-    InitResult<void> writeConfiguration(const InstanceConfiguration&) override {
+    InitResult<void> writeConfiguration(const InstanceConfiguration& config) override {
+        state.safety = config.diskSafety;
         if (auto failure = state.visit(InitStage::WriteConfiguration)) return *failure;
         return {};
     }
@@ -69,7 +72,10 @@ struct Database final : InstanceBootstrap {
         if (result) return *result;
         return InitReceipt{{id<InstanceId>(state.badReceipt ? '9' : '1'), id<OperationId>()}, id<UserId>(), id<SpaceId>('2'), id<SpaceId>('3')};
     }
-    InitResult<InitReceipt> createCurrent(const InstanceLease&, const BootstrapSeed&) override { return result(InitStage::Bootstrap); }
+    InitResult<InitReceipt> createCurrent(const InstanceLease&, const TransferBootstrapSeed& seed) override {
+        state.budget = seed.contentBudget;
+        return result(InitStage::Bootstrap);
+    }
     InitResult<InitReceipt> verifyComplete(const InstanceLease&, const InitializationIdentity&) override { return result(InitStage::Verify); }
 };
 struct Passwords final : PasswordHasher {
@@ -96,6 +102,7 @@ struct Time final : Clock { UtcTime now() const override { return {}; } };
 InitOptions options() {
     const QuotaDelta quota{ByteCount{}, NodeCount::from(1).value()};
     InstanceConfiguration config; config.developmentHttp = true;
+    config.diskSafety = {ByteCount::from(12345).value(), SafetyPercent::from(17).value()};
     return {"/test/instance", LoginName::parse("admin").value(), DisplayName::parse("Admin").value(),
         {quota, quota, quota}, UserLimit{}, config};
 }
@@ -103,13 +110,19 @@ struct Fixture {
     State state;
     Files files{state}; Database db{state}; Passwords passwords{state}; Ids ids; Time time;
     InitResult<InitReceipt> run() {
-        return InitializeInstance(files, db, passwords, ids, time).execute(options(), PasswordInput::parse("test password here").value(), id<RequestId>());
+        return InitializeInstance(files, db, passwords, ids, time).execute(TransferInitOptions{options(), ByteCount::from(4096).value()}, PasswordInput::parse("test password here").value(), id<RequestId>());
     }
 };
 }
 BOOST_AUTO_TEST_CASE(sequence_and_lease_cover_all_writes) {
     Fixture f;
     BOOST_REQUIRE(f.run());
+    BOOST_REQUIRE(f.state.budget);
+    BOOST_CHECK_EQUAL(f.state.budget->value(), 4096);
+    BOOST_REQUIRE(f.state.safety);
+    BOOST_CHECK_EQUAL(f.state.safety->minimum.value(), 12345);
+    BOOST_CHECK_EQUAL(f.state.safety->percent.value(), 17);
+    static_assert(InitializationIdentity::schemaVersion == 3 && InitializationIdentity::formatVersion == 3);
     BOOST_CHECK(!f.state.held);
     const std::vector<InitStage> expected{InitStage::HashPassword, InitStage::CreateDirectory, InitStage::WriteConfiguration,
         InitStage::Bootstrap, InitStage::PublishFormat, InitStage::ClearPending};
@@ -149,7 +162,7 @@ BOOST_AUTO_TEST_CASE(finish_verifies_before_publication_and_never_recreates_or_h
 BOOST_AUTO_TEST_CASE(invalid_input_and_receipt_prevent_side_effects) {
     Fixture f;
     auto input = options(); input.configuration.developmentHttp = false;
-    auto result = InitializeInstance(f.files, f.db, f.passwords, f.ids, f.time).execute(std::move(input), PasswordInput::parse("test password here").value(), id<RequestId>());
+    auto result = InitializeInstance(f.files, f.db, f.passwords, f.ids, f.time).execute(TransferInitOptions{std::move(input), ByteCount::from(4096).value()}, PasswordInput::parse("test password here").value(), id<RequestId>());
     BOOST_CHECK(!result);
     BOOST_CHECK(f.state.calls.empty());
     f.state.badReceipt = true;

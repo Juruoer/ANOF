@@ -131,7 +131,7 @@ public:
     InitResult<void> writeConfiguration(const InstanceConfiguration& value) override {
         constexpr auto stage = InitStage::WriteConfiguration;
         try {
-            if (auto result = preflight(stage); !result) return result.error();
+            if (auto failure = preflight(stage)) return *failure;
             if (resumed_ || configuration_) return InitFailure{ InitError::AlreadyExists, stage };
             auto text = config::detail::serializeConfiguration(value);
             if (!text) return initializationError(text.error().code, stage);
@@ -149,9 +149,14 @@ public:
         constexpr auto stage = InitStage::PublishFormat;
         published_ = false;
         try {
-            if (auto result = preflight(stage); !result) return result.error();
+            if (auto failure = preflight(stage)) return *failure;
             const auto configured = checkConfiguration(stage);
             if (configured) return *configured;
+            auto content = detail::openContentDirectories(directory());
+            if (!content) return initializationError(content.error().code, stage);
+            for (const auto& fd : content.value()) {
+                if (auto result = syncFile(fd.get(), ops_, stage, false); !result) return result.error();
+            }
             auto marker = readFile(directory(), "instance.json", 4096, stage);
             if (marker) {
                 if (auto result = matchingFormat(marker.value().text, stage); !result) return result.error();
@@ -175,7 +180,7 @@ public:
         constexpr auto stage = InitStage::ClearPending;
         if (!published_) return InitFailure{ InitError::IncompleteInitialization, stage };
         try {
-            if (auto result = preflight(stage); !result) return result.error();
+            if (auto failure = preflight(stage)) return *failure;
             const auto configured = checkConfiguration(stage);
             if (configured) return *configured;
             auto marker = readFile(directory(), "instance.json", 4096, stage);
@@ -193,7 +198,7 @@ public:
 private:
     int directory() const { return detail::instanceDirectory(*lease_).value(); }
     int root() const { return detail::instanceRootDirectory(*lease_).value(); }
-    InitResult<void> preflight(InitStage stage) {
+    std::optional<InitFailure> preflight(InitStage stage) {
         auto valid = detail::validateInstanceLease(*lease_);
         if (!valid) return initializationError(valid.error().code, stage);
         auto pending = readFile(directory(), "initialization.pending", 4096, stage);
@@ -202,6 +207,8 @@ private:
         if (!identity) return identity.error();
         if (identity.value().instanceId != identity_.instanceId || identity.value().operationId != identity_.operationId ||
             pending.value().status.st_dev != pending_.st_dev || pending.value().status.st_ino != pending_.st_ino) return InitFailure{ InitError::IntegrityError, stage };
+        auto content = detail::openContentDirectories(directory());
+        if (!content) return initializationError(content.error().code, stage);
         return {};
     }
     std::optional<InitFailure> checkConfiguration(InitStage stage) {
@@ -257,6 +264,16 @@ public:
             const int directory = detail::instanceDirectory(*locked.value()).value();
             auto written = publish(directory, root.value().rootFd.get(), "initialization.pending", detail::pendingText(identity), identity, ops_, stage, false);
             if (!written) return written.error();
+            stage = InitStage::CreateDirectory;
+            for (const char* name : { "uploads", "objects", "quarantine" }) {
+                if (::mkdirat(directory, name, 0700) != 0) return initializationErrno(errno, stage);
+            }
+            auto content = detail::openContentDirectories(directory);
+            if (!content) return initializationError(content.error().code, stage);
+            for (const auto& fd : content.value()) {
+                if (auto result = syncFile(fd.get(), ops_, stage, false); !result) return result.error();
+            }
+            if (auto result = syncFile(directory, ops_, stage, false); !result) return result.error();
             auto pending = readFile(directory, "initialization.pending", 4096, stage);
             if (!pending) return pending.error();
             return std::unique_ptr<InitializationLease>(new LinuxInitializationLease(std::move(locked).value(), identity, pending.value().status, ops_, std::nullopt, false));
@@ -280,6 +297,8 @@ public:
             if (!pending) return pending.error().code == InitError::NotFound ? InitFailure{ InitError::IncompleteInitialization, stage } : pending.error();
             auto identity = detail::parsePending(pending.value().text, stage);
             if (!identity) return identity.error();
+            auto content = detail::openContentDirectories(directory);
+            if (!content) return content.error().code == ErrorCode::NotFound ? InitFailure{InitError::IncompleteInitialization, stage} : initializationError(content.error().code, stage);
             auto config = configuration(directory, stage);
             if (!config) return config.error().code == InitError::NotFound ? InitFailure{ InitError::IncompleteInitialization, stage } : config.error();
             auto marker = readFile(directory, "instance.json", 4096, stage);

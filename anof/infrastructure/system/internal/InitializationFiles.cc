@@ -55,7 +55,7 @@ public:
 private:
     bool number(std::uint64_t value) {
         if (field_ < 3 || field_ > 5) return false;
-        if (value != (field_ == 3 ? 1U : 2U)) unsupported = true;
+        if (value != (field_ == 3 ? 1U : static_cast<unsigned>(field_ == 4 ? InitializationIdentity::schemaVersion : InitializationIdentity::formatVersion))) unsupported = true;
         field_ = 0;
         return true;
     }
@@ -86,10 +86,10 @@ InitResult<InstanceId> parseFormat(std::string_view text, InitStage stage) {
     return *sax.instance;
 }
 std::string pendingText(const InitializationIdentity& identity) {
-    return "{\"version\":1,\"operation_id\":\"" + identity.operationId.toString() + "\",\"instance_id\":\"" + identity.instanceId.toString() + "\",\"target_schema\":2,\"target_format\":2}\n";
+    return "{\"version\":1,\"operation_id\":\"" + identity.operationId.toString() + "\",\"instance_id\":\"" + identity.instanceId.toString() + "\",\"target_schema\":" + std::to_string(InitializationIdentity::schemaVersion) + ",\"target_format\":" + std::to_string(InitializationIdentity::formatVersion) + "}\n";
 }
 std::string formatText(const InitializationIdentity& identity) {
-    return "{\"instance_id\":\"" + identity.instanceId.toString() + "\",\"format_version\":2}\n";
+    return "{\"instance_id\":\"" + identity.instanceId.toString() + "\",\"format_version\":" + std::to_string(InitializationIdentity::formatVersion) + "}\n";
 }
 InitFailure initializationError(ErrorCode code, InitStage stage) {
     switch (code) {

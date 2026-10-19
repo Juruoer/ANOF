@@ -25,6 +25,7 @@ public:
     int error(const client::ClientError&) const noexcept;
     int help(std::string_view text) const;
     int success(const nlohmann::json&, std::optional<client::ResponseMeta> meta = {}, std::string_view invite = {}) const;
+    std::optional<std::string> transferId;
     bool passwordChange = false;
     client::RemoteOutcome remote = client::RemoteOutcome::NotSent;
     client::LocalState local = client::LocalState::Unchanged;

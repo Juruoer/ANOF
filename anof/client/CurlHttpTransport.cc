@@ -5,6 +5,8 @@
 #include <charconv>
 #include <cctype>
 #include <cstring>
+#include <chrono>
+#include <limits>
 #include <stdexcept>
 
 namespace anof::client {
@@ -27,11 +29,27 @@ struct Transfer {
     bool invalid = false;
     const std::atomic_bool* cancel;
     bool headersComplete = false;
+    const TransferRequest* binary = nullptr;
+    std::optional<ClientError> callbackError;
+    std::chrono::steady_clock::time_point progress = std::chrono::steady_clock::now();
+    curl_off_t received = 0, uploaded = 0;
+    long noProgressMs = 120000;
 };
 std::size_t bodyCallback(char* data, std::size_t size, std::size_t count, void* context) noexcept {
     auto& state = *static_cast<Transfer*>(context);
     if (size && count > kResponseLimit / size) { state.invalid = true; return 0; }
     const auto bytes = size * count;
+    if (state.binary && state.response.status >= 200 && state.response.status < 300 && state.binary->sink) {
+        try {
+            for (std::size_t offset = 0; offset < bytes;) {
+                const auto n = std::min<std::size_t>(65536, bytes - offset);
+                auto result = state.binary->sink({data + offset, n});
+                if (!result) { state.callbackError = result.error(); return 0; }
+                offset += n;
+            }
+            return bytes;
+        } catch (...) { state.callbackError = failure(ErrorKind::LocalState); return 0; }
+    }
     if (!state.response.body.append({data, bytes})) { state.invalid = true; return 0; }
     return bytes;
 }
@@ -43,8 +61,21 @@ std::size_t headerCallback(char* data, std::size_t size, std::size_t count, void
         if (bytes > kHeaderLimit - state.headerBytes) { state.invalid = true; return 0; }
         state.headerBytes += bytes;
         std::string_view line(data, bytes);
-        if (line.substr(0, 5) == "HTTP/") { state.response.headers.clear(); state.headersComplete = false; return bytes; }
-        if (line == "\r\n") { state.headersComplete = true; return bytes; }
+        if (line.substr(0, 5) == "HTTP/") { state.response.headers.clear(); state.headersComplete = false;
+            const auto start = line.find(' ');
+            if (start == std::string_view::npos || start + 4 > line.size()) { state.invalid = true; return 0; }
+            auto code = line.substr(start + 1, 3); int status = 0;
+            auto parsed = std::from_chars(code.data(), code.data()+code.size(), status);
+            if (parsed.ec != std::errc{} || parsed.ptr != code.data()+code.size()) { state.invalid = true; return 0; }
+            state.response.status = status; return bytes; }
+        if (line == "\r\n") {
+            state.headersComplete = true;
+            if (state.binary && state.response.status >= 200 && state.binary->validate) {
+                auto result = state.binary->validate(state.response);
+                if (!result) { state.callbackError = result.error(); return 0; }
+            }
+            return bytes;
+        }
         if (state.headersComplete) { state.invalid = true; return 0; }
         const auto colon = line.find(':');
         if (colon == std::string_view::npos || colon == 0) { state.invalid = true; return 0; }
@@ -53,14 +84,28 @@ std::size_t headerCallback(char* data, std::size_t size, std::size_t count, void
         while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) line.remove_prefix(1);
         while (!line.empty() && (line.back() == '\r' || line.back() == '\n' || line.back() == ' ' || line.back() == '\t')) line.remove_suffix(1);
         if (std::any_of(line.begin(), line.end(), [](unsigned char c) { return c < 32 || c == 127; })) { state.invalid = true; return 0; }
-        const bool critical = name == "content-type" || name == "content-encoding" || name == "content-length" || name == "x-request-id" || name == "etag" || name == "location" || name == "transfer-encoding";
+        const bool critical = name == "content-type" || name == "content-encoding" || name == "content-length" || name == "x-request-id" || name == "etag" || name == "location" || name == "transfer-encoding" || name == "content-range" || name == "upload-offset" || name == "upload-length" || name == "upload-state";
         // 不保留 Set-Cookie 或未知头，避免将响应中的秘密扩散到通用字符串。
         if (critical && !state.response.headers.emplace(std::move(name), line).second) { state.invalid = true; return 0; }
         return bytes;
     } catch (...) { state.invalid = true; return 0; }
 }
-int progressCallback(void* context, curl_off_t, curl_off_t, curl_off_t, curl_off_t) noexcept {
-    const auto* cancel = static_cast<Transfer*>(context)->cancel;
+std::size_t sourceCallback(char* data, std::size_t size, std::size_t count, void* context) noexcept {
+    auto& state = *static_cast<Transfer*>(context);
+    try {
+        if (size && count > std::numeric_limits<std::size_t>::max()/size) return CURL_READFUNC_ABORT;
+        const auto capacity = std::min<std::size_t>(size*count, 65536);
+        auto result = state.binary->source(data, capacity);
+        if (!result) { state.callbackError = result.error(); return CURL_READFUNC_ABORT; }
+        if (result.value() > capacity) { state.invalid = true; return CURL_READFUNC_ABORT; }
+        return result.value();
+    } catch (...) { state.callbackError = failure(ErrorKind::LocalState); return CURL_READFUNC_ABORT; }
+}
+int progressCallback(void* context, curl_off_t, curl_off_t received, curl_off_t, curl_off_t uploaded) noexcept {
+    auto& state = *static_cast<Transfer*>(context);
+    if (received != state.received || uploaded != state.uploaded) { state.received = received; state.uploaded = uploaded; state.progress = std::chrono::steady_clock::now(); }
+    if (state.binary && std::chrono::steady_clock::now()-state.progress > std::chrono::milliseconds(state.noProgressMs)) return 1;
+    const auto* cancel = state.cancel;
     return cancel && cancel->load(std::memory_order_relaxed) ? 1 : 0;
 }
 }  // namespace
@@ -108,25 +153,44 @@ ClientResult<Origin> Origin::parse(std::string_view text, bool developmentHttp) 
     if (number != (scheme == "https" ? 443U : 80U)) origin += ":" + std::to_string(number);
     return Origin(std::move(origin), developmentHttp);
 }
-CurlHttpTransport::CurlHttpTransport(long connectTimeoutMs, long timeoutMs) : connectTimeoutMs_(connectTimeoutMs), timeoutMs_(timeoutMs) {
+CurlHttpTransport::CurlHttpTransport(long connectTimeoutMs, long timeoutMs, TransferTimeouts transfers) : connectTimeoutMs_(connectTimeoutMs), timeoutMs_(timeoutMs), transfers_(transfers) {
+    if(transfers.patchMs<=0||transfers.patchMs>365000||transfers.downloadMs<=0||transfers.downloadMs>21660000||transfers.noProgressMs<=0||transfers.noProgressMs>120000) throw std::invalid_argument("Invalid transfer timeout");
     if (connectTimeoutMs <= 0 || connectTimeoutMs > 5000 || timeoutMs <= 0 || timeoutMs > 35000) throw std::invalid_argument("Invalid client timeout");
 }
 ClientResult<HttpResponse> CurlHttpTransport::perform(const Origin& origin, const HttpRequest& request, const std::atomic_bool* cancel) {
+    return execute(origin, request, cancel, nullptr);
+}
+ClientResult<HttpResponse> CurlHttpTransport::transfer(const Origin& origin, const TransferRequest& binary, const std::atomic_bool* cancel) {
+    if (binary.method != Method::Get && binary.method != Method::Head && binary.method != Method::Patch) return failure(ErrorKind::InvalidArgument);
+    if (binary.length < 0 || binary.length > (1LL << 40) || static_cast<std::uint64_t>(binary.length) > static_cast<std::uint64_t>(std::numeric_limits<curl_off_t>::max()) || (binary.method == Method::Patch && !binary.source)) return failure(ErrorKind::InvalidArgument);
+    for (const auto& h : binary.headers) {
+        if ((h.first != "If-Match" && h.first != "If-Range" && h.first != "Range" && h.first != "Upload-Offset") || h.second.size() > 256 || h.second.find_first_of("\r\n") != std::string::npos || h.second.find('\0') != std::string::npos) return failure(ErrorKind::InvalidArgument);
+    }
+    return execute(origin, HttpRequest{binary.method, binary.path, {}, binary.bearer}, cancel, &binary);
+}
+ClientResult<HttpResponse> CurlHttpTransport::execute(const Origin& origin, const HttpRequest& request, const std::atomic_bool* cancel, const TransferRequest* binary) {
     if (cancel && cancel->load(std::memory_order_relaxed)) return failure(ErrorKind::Interrupted);
     if (request.path.substr(0, 8) != "/api/v1/" || request.path.find_first_of("\r\n#\\") != std::string::npos ||
         std::any_of(request.path.begin(), request.path.end(), asciiControl) || request.path.size() > 8192 || request.body.view().size() > kRequestLimit ||
-        ((request.method == Method::Get || request.method == Method::Delete) && !request.body.view().empty())) return failure(ErrorKind::InvalidArgument);
+        ((request.method == Method::Get || request.method == Method::Head || request.method == Method::Delete) && !request.body.view().empty())) return failure(ErrorKind::InvalidArgument);
     bool started = false;
     try {
         static CurlGlobal global;
         if (global.result != CURLE_OK) return failure(ErrorKind::Transport);
-        Transfer state{{}, 0, false, cancel};
+        Transfer state{};
+        state.cancel = cancel;
+        state.binary = binary;
+        state.noProgressMs = transfers_.noProgressMs;
         Headers headers;
         // easy 先销毁，回调上下文及借用的头链表随后释放。
         std::unique_ptr<CURL, decltype(&curl_easy_cleanup)> curl(curl_easy_init(), curl_easy_cleanup);
         if (!curl) return failure(ErrorKind::Transport);
         if (!headers.add("Accept: application/json") || !headers.add("Accept-Encoding: identity") || !headers.add("Expect:")) return failure(ErrorKind::Transport);
-        if ((request.method == Method::Post || request.method == Method::Patch || request.method == Method::Put) && !headers.add("Content-Type: application/json; charset=utf-8")) return failure(ErrorKind::Transport);
+        if (!binary && (request.method == Method::Post || request.method == Method::Patch || request.method == Method::Put) && !headers.add("Content-Type: application/json; charset=utf-8")) return failure(ErrorKind::Transport);
+        if (binary) {
+            if (request.method == Method::Patch && !headers.add("Content-Type: application/offset+octet-stream")) return failure(ErrorKind::Transport);
+            for (const auto& h : binary->headers) if (!headers.add((h.first + ": " + h.second).c_str())) return failure(ErrorKind::Transport);
+        }
         if (request.ifMatch && !headers.add(("If-Match: " + request.ifMatch->value()).c_str())) return failure(ErrorKind::Transport);
         if (request.bearer) {
             if (!SecretToken::session(request.bearer->view())) return failure(ErrorKind::InvalidArgument);
@@ -141,14 +205,19 @@ ClientResult<HttpResponse> CurlHttpTransport::perform(const Origin& origin, cons
         set(CURLOPT_PROXY, ""); set(CURLOPT_NETRC, static_cast<long>(CURL_NETRC_IGNORED));
         set(CURLOPT_HTTPAUTH, static_cast<long>(CURLAUTH_NONE));
         set(CURLOPT_SSL_VERIFYPEER, 1L); set(CURLOPT_SSL_VERIFYHOST, 2L);
-        set(CURLOPT_NOSIGNAL, 1L); set(CURLOPT_CONNECTTIMEOUT_MS, connectTimeoutMs_); set(CURLOPT_TIMEOUT_MS, timeoutMs_);
+        set(CURLOPT_NOSIGNAL, 1L); set(CURLOPT_CONNECTTIMEOUT_MS, connectTimeoutMs_); set(CURLOPT_TIMEOUT_MS, binary && request.method != Method::Head ? (request.method == Method::Patch ? transfers_.patchMs : transfers_.downloadMs) : timeoutMs_);
         set(CURLOPT_HTTP_VERSION, static_cast<long>(CURL_HTTP_VERSION_1_1));
         set(CURLOPT_HTTP_CONTENT_DECODING, 0L); set(CURLOPT_FRESH_CONNECT, 1L); set(CURLOPT_FORBID_REUSE, 1L);
         set(CURLOPT_HTTPHEADER, headers.value);
         set(CURLOPT_WRITEFUNCTION, &bodyCallback); set(CURLOPT_WRITEDATA, &state);
         set(CURLOPT_HEADERFUNCTION, &headerCallback); set(CURLOPT_HEADERDATA, &state);
         set(CURLOPT_NOPROGRESS, 0L); set(CURLOPT_XFERINFOFUNCTION, &progressCallback); set(CURLOPT_XFERINFODATA, &state);
-        if (request.method == Method::Post || request.method == Method::Patch || request.method == Method::Put) {
+        if (binary && request.method == Method::Patch) {
+            set(CURLOPT_UPLOAD, 1L); set(CURLOPT_CUSTOMREQUEST, "PATCH");
+            set(CURLOPT_INFILESIZE_LARGE, static_cast<curl_off_t>(binary->length));
+            set(CURLOPT_READFUNCTION, &sourceCallback); set(CURLOPT_READDATA, &state);
+        } else if (request.method == Method::Head) set(CURLOPT_NOBODY, 1L);
+        else if (request.method == Method::Post || request.method == Method::Patch || request.method == Method::Put) {
             set(CURLOPT_POST, 1L); set(CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(request.body.view().size()));
             set(CURLOPT_POSTFIELDS, request.body.view().empty() ? "" : request.body.view().data());
             if (request.method != Method::Post) set(CURLOPT_CUSTOMREQUEST, request.method == Method::Patch ? "PATCH" : "PUT");
@@ -157,7 +226,12 @@ ClientResult<HttpResponse> CurlHttpTransport::perform(const Origin& origin, cons
         started = true;
         const auto result = curl_easy_perform(curl.get());
         if (result != CURLE_OK) {
-            auto error = failure(request.writes() ? ErrorKind::OutcomeUnknown : state.invalid ? ErrorKind::Protocol : result == CURLE_ABORTED_BY_CALLBACK ? ErrorKind::Interrupted : ErrorKind::Transport);
+            if (state.callbackError) {
+                auto error = *state.callbackError;
+                if (request.writes()) error.remote = RemoteOutcome::Unknown;
+                return error;
+            }
+            auto error = failure(request.writes() ? ErrorKind::OutcomeUnknown : state.invalid ? ErrorKind::Protocol : (cancel && cancel->load()) ? ErrorKind::Interrupted : ErrorKind::Transport);
             error.remote = RemoteOutcome::Unknown;
             return error;
         }

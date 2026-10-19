@@ -3,6 +3,7 @@ target_sources(anof_infrastructure PRIVATE
     SodiumPasswordHasher.cc
     SodiumCredentialIssuer.cc
     SodiumInviteTokenCodec.cc
+    SodiumTransferIdGenerator.cc
     SodiumIdentityIdGenerator.cc
     internal/SecretBuffer.h
     internal/PasswordWork.h
@@ -28,6 +29,7 @@ if (ANOF_BUILD_TESTS)
         SodiumPasswordHasher.h
         SodiumCredentialIssuer.h
         SodiumInviteTokenCodec.h
+        SodiumTransferIdGenerator.h
         SodiumIdentityIdGenerator.h
         SodiumSessionTokenCodec.h
         SodiumRequestIdentity.h

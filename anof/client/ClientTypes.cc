@@ -26,7 +26,7 @@ ClientError failure(ErrorKind kind, std::string code) {
         case ErrorKind::Interrupted: code = "INTERRUPTED"; break;
         }
     }
-    return {kind, std::move(code), {}, {}, (kind == ErrorKind::OutcomeUnknown || kind == ErrorKind::Protocol) ? RemoteOutcome::Unknown : RemoteOutcome::NotSent, LocalState::Unchanged, {}};
+    return {kind, std::move(code), {}, {}, (kind == ErrorKind::OutcomeUnknown || kind == ErrorKind::Protocol) ? RemoteOutcome::Unknown : RemoteOutcome::NotSent, LocalState::Unchanged, {}, {}};
 }
 const char* errorMessage(ErrorKind kind) noexcept {
     switch (kind) {

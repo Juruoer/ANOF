@@ -23,8 +23,9 @@ bool sameIdentity(const InitializationIdentity& a, const InitializationIdentity&
     return a.instanceId == b.instanceId && a.operationId == b.operationId;
 }
 }
-InitResult<InitReceipt> InitializeInstance::execute(InitOptions options, PasswordInput password, RequestId requestId) {
+InitResult<InitReceipt> InitializeInstance::execute(TransferInitOptions input, PasswordInput password, RequestId requestId) {
     auto stage = InitStage::Validate;
+    auto& options = input.instance;
     try {
         auto root = normalizedRoot(options.absoluteRoot);
         if (!root || !validateInstanceConfiguration(options.configuration) ||
@@ -57,10 +58,12 @@ InitResult<InitReceipt> InitializeInstance::execute(InitOptions options, Passwor
         stage = InitStage::WriteConfiguration;
         if (auto written = lease->writeConfiguration(options.configuration); !written) return written.error();
         stage = InitStage::Bootstrap;
-        auto receipt = database_.createCurrent(lease->lease(), seed);
+        TransferBootstrapSeed bootstrap{std::move(seed), input.contentBudget};
+        const auto& expected = bootstrap.identity;
+        auto receipt = database_.createCurrent(lease->lease(), bootstrap);
         if (!receipt) return receipt.error();
-        if (!sameIdentity(receipt.value().identity, seed.identity) || receipt.value().adminUserId != seed.adminUserId ||
-            receipt.value().publicSpaceId != seed.publicSpaceId || receipt.value().privateSpaceId != seed.privateSpaceId)
+        if (!sameIdentity(receipt.value().identity, expected.identity) || receipt.value().adminUserId != expected.adminUserId ||
+            receipt.value().publicSpaceId != expected.publicSpaceId || receipt.value().privateSpaceId != expected.privateSpaceId)
             return InitFailure{ InitError::IntegrityError, InitStage::Verify };
         stage = InitStage::PublishFormat;
         if (auto published = lease->publishFormat(); !published) return published.error();

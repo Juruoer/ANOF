@@ -98,11 +98,43 @@ public:
         return SubmitError::InternalError;
     }
 };
+class UnexpectedTransferDispatcher final : public TransferDispatcher {
+public:
+    TaskSubmission submit(RequestContext, OpenDownloadCommand, Completion<OpenedDownload>) override {
+        BOOST_ERROR("Unexpected download submission"); return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, CreateUploadCommand, Completion<UploadCreated>) override {
+        BOOST_ERROR("Unexpected upload submission: CreateUploadCommand"); return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, ListUploadsCommand, Completion<Page<UploadView, UploadCursor>>) override {
+        BOOST_ERROR("Unexpected upload submission: ListUploadsCommand"); return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, GetUploadCommand, Completion<UploadView>) override {
+        BOOST_ERROR("Unexpected upload submission: GetUploadCommand"); return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, CancelUploadCommand, Completion<void>) override {
+        BOOST_ERROR("Unexpected upload submission: CancelUploadCommand"); return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, CompleteUploadCommand, Completion<UploadCompletionAccepted>) override {
+        BOOST_ERROR("Unexpected upload submission: CompleteUploadCommand"); return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, PreparePatchCommand, Completion<PatchPreparation>) override {
+        BOOST_ERROR("Unexpected upload submission: PreparePatchCommand"); return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, GetStorageCommand, Completion<StorageView>) override {
+        BOOST_ERROR("Unexpected upload submission: GetStorageCommand"); return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, SetStorageBudgetCommand, Completion<StorageView>) override {
+        BOOST_ERROR("Unexpected upload submission: SetStorageBudgetCommand"); return SubmitError::InternalError;
+    }
+};
 struct Client {
     int fd;
     std::string bytes;
     bool eof = false;
-    explicit Client(const InetAddress& address) : fd(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0)) {
+    const std::size_t responseLimit;
+    explicit Client(const InetAddress& address, std::size_t limit = 256 * 1024)
+        : fd(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0)), responseLimit(limit) {
         if (fd < 0) throw std::runtime_error("socket failed");
         if (::connect(fd, address.getSockAddr(), sizeof(sockaddr_in)) != 0) {
             ::close(fd);
@@ -120,7 +152,7 @@ struct Client {
             const auto n = ::recv(fd, buffer, sizeof buffer, MSG_DONTWAIT);
             if (n > 0) {
                 bytes.append(buffer, static_cast<std::size_t>(n));
-                if (bytes.size() > 256 * 1024) throw std::runtime_error("test response limit exceeded");
+                if (bytes.size() > responseLimit) throw std::runtime_error("test response limit exceeded");
             } else if (n == 0 || (n < 0 && errno == ECONNRESET)) { eof = true; return; }
             else if (errno == EINTR) continue;
             else if (errno == EAGAIN || errno == EWOULDBLOCK) return;

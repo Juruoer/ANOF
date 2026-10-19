@@ -1,0 +1,6 @@
+add_executable(anof_transfer_files_unittest TransferFiles_unittest.cc)
+target_link_libraries(anof_transfer_files_unittest PRIVATE anof_infrastructure Boost::unit_test_framework)
+target_compile_definitions(anof_transfer_files_unittest PRIVATE BOOST_TEST_DYN_LINK)
+target_compile_options(anof_transfer_files_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+add_test(NAME anof_transfer_files_unittest COMMAND anof_transfer_files_unittest)
+set_tests_properties(anof_transfer_files_unittest PROPERTIES TIMEOUT 30 LABELS "unit;transfer;filesystem")

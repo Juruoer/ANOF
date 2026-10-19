@@ -1,3 +1,4 @@
+#include <tests/support/EventLoopWait.h>
 #define BOOST_TEST_MODULE AccountReads
 #include <boost/test/unit_test.hpp>
 #include <anof/transport/http/Pagination.h>
@@ -53,22 +54,19 @@ public:
     Fake dispatcher{loop};
     bool ready = true;
     std::vector<HttpTraceRecord> finished;
+    UnexpectedTransferDispatcher uploadDispatcher;
     HttpApi api;
     HttpServer server{&loop, InetAddress(0, true), "account-read-test"};
     bool stopped = false;
     explicit Fixture(HttpApiOptions options = {})
         : api(codec, identity, [this] { return ready; }, [](auto, const auto&, const auto&) -> HttpStreamCallbacks {
             BOOST_ERROR("Read routed to mkdir"); return {};
-        }, dispatcher, {{}, [this](auto record) { finished.push_back(std::move(record)); }}, options) {
+        }, dispatcher, uploadDispatcher, {{}, [this](auto record) { finished.push_back(std::move(record)); }}, options) {
         api.configure(server); server.start();
     }
-    void until(const std::function<bool()>& done) {
-        if (done()) return;
-        bool expired = false;
-        const auto poll = loop.runEvery(0.001, [&] { if (done()) loop.quit(); });
-        const auto timeout = loop.runAfter(3, [&] { expired = true; loop.quit(); });
-        loop.loop(); loop.cancel(poll); loop.cancel(timeout);
-        BOOST_REQUIRE(!expired);
+    void until(const std::function<bool()>& done,
+               const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
+        BOOST_REQUIRE(anof::test::waitFor(loop, done, 3, file, line));
     }
     ~Fixture() {
         server.stop(0, [this] { stopped = true; });

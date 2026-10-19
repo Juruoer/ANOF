@@ -1,3 +1,4 @@
+#include <tests/support/EventLoopWait.h>
 #define BOOST_TEST_MODULE IdentityExecutorIntegration
 #include <boost/test/unit_test.hpp>
 #include <tests/integration/InitializedInstance.h>
@@ -12,14 +13,9 @@
 using namespace anof;
 using namespace anof::runtime;
 namespace {
-bool drive(muduox::net::EventLoop& loop, const std::function<bool()>& done) {
-    if (done()) return true;
-    // muduox 定时器以墙上时间排期；只用 tick 唤醒，期限由单调时钟判断，避免提前超时。
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(4);
-    auto timer = loop.runEvery(0.001, [&] {
-        if (done() || std::chrono::steady_clock::now() >= deadline) loop.quit();
-    });
-    loop.loop(); loop.cancel(timer); return done();
+bool drive(muduox::net::EventLoop& loop, const std::function<bool()>& done,
+           const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
+    return anof::test::waitFor(loop, done, 4, file, line);
 }
 struct Gate {
     std::mutex mutex;

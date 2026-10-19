@@ -4,3 +4,7 @@ target_compile_options(anof_runtime_unittest PRIVATE -Wall -Wextra -Wconversion 
 
 anof_add_unit_test(anof_authentication_limiter_unittest AuthenticationLimiter_unittest.cc)
 target_link_libraries(anof_authentication_limiter_unittest PRIVATE anof_runtime)
+
+anof_add_unit_test(anof_disk_executor_unittest DiskExecutor_unittest.cc)
+target_include_directories(anof_disk_executor_unittest PRIVATE ${PROJECT_SOURCE_DIR})
+target_link_libraries(anof_disk_executor_unittest PRIVATE anof_runtime)

@@ -2,6 +2,7 @@ add_subdirectory(persistence)
 add_subdirectory(crypto)
 add_subdirectory(system)
 add_subdirectory(config)
+add_subdirectory(storage/local)
 
 if (ANOF_BUILD_TESTS)
     # 新工厂仅检查声明自包含，不依赖仍在适配中的 SQLite 实现或 transport。

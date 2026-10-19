@@ -3,6 +3,8 @@
 #include <anof/application/ports/InstancePreparation.h>
 
 #include <utility>
+#include <array>
+#include <sys/stat.h>
 
 namespace anof::infrastructure::system::detail {
 
@@ -35,6 +37,10 @@ Result<InstanceRoot> openInstanceRoot(const std::filesystem::path& root);
 Result<InstanceDirectories> openInstanceDirectories(const std::filesystem::path& root);
 // name 必须是单个普通路径组件；不创建。检查类型后才以读写模式打开，拒绝硬链接。
 Result<OwnedFd> openPrivateFile(int directory, const char* name, bool writable);
+// 仅打开、验证固定内容目录；要求与 .anof 同设备，不创建或修复。
+Result<std::array<OwnedFd, 3>> openContentDirectories(int anof);
+// 与目录打开共用的纯属性检查，允许测试合成跨设备证据而不挂载文件系统。
+Result<void> validateContentDirectory(const struct stat& held, const struct stat& named, dev_t device);
 Result<void> validatePrivateFile(int fd, bool writable);
 // 仅借用本适配器的 lease；借用期间必须保持 lease 存活。
 Result<int> instanceDirectory(const InstanceLease& lease);

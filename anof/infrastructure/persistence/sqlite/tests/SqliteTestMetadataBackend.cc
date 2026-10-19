@@ -58,7 +58,7 @@ Result<void> seedDatabase(SqliteConnection& connection, const anof::testing::Met
         if (!result) return result.error();
     }
     for (const auto& blob : seed.blobs) {
-        auto p = SqliteStatement::prepare(connection, "INSERT INTO blobs VALUES (?1, ?2, ?3)");
+        auto p = SqliteStatement::prepare(connection, "INSERT INTO blobs(id,size,sha256) VALUES (?1, ?2, ?3)");
         if (!p) return p.error();
         auto& s = *p.value();
         auto result = finish(s, { s.bindText(1, blob.id.toString()), s.bindInt64(2, blob.size.value()),
@@ -115,6 +115,8 @@ SqliteTestMetadataBackend::~SqliteTestMetadataBackend() {
 
 std::filesystem::path SqliteTestMetadataBackend::databasePath() const { return directory_ / "database" / "metadata.sqlite3"; }
 
+Result<void> seedTransferMetadata(SqliteConnection& c,const anof::testing::MetadataSeed& seed) {return seedDatabase(c,seed);}
+
 Result<void> SqliteTestMetadataBackend::reset(const anof::testing::MetadataSeed& seed) {
     std::error_code error;
     // 只清理本 fixture 拥有的数据库及 WAL 文件；调用方须先关闭所有连接。
@@ -130,6 +132,8 @@ Result<void> SqliteTestMetadataBackend::reset(const anof::testing::MetadataSeed&
     if (!begun) return begun.error();
     auto seeded = seedDatabase(*connection.value(), seed);
     if (!seeded) return seeded.error();
+    auto storage = connection.value()->execute("INSERT INTO storage_accounting VALUES(1,100000,0,0,1)");
+    if (!storage) return storage.error();
     // 失败和异常退出时连接析构回滚；提交失败也不会残留半份 seed。
     return connection.value()->commit();
 }

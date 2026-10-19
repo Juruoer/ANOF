@@ -1,4 +1,4 @@
-#include <tests/diagnostics/WaitTrace.h>
+#include <tests/support/EventLoopWait.h>
 #define BOOST_TEST_MODULE HttpIdentityHandlers
 #include <boost/test/unit_test.hpp>
 #include <anof/transport/http/Pagination.h>
@@ -65,32 +65,19 @@ public:
     Fake dispatcher{loop};
     bool ready = true;
     std::vector<HttpTraceRecord> finished;
+    UnexpectedTransferDispatcher uploadDispatcher;
     HttpApi api;
     HttpServer server{&loop, InetAddress(0, true), "http-identity-test"};
     bool stopped = false;
     explicit Fixture(HttpApiOptions options = {})
         : api(codec, identity, [this] { return ready; }, [](auto, const auto&, const auto&) -> HttpStreamCallbacks {
             BOOST_ERROR("Identity routed to mkdir"); return {};
-        }, dispatcher, {{}, [this](auto record) { finished.push_back(std::move(record)); }}, options) {
+        }, dispatcher, uploadDispatcher, {{}, [this](auto record) { finished.push_back(std::move(record)); }}, options) {
         api.configure(server); server.start();
     }
     void until(const std::function<bool()>& done,
                const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
-        anof::test::WaitTrace trace(file, line);
-        trace.event("begin");
-        if (done()) { trace.event("already_done", true); return; }
-        bool expired = false;
-        bool observedDone = false;
-        const auto poll = loop.runEvery(0.001, [&] {
-            observedDone = done();
-            if (observedDone) { trace.event("done", true); loop.quit(); }
-        });
-        const auto timeout = loop.runAfter(3, [&] {
-            trace.event("deadline", observedDone); expired = true; loop.quit();
-        });
-        loop.loop(); loop.cancel(poll); loop.cancel(timeout);
-        trace.event(expired ? "expired" : "returned", observedDone);
-        BOOST_REQUIRE(!expired);
+        BOOST_REQUIRE(anof::test::waitFor(loop, done, 3, file, line));
     }
     ~Fixture() {
         server.stop(0, [this] { stopped = true; });

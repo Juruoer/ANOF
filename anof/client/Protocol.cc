@@ -205,6 +205,7 @@ ClientResult<AccountTag> AccountTag::parse(std::string_view text) {
         const bool contribution = rest.substr(0,19) == "quota-contribution-";
         if (contribution) rest.remove_prefix(19);
         else if (rest.substr(0,12) == "quota-space-") rest.remove_prefix(12);
+        else if (rest.substr(0,8) == "storage-") rest.remove_prefix(8);
         else { require(rest.substr(0,5) == "user-"); rest.remove_prefix(5); }
         for (unsigned i=0; i<(contribution?2u:1u); ++i) {
             require(rest.size()>37 && rest[36]=='-');

@@ -1,4 +1,4 @@
-#include <tests/diagnostics/WaitTrace.h>
+#include <tests/support/EventLoopWait.h>
 #define BOOST_TEST_MODULE CreateDirectoryHttp
 #include <boost/test/unit_test.hpp>
 #include <anof/transport/http/CreateDirectoryHandler.h>
@@ -110,6 +110,7 @@ public:
         tasks.push_back(std::move(record));
         if (throwTaskObserver) throw std::runtime_error("injected task observer failure");
     }};
+    UnexpectedTransferDispatcher uploadDispatcher;
     HttpApi api;
     HttpServer server{&loop, InetAddress(0, true), "directory-test"};
     bool stopping = false;
@@ -119,7 +120,7 @@ public:
               [this, stream = handler.stream()](auto context, const auto& request, const auto& writer) {
                   writers.push_back(writer);
                   return stream(context, request, writer);
-              }, identityDispatcher, {{}, [this](auto record) {
+              }, identityDispatcher, uploadDispatcher, {{}, [this](auto record) {
                   exchanges.push_back(std::move(record));
                   if (throwHttpObserver) throw std::runtime_error("injected HTTP observer failure");
               }}, options) {
@@ -137,27 +138,13 @@ public:
     ~Fixture() {
         stop();
         for (const auto& job : dispatcher.jobs) dispatcher.release(job);
-        const auto poll = loop.runEvery(0.001, [&] { if (httpStopped && dispatcher.deliveries == static_cast<int>(dispatcher.jobs.size())) loop.quit(); });
-        const auto deadline = loop.runAfter(3, [] { std::terminate(); });
-        loop.loop();
-        loop.cancel(poll); loop.cancel(deadline);
+        if (!anof::test::waitFor(loop, [&] {
+                return httpStopped && dispatcher.deliveries == static_cast<int>(dispatcher.jobs.size());
+            }, 3)) std::terminate();
     }
     void until(const std::function<bool()>& done,
                const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
-        anof::test::WaitTrace trace(file, line);
-        trace.event("begin");
-        bool expired = false;
-        bool observedDone = false;
-        const auto poll = loop.runEvery(0.001, [&] {
-            observedDone = done();
-            if (observedDone) { trace.event("done", true); loop.quit(); }
-        });
-        const auto timeout = loop.runAfter(3, [&] {
-            trace.event("deadline", observedDone); expired = true; loop.quit();
-        });
-        loop.loop(); loop.cancel(poll); loop.cancel(timeout);
-        trace.event(expired ? "expired" : "returned", observedDone);
-        BOOST_REQUIRE(!expired);
+        BOOST_REQUIRE(anof::test::waitFor(loop, done, 3, file, line));
     }
     std::string exchange(std::string payload) {
         Client client(server.listenAddress()); client.send(payload);

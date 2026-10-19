@@ -14,14 +14,14 @@ private:
     std::string value_;
     bool developmentHttp_;
 };
-enum class Method { Get, Post, Delete, Patch, Put };
+enum class Method { Get, Head, Post, Delete, Patch, Put };
 struct HttpRequest {
     Method method;
     std::string path;
     SecureBuffer body;
     const SecretToken* bearer = nullptr; // 仅在同步 perform 生命周期中借用。
     std::optional<AccountTag> ifMatch = {};
-    bool writes() const noexcept { return method != Method::Get; }
+    bool writes() const noexcept { return method != Method::Get && method != Method::Head; }
 };
 struct HttpResponse {
     int status = 0;

@@ -2,6 +2,8 @@ add_library(anof_runtime STATIC
     AuthenticationLimiter.cc
     IdentityExecutor.cc
     CompletionPump.cc
+    UploadExecutor.cc
+    DiskExecutor.cc
     MetadataExecutor.cc
     AnofRuntime.cc
 )

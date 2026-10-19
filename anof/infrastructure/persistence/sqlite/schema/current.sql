@@ -1,4 +1,4 @@
--- 当前开发 schema 2；不是历史迁移或升级脚本。
+-- 当前 schema 3；用于新实例建库，无开发版本升级链。
 CREATE TABLE schema_info (
     singleton INTEGER NOT NULL PRIMARY KEY CHECK (typeof(singleton)='integer' AND singleton=1),
     version INTEGER NOT NULL CHECK (typeof(version)='integer' AND version>0),
@@ -113,8 +113,10 @@ CREATE TABLE blobs (
         AND length(replace(id, '-', '')) = 32
         AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'
         AND id <> '00000000-0000-0000-0000-000000000000'),
-    size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0),
-    sha256 BLOB NOT NULL CHECK (typeof(sha256) = 'blob' AND length(sha256) = 32)
+    size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0 AND size <= 1099511627776),
+    sha256 BLOB NOT NULL CHECK (typeof(sha256) = 'blob' AND length(sha256) = 32),
+    storage_key TEXT GENERATED ALWAYS AS ('objects/' || substr(id,1,2) || '/' || id) VIRTUAL,
+    state INTEGER NOT NULL DEFAULT 0 CHECK(state=0)
 );
 
 CREATE TABLE nodes (
@@ -417,4 +419,68 @@ CREATE TABLE identity_audit_events (
         OR (action='quota_changed' AND actor_id IS NOT NULL AND subject_user_id IS NULL AND invite_id IS NULL AND instance_id IS NULL AND space_id IS NOT NULL AND quota_scope IS NOT NULL
             AND ((quota_scope='space' AND user_id IS NULL) OR (quota_scope='contribution' AND user_id IS NOT NULL)))
     )
+);
+
+CREATE TRIGGER blobs_immutable BEFORE UPDATE ON blobs BEGIN SELECT RAISE(ABORT,'immutable blob'); END;
+CREATE TRIGGER blobs_no_delete BEFORE DELETE ON blobs BEGIN SELECT RAISE(ABORT,'no blob gc'); END;
+CREATE TABLE storage_accounting (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ content_budget_bytes INTEGER NOT NULL CHECK(typeof(content_budget_bytes)='integer' AND content_budget_bytes>=0),
+ retained_bytes INTEGER NOT NULL CHECK(typeof(retained_bytes)='integer' AND retained_bytes>=0),
+ reserved_bytes INTEGER NOT NULL CHECK(typeof(reserved_bytes)='integer' AND reserved_bytes>=0 AND reserved_bytes<=9223372036854775807-retained_bytes),
+ revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=1)
+);
+CREATE TABLE uploads (
+ id TEXT PRIMARY KEY CHECK(anof_uuid(id)),
+ user_id TEXT NOT NULL REFERENCES users(id),
+ client_upload_id TEXT NOT NULL CHECK(anof_uuid(client_upload_id)),
+ space_id TEXT NOT NULL REFERENCES spaces(id),
+ original_parent_id TEXT NOT NULL CHECK(anof_uuid(original_parent_id)),
+ original_name TEXT NOT NULL CHECK(anof_node_name(original_name)),
+ length INTEGER NOT NULL CHECK(typeof(length)='integer' AND length BETWEEN 0 AND 1099511627776),
+ expected_sha256 TEXT CHECK(expected_sha256 IS NULL OR (length(expected_sha256)=64 AND expected_sha256 NOT GLOB '*[^0-9a-f]*')),
+ parent_id TEXT NOT NULL CHECK(anof_uuid(parent_id)),
+ name TEXT NOT NULL CHECK(anof_node_name(name)),
+ durable_offset INTEGER NOT NULL CHECK(typeof(durable_offset)='integer' AND durable_offset BETWEEN 0 AND length),
+ state INTEGER NOT NULL CHECK(typeof(state)='integer' AND state BETWEEN 0 AND 8),
+ generation INTEGER NOT NULL CHECK(typeof(generation)='integer' AND generation>=1),
+ actual_sha256 TEXT CHECK(actual_sha256 IS NULL OR (length(actual_sha256)=64 AND actual_sha256 NOT GLOB '*[^0-9a-f]*')),
+ pending_blob_id TEXT CHECK(pending_blob_id IS NULL OR anof_uuid(pending_blob_id)),
+ staging_location INTEGER NOT NULL CHECK(staging_location IN (0,1)),
+ result_node_id TEXT CHECK(result_node_id IS NULL OR anof_uuid(result_node_id)),
+ created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer'),
+ last_progress_at INTEGER NOT NULL CHECK(typeof(last_progress_at)='integer' AND last_progress_at>=created_at),
+ expires_at INTEGER NOT NULL CHECK(typeof(expires_at)='integer' AND expires_at>=last_progress_at),
+ terminal_at INTEGER CHECK(terminal_at IS NULL OR (typeof(terminal_at)='integer' AND terminal_at>=last_progress_at)),
+ last_error INTEGER CHECK(last_error IS NULL OR (typeof(last_error)='integer' AND last_error BETWEEN 0 AND 11)),
+ cancel_requested INTEGER NOT NULL CHECK(cancel_requested IN (0,1)),
+ cleanup_pending INTEGER NOT NULL CHECK(cleanup_pending IN (0,1)),
+ UNIQUE(user_id,client_upload_id),
+ CHECK((state>=5)=(terminal_at IS NOT NULL)),
+ CHECK((state=5)=(result_node_id IS NOT NULL)),
+ CHECK(cleanup_pending=0 OR state IN (6,7,8)),
+ CHECK(state NOT IN (2,3,4,5) OR durable_offset=length),
+ CHECK(state!=0 OR durable_offset=0),
+ CHECK(state NOT IN (3,4,5) OR actual_sha256 IS NOT NULL),
+ CHECK((staging_location=0 AND state NOT IN (4,5)) OR pending_blob_id IS NOT NULL),
+ CHECK(state!=5 OR (staging_location=1 AND cancel_requested=0 AND last_error IS NULL))
+);
+CREATE INDEX uploads_user_seek ON uploads(user_id,created_at,id);
+CREATE INDEX uploads_seek ON uploads(created_at,id);
+CREATE INDEX uploads_candidate ON uploads(pending_blob_id,state);
+CREATE TRIGGER upload_original_immutable BEFORE UPDATE ON uploads
+WHEN NEW.id!=OLD.id OR NEW.user_id!=OLD.user_id OR NEW.client_upload_id!=OLD.client_upload_id OR
+ NEW.space_id!=OLD.space_id OR NEW.original_parent_id!=OLD.original_parent_id OR NEW.original_name!=OLD.original_name OR
+ NEW.length!=OLD.length OR NEW.expected_sha256 IS NOT OLD.expected_sha256 OR NEW.created_at!=OLD.created_at OR
+ NEW.generation!=OLD.generation+1 OR NEW.durable_offset<OLD.durable_offset OR NEW.cancel_requested<OLD.cancel_requested
+BEGIN SELECT RAISE(ABORT,'upload invariant'); END;
+CREATE TABLE transfer_audit_events (
+ sequence INTEGER PRIMARY KEY,
+ kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 6),
+ request_id TEXT NOT NULL CHECK(anof_uuid(request_id)),
+ actor_id TEXT REFERENCES users(id),
+ upload_id TEXT CHECK(upload_id IS NULL OR anof_uuid(upload_id)),
+ occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer'),
+ failure INTEGER CHECK(failure IS NULL OR failure BETWEEN 0 AND 11),
+ CHECK((kind=6 AND actor_id IS NOT NULL AND upload_id IS NULL AND failure IS NULL) OR (kind!=6 AND upload_id IS NOT NULL))
 );

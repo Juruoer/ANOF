@@ -1,4 +1,6 @@
+#include <tests/support/EventLoopWait.h>
 #include <anof/runtime/IdentityExecutor.h>
+#include <anof/runtime/UploadExecutor.h>
 #define BOOST_TEST_MODULE AnofHttpCreateDirectoryIntegration
 #include <boost/test/unit_test.hpp>
 
@@ -44,15 +46,9 @@ template <typename T> T id(unsigned number) {
 }
 QuotaDelta amount(std::int64_t nodes) { return { ByteCount{}, NodeCount::from(nodes).value() }; }
 
-bool drive(EventLoop& loop, const std::function<bool()>& done) {
-    if (done()) return true;
-    bool expired = false;
-    const auto poll = loop.runEvery(0.001, [&] { if (done()) loop.quit(); });
-    const auto deadline = loop.runAfter(3, [&] { expired = true; loop.quit(); });
-    loop.loop();
-    loop.cancel(poll);
-    loop.cancel(deadline);
-    return !expired && done();
+bool drive(muduox::net::EventLoop& loop, const std::function<bool()>& done,
+           const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
+    return anof::test::waitFor(loop, done, 3, file, line);
 }
 
 struct Client {
@@ -188,6 +184,8 @@ struct Fixture {
     AnofRuntime runtime{loop, {1, 1}};
     // 本夹具只验收目录；身份 dispatcher 不启动，身份端点由完整实例测试覆盖。
     IdentityExecutor identities{loop, runtime.metadataExecutor()};
+    DiskExecutor disk{loop};
+    UploadExecutor uploads{loop, runtime.metadataExecutor(), disk, DiskSafetyPolicy{}};
     CreateDirectoryHandler handler{runtime.dispatcher(), [this] { return runtime.ready(); },
         [this](auto value) { record(tasks, std::move(value)); }};
     std::unique_ptr<HttpApi> api;
@@ -225,7 +223,7 @@ struct Fixture {
     }
     void start(double responseSeconds = 30) {
         BOOST_REQUIRE(backend->reset(seed));
-        api = std::make_unique<HttpApi>(*codec, *identity, [this] { return runtime.ready(); }, handler.stream(), identities,
+        api = std::make_unique<HttpApi>(*codec, *identity, [this] { return runtime.ready(); }, handler.stream(), identities, uploads,
             HttpObservation{{}, [this](auto value) { record(finished, std::move(value)); }}, HttpApiOptions{4, 15, responseSeconds});
         api->configure(server);
         BOOST_REQUIRE(runtime.start([this]() -> Result<MetadataWorkerResources> {

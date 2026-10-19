@@ -1,4 +1,5 @@
 #include <apps/anof/ClientCommands.h>
+#include <apps/anof/TransferCommands.h>
 #include <apps/anof/ClientOutput.h>
 #include <apps/anof/TerminalPassword.h>
 #include <anof/client/CurlHttpTransport.h>
@@ -56,6 +57,7 @@ constexpr const char* helpText="Global --config-dir, --profile and --json preced
 CLI::App* sub(CLI::App& parent, const char* name, const char* description) { auto* app=parent.add_subcommand(name,description); app->footer(helpText); return app; }
 }
 struct ClientCommands::State {
+    std::unique_ptr<TransferCommands> transfers;
     bool json=false, developmentHttp=false;
     std::string config, profile, name, server, login, displayName, id, space, parent, directoryName;
     std::string condition, quotaUser, bytes, nodes;
@@ -64,6 +66,7 @@ struct ClientCommands::State {
     CLI::App *profiles, *profileAdd, *profileShow, *profileRemove, *profileList, *registerUser, *loginUser, *logout, *me,
         *inviteCreate, *inviteList, *inviteRevoke, *spaces, *children, *stat, *mkdir, *rename, *passwordChange, *userList, *userShow, *userEnable, *userDisable, *quotaShow, *quotaSet;
     explicit State(CLI::App& app) {
+        transfers=std::make_unique<TransferCommands>(app);
         configOption=app.add_option("--config-dir",config,"Absolute client configuration directory (client commands only)");
         profileOption=app.add_option("--profile",profile,"Explicit client profile (remote commands only)");
         jsonOption=app.add_flag("--json",json,"Machine-readable client output")->disable_flag_override();
@@ -176,6 +179,7 @@ int ClientCommands::run() {
         auto held=store.lock(s.profile); if (!held) return output.error(held.error());
         if (cancelled.load(std::memory_order_relaxed)) return output.error(failure(ErrorKind::Interrupted));
         CurlHttpTransport transport;
+        if(auto result=s.transfers->run(path.value(),held.value(),transport,&cancelled,output)) return *result;
         ApiClient api(transport,held.value(),&cancelled);
         auto emit=[&](auto result, LocalState local=LocalState::Unchanged) -> int {
             if (!result) return output.error(result.error());

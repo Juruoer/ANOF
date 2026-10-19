@@ -82,17 +82,19 @@ HTTP 和 metadata 的停止完成顺序可以互换。调用方在 `requestStop(
 
 [prepareInstance](../application/maintenance/PrepareInstance.h) 按取得排他 lease、读取配置、校验配置、执行维护检查的顺序准备实例。锁、配置与维护是独立类型化端口；具体 Linux 锁、TOML 和 SQLite 维护适配由 [infrastructure](../infrastructure/README.md) 提供，入口负责组合。准备操作在监听之前同步完成，不在请求回调内执行。配置只接纳显式启用的 `127.0.0.1` HTTP，队列上限 256、HTTP 在途上限 128、停止宽限 0～30 秒；端口 0 由内核分配。未启用本机开发 HTTP 的配置会被拒绝。
 
-InstanceServer 构造不绑定端口。`start()` 接纳启动后在 worker 创建业务资源，metadata 和密码资源初始化均成功才构造、配置并启动 HttpServer，随后公开 ready 和实际端口。`port()` 在首次成功启动前为空，停止后保留原端口供诊断。同步拒绝不调用通知；接纳启动后 ready 通知一次，初始化中停止以 Retryable 表示取消。ready 通知抛异常会触发停止，停止通知抛异常计入 `notificationExceptions()`。
+InstanceServer 构造不绑定端口。`start()` 接纳启动后在 worker 创建业务资源，metadata、密码及磁盘资源初始化成功，且上传内容与计量恢复通过后，才构造、配置并启动 HttpServer，随后公开 ready 和实际端口。`port()` 在首次成功启动前为空，停止后保留原端口供诊断。同步拒绝不调用通知；接纳启动后 ready 通知一次，初始化中停止以 Retryable 表示取消。ready 通知抛异常会触发停止，停止通知抛异常计入 `notificationExceptions()`。
 
-`requestStop()` 先关闭业务准入，再请求真实 HTTP 清理。身份请求终态回收及密码线程退出后才停止 metadata；实例停止必须同时满足密码／metadata 退出与 HTTP 清理屏障；HTTP 部分启动后抛出的可捕获异常也走清理路径。调用者保持 loop 运行至 `state()==Stopped`，在回调栈外销毁 InstanceServer，最后销毁 loop。实例 lease 在 HTTP、runtime、crypto 和回调闭包销毁之后释放；仅到 Stopped 不会提前释放锁。对象不能重启。
+`requestStop()` 先使 ready=false、关闭新 HTTP 准入并停止身份准入，再请求真实 HTTP 清理。HTTP grace 内保留上传协调器供既有流继续 feed/finish；HTTP 清理完成后才取消剩余上传并退休磁盘任务。无 HTTP 或启动失败直接进入上传清理。身份请求终态回收、上传链及文件句柄退休、密码与磁盘线程退出后才停止 metadata；实例停止必须同时满足全部 worker 退出与 HTTP 清理屏障；HTTP 部分启动后抛出的可捕获异常也走清理路径。调用者保持 loop 运行至 `state()==Stopped`，在回调栈外销毁 InstanceServer，最后销毁 loop。实例 lease 在 HTTP、runtime、crypto 和回调闭包销毁之后释放；仅到 Stopped 不会提前释放锁。对象不能重启。
 
 HttpServer 使用 `DeferredListen` 构造和主 loop 同步 `tryStart()`，成功后才公布 ready。监听失败通过 ready 的稳定错误分类返回：bind 地址占用为 `Conflict`，权限不足为 `Forbidden`，文件描述符／内存／缓冲等临时资源不足或系统调用中断为 `Retryable`，其余错误及无效启动状态为 `InternalError`。不传播底层错误文本，不自动重试或预探测端口。监听系统错误返回前 muduox 已释放监听资源；InstanceServer 继续驱动 loop，等待密码和 metadata worker 退出及完成项回收，最后通知 Stopped。实例析构才释放 lease。内存分配、线程创建和库内部不变量故障不属于可恢复监听错误的保证范围。
 
 [InstanceServer 集成测试](../../tests/integration/InstanceServer_unittest.cc) 使用真实 SQLite、crypto、时钟和回环 HTTP，覆盖延迟绑定、缺失数据库、worker 初始化异常、启动中取消、重复停止及回调异常；基础案例的 lease 使用测试替身，另有真实 lease 与 worker gate 的组合案例检查初始化取消和析构释放；跨进程排他及信号关闭由 [serve 进程集成测试](../../tests/integration/ServeProcess_unittest.cc) 覆盖。命令行使用说明见 [前台服务入口](../../apps/anof/README.md)。
 
-监听失败集成验收覆盖真实端口冲突、两条 worker 的线程退出、ready／stopped 各通知一次、Stopped 后仍持有真实实例锁，以及析构后可重新获取锁。进程验收覆盖退出码 4、无 READY、有 STOPPED、释放端口后原实例可重新启动，且端口冲突不影响另一实例继续提供 HTTP 服务。
+监听失败集成验收覆盖真实端口冲突、全部 worker 的线程退出、ready／stopped 各通知一次、Stopped 后仍持有真实实例锁，以及析构后可重新获取锁。进程验收覆盖退出码 4、无 READY、有 STOPPED、释放端口后原实例可重新启动，且端口冲突不影响另一实例继续提供 HTTP 服务。
 
 ## 7. 离线初始化与密码策略
+
+初始化入口接收 TransferInitOptions，将显式预算传到 TransferBootstrapSeed，将磁盘余量通过 InstanceConfiguration 传递。Bootstrap、配置及文件初始化适配均使用该契约，创建 schema/format 3；在线启动使用 UploadExecutor 完成内容与计量恢复。
 
 `anof_instance_setup` 提供 [initializeInstance / finishInitialization](InstanceInitialization.h)，只链接 application 与 infrastructure，不创建 EventLoop 或 HTTP。它构造真实文件初始化、数据库 Bootstrap、时钟、身份 ID 与密码适配器，调用 [初始化用例](../application/maintenance/InitializeInstance.h)。初始化 request ID 从独立请求身份适配器生成，不充当实体 ID。
 
@@ -100,7 +102,7 @@ HttpServer 使用 `DeferredListen` 构造和主 loop 同步 `tryStart()`，成�
 
 普通初始化先校验参数、计算密码及生成 ID，再创建 .anof 并持同一 lease 执行配置写入、事务化引导、格式发布和 pending 清理。任何失败停止后续阶段；lease 析构只释放锁，不删除现场。finish 不构造密码适配器、不产生新身份，先验证当前 pending 的完整引导才发布。
 
-[真实初始化测试](../../tests/integration/InitializeInstance_unittest.cc) 覆盖统一预算、密码验证、三组根计费、无默认 Session、重复 init、pending 拒绝启动及 finish 后可准备实例；不证明硬件掉电持久性。
+[真实初始化测试](../../tests/integration/InitializeInstance_unittest.cc) 覆盖自定义内容预算和磁盘余量落盘、类型化传输 Store、内容目录打开、统一密码预算、密码验证、三组根计费、无默认 Session、重复 init、pending 拒绝启动及 finish 后可准备实例；不证明硬件掉电持久性。
 
 
 ## 8. 身份多阶段调度
@@ -115,7 +117,7 @@ AuthenticationSource 只接受可信 socket 地址，IPv4 统一为 mapped IPv6�
 
 接纳前预留外层固定槽，跨阶段只有一个任务身份；完成通过 CompletionPump 合并通知，每轮最多32项。回调与闭包释放后才归还名额。取消可以与密码验证并行，避免进入最终事务；开始最终 metadata 阶段后的取消返回 AlreadyRunning，不能推断回滚。密码仍会运行到返回，停止屏障等待真实线程退出和全部完成。回调异常被隔离，不会再次完成。
 
-InstanceServer 拥有该执行器并通过 `identityDispatcher()` 注入 HttpApi；构造参数位于目录 stream 之后、可选 observation/options 之前。生产实例暴露十九个身份／读取／账户HTTP操作及 mkdir/health，共二十二个操作。HTTP cleanup 与密码／metadata 线程退出共同约束实例停止及 lease 的最终释放。
+InstanceServer 拥有该执行器并通过 `identityDispatcher()` 注入 HttpApi；构造参数位于目录 stream 之后、可选 observation/options 之前。生产实例注入 identityDispatcher 和 uploadDispatcher，暴露身份／账户／目录／health及上传／storage共三十一个HTTP操作。HTTP cleanup 与密码／metadata 线程退出共同约束实例停止及 lease 的最终释放。
 
 [身份服务集成测试](../../tests/integration/IdentityService_unittest.cc) 使用真实 SQLite／crypto，覆盖注册邀请回滚、空间隔离、分页绑定、快照版本复核、Session上限及已提交但确认未知时不返回秘密；[身份执行器测试](../../tests/integration/IdentityExecutor_unittest.cc) 覆盖真实登录／邀请／注册／读取、dummy验证、限流与容量、密码期间 metadata 可进展、取消和停止屏障、工厂失败。[限流测试](tests/AuthenticationLimiter_unittest.cc) 使用受控时间验证有界准入与来源规范化。没有性能或物理机持久性结论。
 
@@ -134,3 +136,37 @@ InstanceServer 拥有该执行器并通过 `identityDispatcher()` 注入 HttpApi
 设置 `ANOF_SHUTDOWN_TRACE` 可按需输出关停阶段的双时钟记录，包括 HTTP stop 回调、worker 最后通知、
 退出 future 的确认及实例停止条件。默认关闭；不记录业务数据，不改变 grace 或退出条件。
 诊断字段和只读进程快照的用法见 [诊断工具说明](../../tests/diagnostics/README.md)。
+
+
+## 9. 上传与磁盘调度
+
+[UploadExecutor](UploadExecutor.h) 实现 `TransferDispatcher`，通过 `InstanceServer::transferDispatcher()` 提供创建、查询、取消、完成、PATCH 和管理员 storage 操作。它借用 metadata 与 [DiskExecutor](DiskExecutor.h)，自身只在 owner loop 协调，不在 loop 做数据库、文件或哈希操作。InstanceServer 将上传端口注入 HttpApi，提供九条上传／storage HTTP 操作；同一执行器还提供下载准备与逐块读取，内容GET／HEAD路由已接入，支持条件请求及单范围下载。
+
+DiskExecutor 固定两个线程。每个线程独立创建／销毁文件 Store，任务携带固定通道，句柄与哈希状态不会换 Store。普通 pending 默认256、清理 pending8、运行最多2，总计最多266项包含未消费结果。接纳前分配任务及完成责任，完成 ring 固定容量；普通任务不能消耗清理保留额度。停止后拒绝新提交，已接纳任务仍退休并延后完成；只有完成回调退栈和两个 thread-exit future 就绪后才发布 stopped。停止／构造失败不 detach 或在 loop 等待活跃线程。
+
+上传控制命令至多128项，PATCH 至多全局4条、同一用户2条，资格覆盖磁盘写入、同步、metadata 确认、取消后的尾部处理及句柄关闭。每条流最多一个64KiB自有块和一个在途操作；只有前一个 feed 完成才能继续，finish 只接纳已收齐声明长度的流。feed 的缓冲在接纳时移交，拒绝保留调用者所有权。取消或析构 stream 不提前放槽。无进展监测使用 steady_clock，120秒未取得实际进展则取消生产，仍等待已运行工作退休。
+
+校验同时最多一条，逐块读取及更新 SHA-256，不整文件载入内存；其余 VERIFYING 状态由有界扫描再次调度。磁盘通道0处理 PATCH／文件维护，通道1处理哈希检查，不能将此实现理解为吞吐性能保证。未知 PATCH 提交会重开 Store 后重读偏移，确认落库的数据不得截断；未知发布按持久意图、实际文件位置、长度和摘要复核。无法确认的上传冻结到重新启动恢复，不盲目重试写事务。
+
+`recover()` 是监听前屏障：先只读核对物理和逻辑账本，再有界枚举所有内容区域并检查归属，检查已发布对象类型和长度，最后逐条恢复活动／待清理上传。CREATING 补安全空文件，OPEN 只截断未确认尾部，短于确认前缀拒绝启动；READY 核对完整摘要并保持冻结目标；COMMITTING 根据源／目标唯一存在的位置恢复发布，已移动对象先完整校验再补目录同步。未知文件原样保留并拒绝启动，不执行自动 GC／隔离／修账。启动不重新哈希所有已发布对象，因此不等于完整内容 FSCK。
+
+每60秒扫描至多64项活动上传及64项待清理上传，待清理扫描使用续页游标；终态保留清理每批最多100项。用户禁用在账户事务内记录不可逆取消标志和新 generation，IdentityExecutor 的提交后通知促使协调器读取标志。再次启用用户不会恢复上传。上传／hash／清理链退休后才停止磁盘；身份与磁盘均停止后才关闭 metadata，实例 lease 仍保持到对象析构。
+
+[磁盘执行器测试](tests/DiskExecutor_unittest.cc) 使用确定性 gate 检查两个通道、普通队列满时的清理保留槽、取消完成及线程退出屏障；[上传集成测试](../../tests/integration/UploadExecutor_unittest.cc) 使用真实 SQLite 和小文件验证发布、恢复及提交未知，并在创建、确认偏移、校验、发布和清理等11个持久现场终止测试子进程后执行生产恢复。VERIFYING恢复是重新排队，READY保留目标并等待显式complete；测试分别核对收敛后的状态、计量及同一Node结果。现有实例／进程测试覆盖监听失败、HTTP 清理与锁释放。进程终止不等于硬件掉电，未验证1TiB性能；下载背压证据及其边界见下节。
+
+[上传HTTP集成测试](../../tests/integration/HttpUpload_unittest.cc) 使用真实实例锁、HTTP、磁盘worker和SQLite验证创建重放、分块上传、状态／HEAD／分页、原子发布、文件字节与配额、重启续传、取消清理、storage条件更新、跨用户隔离、提交确认丢失、登出后最终复验、单用户槽位503及grace／强制停止。共享 [实例HTTP夹具](../../tests/integration/HttpInstanceFixture.h) 保留原身份故障注入，传输故障仅注入事务确认结果，不替代真实文件IO。
+
+
+## 10. 下载准备与读取资格
+
+[DownloadService](../application/transfer/DownloadService.h) 在一个只读快照内验证Session、空间可见性、活动父路径及文件类型，并核对Node与Blob描述。返回自有DownloadGrant，不跨磁盘工作持有事务。管理员没有他人私有空间旁路。
+
+UploadExecutor的OpenDownloadCommand使用同一个有界控制队列。普通读取与PATCH共用全局4／单用户2名额；metadataOnly用于HEAD，不占流名额，但仍受128命令及disk队列限额。两种请求都在磁盘通道0打开普通单链接对象并核对长度，缺失／损坏拒绝；HEAD在文件关闭退休后返回空stream和描述，GET返回DownloadStream。
+
+`blobPinned(BlobId)`仅在owner loop查询，读取资格在disk open前建立，直到同通道close完成回投后释放；它不是GC实现。每流至多一个64KiB自有块及一个在途pull。接纳移动缓冲，拒绝不移动；返回块未通过`consumed(acceptedBytes)`全部确认之前拒绝下一pull。消费数不能超过剩余量；零字节不刷新120秒无进展计时。下载可读取合法任意范围，HTTP条件和Range解释由调用方负责。
+
+`setCancellationCallback`在owner loop通知取消，已取消时注册可同步调用。回调应弱引用调用方状态并幂等；取消和析构只请求停止，实际文件close及迟到结果仍需退休。无进展计时、禁用和实例停止都可取消等待输出的流。已授权下载不依赖原Session继续有效；确认禁用按UserId取消既有读取，未知禁用提交先复核enabled，不能将权限失败当成禁用通知。
+
+[下载执行器集成测试](../../tests/integration/DownloadExecutor_unittest.cc) 以真实上传HTTP准备内容，再直接调用下载端口，验证范围字节／缓冲回收、消费门槛、pin退休、与PATCH共享名额、HEAD无槽位、空文件、损坏拒绝、取消、登出／禁用差异及停止／锁屏障。此测试没有下载HTTP sender，不能证明Range映射或writer背压。
+
+[下载 HTTP 集成测试](../../tests/integration/HttpDownload_unittest.cc) 覆盖真实上传后的内容、条件／Range、重启、私有空间隔离、损坏对象在条件判断前拒绝，以及正式实例的 grace／强制停止与锁屏障。另以受限输出水位的组件 listener 连接生产下载状态和真实 dispatcher，观察 write WouldBlock、恢复和账户禁用清理，核对完整 8MiB 字节及 pin 退休。组件 listener 不替代正式 HttpApi 路由验收；未实测 start／finish WouldBlock、120秒自然无进展超时、大文件性能或物理机耐久性。

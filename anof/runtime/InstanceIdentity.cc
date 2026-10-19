@@ -1,6 +1,7 @@
 #include <anof/runtime/InstanceIdentity.h>
 #include <anof/runtime/InstancePasswordPolicy.h>
 #include <anof/infrastructure/crypto/SodiumNodeIdGenerator.h>
+#include <anof/infrastructure/crypto/SodiumTransferIdGenerator.h>
 #include <anof/infrastructure/crypto/SodiumIdentityIdGenerator.h>
 #include <anof/infrastructure/crypto/SodiumCredentialIssuer.h>
 #include <anof/infrastructure/crypto/SodiumInviteTokenCodec.h>
@@ -10,7 +11,8 @@
 
 namespace anof::runtime {
 Result<MetadataWorkerResources> makeInstanceMetadataResources(const std::filesystem::path& database) {
-    auto store = infrastructure::sqlite::openSqliteMetadataStore(database, {instancePasswordPolicy().verification, {}});
+    auto reopen = [database] { return infrastructure::sqlite::openSqliteTransferMetadataStore(database, {instancePasswordPolicy().verification, {}}); };
+    auto store = reopen();
     if (!store) return store.error();
     auto clock = infrastructure::system::makeSystemClock();
     if (!clock) return clock.error();
@@ -22,9 +24,12 @@ Result<MetadataWorkerResources> makeInstanceMetadataResources(const std::filesys
     if (!issuer) return issuer.error();
     auto invites = infrastructure::crypto::makeSodiumInviteTokenCodec();
     if (!invites) return invites.error();
+    auto transfers = infrastructure::crypto::makeSodiumTransferIdGenerator();
+    if (!transfers) return transfers.error();
     return MetadataWorkerResources{std::move(store).value(), std::move(clock).value(), std::move(nodes).value(),
         std::make_unique<IdentityMetadataResources>(IdentityMetadataResources{
-            std::move(ids).value(), std::move(issuer).value(), std::move(invites).value()})};
+            std::move(ids).value(), std::move(issuer).value(), std::move(invites).value()}),
+        std::move(transfers).value(), std::move(reopen)};
 }
 Result<PasswordWorkerResources> makeInstancePasswordResources() {
     auto hasher = infrastructure::crypto::makeSodiumPasswordHasher(instancePasswordPolicy());

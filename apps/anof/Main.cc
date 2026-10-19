@@ -28,6 +28,9 @@ int main(int argc, char** argv) {
             initialOptions.push_back(init->add_option(quotaNames[i], inputs.quotas[i], "Explicit nonnegative decimal quota"));
         initialOptions.push_back(init->add_option("--max-users", inputs.maxUsers, "Total user limit, default 10"));
         initialOptions.push_back(init->add_flag("--development-http", inputs.developmentHttp, "Explicit loopback development HTTP opt-in"));
+        initialOptions.push_back(init->add_option("--content-budget-bytes", inputs.contentBudget, "Required physical content budget"));
+        initialOptions.push_back(init->add_option("--disk-safety-min-bytes", inputs.diskSafetyMinimum, "Minimum free disk margin, default 1073741824"));
+        initialOptions.push_back(init->add_option("--disk-safety-percent", inputs.diskSafetyPercent, "Free disk margin percent, default 5"));
         anof::app::ClientCommands client(application);
         try {
             application.parse(argc, argv);

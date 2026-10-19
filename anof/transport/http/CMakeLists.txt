@@ -1,4 +1,9 @@
 add_library(anof_http STATIC
+    DownloadResponse.cc
+    DownloadStream.cc
+    TransferRequest.cc
+    TransferResponse.cc
+    UploadStream.cc
     BearerCredentials.cc
     CreateDirectoryJson.cc
     JsonResponse.cc

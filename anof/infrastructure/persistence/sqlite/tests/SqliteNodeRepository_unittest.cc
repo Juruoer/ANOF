@@ -53,7 +53,7 @@ struct Database {
         connection = std::move(opened).value();
         BOOST_REQUIRE(connection->beginWrite());
         sql("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0, 'admin', 'Administrator', '" + std::string("$argon2id$v=19$m=8192,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") + "', 1, 1, 0, 0)");
-        sql("INSERT INTO blobs VALUES (" + quoted(kBlob) + ", 0, zeroblob(32))");
+        sql("INSERT INTO blobs(id,size,sha256) VALUES (" + quoted(kBlob) + ", 0, zeroblob(32))");
         sql("INSERT INTO spaces VALUES (" + quoted(kSpace) + ", 1, NULL, " + quoted(kRoot) + ")");
         sql("INSERT INTO spaces VALUES (" + quoted(kOtherSpace) + ", 0, " + quoted(kUser) + ", " + quoted(kOtherRoot) + ")");
         node(kRoot, std::nullopt, "");

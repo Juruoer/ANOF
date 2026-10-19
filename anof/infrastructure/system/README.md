@@ -80,19 +80,19 @@ ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_(instance_lock|
 
 [LinuxInstanceInitializer.h](LinuxInstanceInitializer.h) 提供 `makeLinuxInstanceInitializer()`，返回 `InitResult<std::unique_ptr<InstanceInitializer>>`。构造不访问文件系统；`create(root, identity)` 要求既有、当前 UID 所有的空 0700 根，原子创建 `.anof` 并持有与普通运行相同的稳定内核锁。InitializationLease 独占 InstanceLease，`lease()` 仅供借用；工厂对象可先销毁，lease 析构只关闭资源，不清理半成品。文件操作同步执行，不属于 HTTP I/O loop。
 
-创建成功意味着锁文件及 pending 已同步。已有 `.anof`（包括其他类型）返回 AlreadyExists，锁竞争返回 Busy。不会创建任意祖先、修改 umask、补改权限或覆盖已有文件。`openPending(root)` 只打开已有锁，不补建缺失锁文件，要求可信 pending 和完整配置；缺失必要文件返回 IncompleteInitialization。每次写操作复验根、实例目录、锁文件及 pending 的身份。
+创建成功意味着锁文件及 pending 已同步，并已创建、校验和同步 uploads、objects、quarantine 三个 0700 内容目录及其父目录。三个内容目录必须与 .anof 同设备。已有 `.anof`（包括其他类型）返回 AlreadyExists，锁竞争返回 Busy。不会创建任意祖先、修改 umask、补改权限或覆盖已有文件。`openPending(root)` 只打开已有锁，不补建缺失锁文件，要求可信 pending、完整配置及安全的内容目录；缺失必要文件返回 IncompleteInitialization。每次写操作复验根、实例目录、锁文件及 pending 的身份。
 
 | 文件 | 当前表示与上限 |
 |---|---|
-| initialization.pending | 最多 4096 字节；精确五字段：version=1、operation_id、instance_id、target_schema=2、target_format=2 |
-| config.toml | 最多 65536 字节；完整六个配置键，见[配置参考](../config/README.md) |
-| instance.json | 最多 4096 字节；仅 instance_id、format_version=2 |
+| initialization.pending | 最多 4096 字节；精确五字段：version=1、operation_id、instance_id、target_schema=3、target_format=3 |
+| config.toml | 最多 65536 字节；完整八个配置键，见[配置参考](../config/README.md) |
+| instance.json | 最多 4096 字节；仅 instance_id、format_version=3 |
 
 JSON 严格拒绝 BOM、重复／未知字段、嵌套值、非整数版本及尾随 JSON；ID 为小写规范非 nil UUID。格式不合法为 IntegrityError，不支持的整数版本为 UnsupportedFormat。新文件均为 0600、单链接普通文件，描述符带 CLOEXEC；只读检查沿用既有工具允许 0400 或 0600。
 
 `writeConfiguration` 校验并写出完整 TOML，只能在新 lease 上成功一次；重新打开的 lease 不允许改写配置。文件发布使用包含 operation ID 的同目录临时名，独占创建、完整写入、fsync、renameat2(RENAME_NOREPLACE)，再同步 `.anof` 和根。失败保留现场，不自动重试、截断或清理临时文件。格式发布可复用同一操作留下的完整、匹配且安全的格式临时文件；损坏或不匹配的临时文件保留并拒绝。
 
-`publishFormat()` 要求配置仍与 lease 保留的值一致；已有匹配格式只复验和同步，不重写内容。成功后才允许 `clearPending()`；后者核对 pending 的 ID 和 inode、配置及格式，删除 pending 并同步目录。发布后同步失败，以及无法确认 rename／unlink 结果的错误，返回 PublicationOutcomeUnknown，不表示回滚；其他错误保留对应 stage。错误结果不包含文件内容。
+`publishFormat()` 要求配置仍与 lease 保留的值一致，并复核及同步三个内容目录；已有匹配格式只复验和同步，不重写内容。成功后才允许 `clearPending()`；后者核对 pending 的 ID 和 inode、配置及格式，删除 pending 并同步目录。发布后同步失败，以及无法确认 rename／unlink 结果的错误，返回 PublicationOutcomeUnknown，不表示回滚；其他错误保留对应 stage。错误结果不包含文件内容。
 
 这些接口只实现文件协议，不打开数据库，也不证明引导完成。装配方必须在同一 lease 下完成数据库引导或 `InstanceBootstrap::verifyComplete`，关闭维护连接后才能发布格式并清除 pending。[SQLite Bootstrap 与启动维护](../persistence/sqlite/README.md) 已实现上述数据库检查；文件模块测试本身不代表根 CLI 的 `init`、`--finish` 或 serve 已接通。
 

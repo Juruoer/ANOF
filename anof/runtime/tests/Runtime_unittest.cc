@@ -1,3 +1,4 @@
+#include <tests/support/EventLoopWait.h>
 #define BOOST_TEST_MODULE AnofRuntime
 #include <boost/test/unit_test.hpp>
 
@@ -43,15 +44,9 @@ struct Gate {
     }
 };
 
-bool drive(muduox::net::EventLoop& loop, const std::function<bool()>& done) {
-    if (done()) return true;
-    bool expired = false;
-    auto check = loop.runEvery(0.001, [&] { if (done()) loop.quit(); });
-    auto deadline = loop.runAfter(3, [&] { expired = true; loop.quit(); });
-    loop.loop();
-    loop.cancel(check);
-    loop.cancel(deadline);
-    return !expired && done();
+bool drive(muduox::net::EventLoop& loop, const std::function<bool()>& done,
+           const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
+    return anof::test::waitFor(loop, done, 3, file, line);
 }
 
 struct Tracking {

@@ -20,7 +20,7 @@
 
 namespace anof::infrastructure::sqlite {
 namespace {
-constexpr const char* kFormat = R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":2})";
+constexpr const char* kFormat = R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":3})";
 
 template <typename T>
 void errorIs(const Result<T>& result, ErrorCode code) {
@@ -39,6 +39,7 @@ struct Instance {
         if (!created) throw std::runtime_error("Cannot create test directory");
         root = created;
         BOOST_REQUIRE(::mkdir((root / ".anof").c_str(), 0700) == 0);
+        for (const char* name : { "uploads", "objects", "quarantine" }) BOOST_REQUIRE(::mkdir((root / ".anof" / name).c_str(), 0700) == 0);
         auto provider = system::makeLinuxInstanceLockProvider();
         BOOST_REQUIRE(provider);
         locks = std::move(provider).value();
@@ -119,10 +120,10 @@ BOOST_AUTO_TEST_CASE(format_is_strict_and_precedes_database_open) {
              std::string(""), std::string("[]"), std::string("{}"),
              prefix + "1,\"format_version\":1}", prefix + "1,\"instance_id\":" + id + "}",
              prefix + "1,\"unknown\":0}", std::string(kFormat) + "{}", std::string("\xef\xbb\xbf") + kFormat,
-             std::string(R"({"instance_id":"00000000-0000-0000-0000-000000000000","format_version":2})"),
-             std::string(R"({"instance_id":"12345678-1234-4234-8234-123456789ABC","format_version":2})"),
-             std::string(R"({"instance_id":true,"format_version":2})"),
-             std::string(R"({"instance_id":{},"format_version":2})"),
+             std::string(R"({"instance_id":"00000000-0000-0000-0000-000000000000","format_version":3})"),
+             std::string(R"({"instance_id":"12345678-1234-4234-8234-123456789ABC","format_version":3})"),
+             std::string(R"({"instance_id":true,"format_version":3})"),
+             std::string(R"({"instance_id":{},"format_version":3})"),
              std::string("{\"instance_id\":\"\xff\",\"format_version\":1}"),
              std::string(R"({"instance_id":"12345678-1234-4234-8234-123456789abc"})") }) {
         instance.write("instance.json", text);
@@ -164,12 +165,12 @@ BOOST_AUTO_TEST_CASE(future_schema_is_not_migrated) {
     instance.database();
     {
         auto connection = instance.open();
-        BOOST_REQUIRE(connection->execute("UPDATE schema_info SET version=3"));
+        BOOST_REQUIRE(connection->execute("UPDATE schema_info SET version=4"));
     }
     errorIs(instance.verify(), ErrorCode::IntegrityError);
     auto raw = SqliteConnection::open(instance.path("metadata.sqlite3"));
     BOOST_REQUIRE(raw);
-    BOOST_CHECK_EQUAL(scalar(*raw.value(), "SELECT version FROM schema_info"), 3);
+    BOOST_CHECK_EQUAL(scalar(*raw.value(), "SELECT version FROM schema_info"), 4);
 }
 
 BOOST_AUTO_TEST_CASE(schema_and_foreign_key_damage_are_rejected) {

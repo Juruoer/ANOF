@@ -3,6 +3,7 @@
 #include <anof/application/maintenance/PrepareInstance.h>
 #include <anof/runtime/AnofRuntime.h>
 #include <anof/runtime/IdentityExecutor.h>
+#include <anof/runtime/UploadExecutor.h>
 #include <anof/transport/http/CreateDirectoryHandler.h>
 
 #include <memory>
@@ -37,10 +38,13 @@ public:
     MetadataExecutorSnapshot metadataSnapshot() const;
     std::size_t notificationExceptions() const;
     IdentityDispatcher& identityDispatcher();
+    TransferDispatcher& transferDispatcher();
 
 private:
     void initialized(Result<void> result);
     void identityInitialized(Result<void> result);
+    void transferInitialized(Result<void>);
+    void listen();
     void stopMetadata();
     void notifyReady(Result<void> result);
     void finishIfStopped();
@@ -53,6 +57,8 @@ private:
     http::DirectoryTaskObserver taskObservation_;
     AnofRuntime runtime_;
     IdentityExecutor identity_;
+    DiskExecutor disk_;
+    UploadExecutor uploads_;
     std::unique_ptr<http::HttpApi> api_;
     std::unique_ptr<muduox::net::HttpServer> server_;
     MetadataExecutor::Started onReady_;

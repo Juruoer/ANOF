@@ -3,6 +3,7 @@
 #include <anof/infrastructure/persistence/sqlite/SqliteSettingsRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteUserRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteStorageRepository.h>
 namespace anof::infrastructure::sqlite {
 namespace detail {
 // 业务 Store 的数据库完整性门禁；文件发布和实例配置匹配由维护入口负责。
@@ -60,9 +61,14 @@ Result<InitReceipt> verifyInitialized(SqliteConnection& connection, PasswordHash
     auto common = readId<SpaceId>(*receipt.value(), 1);
     auto personal = readId<SpaceId>(*receipt.value(), 2);
     if (!admin || !common || !personal) return ErrorCode::IntegrityError;
+    SqliteStorageRepository storage(context);
+    auto accounting = storage.get();
+    if (!accounting) return accounting.error();
     if (initial) {
         auto exact = detail::query(context,
-            "SELECT (SELECT count(*) FROM users)=1 AND (SELECT count(*) FROM spaces)=2 "
+            "SELECT NOT EXISTS(SELECT 1 FROM uploads) AND NOT EXISTS(SELECT 1 FROM transfer_audit_events) "
+            "AND NOT EXISTS(SELECT 1 FROM storage_accounting WHERE retained_bytes<>0 OR reserved_bytes<>0 OR revision<>1) "
+            "AND (SELECT count(*) FROM users)=1 AND (SELECT count(*) FROM spaces)=2 "
             "AND (SELECT count(*) FROM nodes)=2 AND (SELECT count(*) FROM space_quotas)=2 "
             "AND (SELECT count(*) FROM public_contribution_quotas)=1 "
             "AND NOT EXISTS(SELECT 1 FROM sessions) AND NOT EXISTS(SELECT 1 FROM invites) "

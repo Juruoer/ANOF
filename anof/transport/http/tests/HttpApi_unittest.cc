@@ -1,3 +1,4 @@
+#include <tests/support/EventLoopWait.h>
 #define BOOST_TEST_MODULE HttpApi
 #include <boost/test/unit_test.hpp>
 #include <anof/transport/http/HttpApi.h>
@@ -29,6 +30,7 @@ public:
     std::optional<RequestContext> context;
     std::vector<HttpTraceRecord> committed;
     std::vector<HttpTraceRecord> finished;
+    UnexpectedTransferDispatcher uploadDispatcher;
     HttpApi api;
     HttpServer server;
     explicit Fixture(std::size_t limit = 128)
@@ -40,7 +42,7 @@ public:
                   callbacks.body = [](auto part) { return part.size(); };
                   callbacks.cancel = [this] { ++cancelled; };
                   return callbacks;
-              }, identityDispatcher, {[this](auto record) { committed.push_back(std::move(record)); },
+              }, identityDispatcher, uploadDispatcher, {[this](auto record) { committed.push_back(std::move(record)); },
                   [this](auto record) { finished.push_back(std::move(record)); }}, {limit, 15, 30}),
           server(&loop, InetAddress(0, true), "anof-http-test") {
         api.configure(server);
@@ -48,21 +50,12 @@ public:
     }
     ~Fixture() {
         bool stopped = false;
-        server.stop(0, [&] { stopped = true; loop.quit(); });
-        const auto poll = loop.runEvery(0.001, [&] { if (stopped) loop.quit(); });
-        const auto watchdog = loop.runAfter(3, [] { std::terminate(); });
-        if (!stopped) loop.loop();
-        loop.cancel(watchdog);
-        loop.cancel(poll);
+        server.stop(0, [&] { stopped = true; });
+        if (!anof::test::waitFor(loop, [&] { return stopped; }, 3)) std::terminate();
     }
-    void until(const std::function<bool()>& done) {
-        bool expired = false;
-        const auto poll = loop.runEvery(0.001, [&] { if (done()) loop.quit(); });
-        const auto deadline = loop.runAfter(3, [&] { expired = true; loop.quit(); });
-        loop.loop();
-        loop.cancel(poll);
-        loop.cancel(deadline);
-        BOOST_REQUIRE(!expired);
+    void until(const std::function<bool()>& done,
+               const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
+        BOOST_REQUIRE(anof::test::waitFor(loop, done, 3, file, line));
     }
     std::string exchange(const std::string& request) {
         Client client(server.listenAddress());
@@ -179,9 +172,9 @@ BOOST_AUTO_TEST_CASE(protocolErrorsAreObservedWithoutJsonEnvelope) {
 BOOST_AUTO_TEST_CASE(configurationIsValidatedAndInstalledOnce) {
     Fixture fixture;
     BOOST_CHECK_THROW(fixture.api.configure(fixture.server), std::logic_error);
-    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, {}, [](auto, const auto&, const auto&) { return HttpStreamCallbacks{}; }, fixture.identityDispatcher), std::invalid_argument);
-    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, [] { return true; }, {}, fixture.identityDispatcher), std::invalid_argument);
-    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, [] { return true; }, [](auto, const auto&, const auto&) { return HttpStreamCallbacks{}; }, fixture.identityDispatcher, {}, {129, 15, 30}), std::invalid_argument);
+    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, {}, [](auto, const auto&, const auto&) { return HttpStreamCallbacks{}; }, fixture.identityDispatcher, fixture.uploadDispatcher), std::invalid_argument);
+    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, [] { return true; }, {}, fixture.identityDispatcher, fixture.uploadDispatcher), std::invalid_argument);
+    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, [] { return true; }, [](auto, const auto&, const auto&) { return HttpStreamCallbacks{}; }, fixture.identityDispatcher, fixture.uploadDispatcher, {}, {129, 15, 30}), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(keepAliveIdsArePerExchange) {

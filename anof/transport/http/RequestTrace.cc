@@ -23,7 +23,8 @@ RequestId RequestTrace::requestId(muduox::net::HttpExchangeId exchange) const {
 muduox::net::HttpResponseHeaderPolicy RequestTrace::headerPolicy() const {
     return [trace = *this](const auto& request, auto, auto, auto& headers) {
         headers.set("X-Request-ID", trace.requestId(request.exchange).toString());
-        headers.set("Cache-Control", "no-store");
+        // 下载表示要求 private；其余响应仍强制 no-store。
+        if (headers.view().getSingle("Cache-Control").value != "private,no-store") headers.set("Cache-Control", "no-store");
     };
 }
 

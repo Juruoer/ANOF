@@ -11,7 +11,7 @@ const char* remoteName(RemoteOutcome value) {
     return "unknown";
 }
 const char* localName(LocalState value) {
-    switch (value) { case LocalState::Unchanged:return "unchanged"; case LocalState::CredentialSaved:return "credential_saved"; case LocalState::CredentialCleared:return "credential_cleared"; case LocalState::Unknown:return "unknown"; }
+    switch (value) { case LocalState::Unchanged:return "unchanged"; case LocalState::CredentialSaved:return "credential_saved"; case LocalState::CredentialCleared:return "credential_cleared"; case LocalState::TransferSaved:return "transfer_saved"; case LocalState::DownloadPartial:return "download_partial"; case LocalState::FilePublished:return "file_published"; case LocalState::Unknown:return "unknown"; }
     return "unknown";
 }
 bool writeAll(int fd, std::string_view bytes) noexcept {
@@ -49,7 +49,7 @@ Json clientData(const ProfileSummary& v) {
 }
 Json clientData(Done) { return nullptr; }
 ClientError ClientOutput::outputFailure() const {
-    auto e = failure(ErrorKind::LocalState); e.remote=remote; e.local=local;
+    auto e = failure(ErrorKind::LocalState); e.remote=remote; e.local=local; e.transferId=transferId;
     if (confirmed) { e.httpStatus=confirmed->httpStatus; e.requestId=confirmed->requestId; } return e;
 }
 int ClientOutput::error(const ClientError& e) const noexcept {
@@ -58,8 +58,9 @@ int ClientOutput::error(const ClientError& e) const noexcept {
         if (e.remote == RemoteOutcome::Unknown && e.kind != ErrorKind::OutcomeUnknown) message += "; remote outcome unknown; no automatic retry";
         if (passwordChange && e.remote == RemoteOutcome::Unknown) message += "; verify the password/session state or explicitly log in again";
         if (e.profileName && ProfileStore::validName(*e.profileName)) message += " (profile: " + *e.profileName + ")";
+        if(e.transferId) message += " (transfer: " + *e.transferId + ")";
         std::string text;
-        if (json_) text=Json{{"ok",false},{"error",{{"code",e.code},{"message",message},{"http_status",e.httpStatus?Json(*e.httpStatus):Json(nullptr)},{"request_id",e.requestId?Json(e.requestId->toString()):Json(nullptr)},{"remote_outcome",remoteName(e.remote)},{"local_state",localName(e.local)}}}}.dump()+"\n";
+        if (json_) text=Json{{"ok",false},{"error",{{"code",e.code},{"message",message},{"http_status",e.httpStatus?Json(*e.httpStatus):Json(nullptr)},{"request_id",e.requestId?Json(e.requestId->toString()):Json(nullptr)},{"remote_outcome",remoteName(e.remote)},{"local_state",localName(e.local)},{"transfer_id",e.transferId?Json(*e.transferId):Json(nullptr)}}}}.dump()+"\n";
         else text=e.code+": "+message+"; remote_outcome="+remoteName(e.remote)+"; local_state="+localName(e.local)+"\n";
         (void)writeAll(STDERR_FILENO,text);
     } catch (...) { (void)writeAll(STDERR_FILENO,"{\"ok\":false,\"error\":{\"code\":\"LOCAL_STATE_ERROR\",\"message\":\"Client output failed\",\"http_status\":null,\"request_id\":null,\"remote_outcome\":\"unknown\",\"local_state\":\"unknown\"}}\n"); }

@@ -103,6 +103,8 @@ InitResult<void> verifyInitializationFiles(const InstanceLease& lease, const Ini
     auto safe = files::validateInstanceLease(lease);
     if (!safe) return maintenanceFailure(safe.error().code, InitStage::Verify);
     const int directory = files::instanceDirectory(lease).value();
+    auto content = files::openContentDirectories(directory);
+    if (!content) return maintenanceFailure(content.error().code, InitStage::Verify);
     auto pending = read(directory, "initialization.pending", 4096);
     if (!pending) return pending.error();
     auto parsed = files::parsePending(pending.value(), InitStage::Verify);

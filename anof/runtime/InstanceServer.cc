@@ -4,6 +4,7 @@
 #include <anof/runtime/InstanceServer.h>
 
 #include <anof/infrastructure/crypto/SodiumRequestIdentity.h>
+#include <anof/infrastructure/storage/local/LocalTransferFileStore.h>
 #include <anof/infrastructure/crypto/SodiumSessionTokenCodec.h>
 #include <muduox/net/EventLoop.h>
 #include <muduox/net/InetAddress.h>
@@ -19,8 +20,10 @@ InstanceServer::InstanceServer(muduox::net::EventLoop& loop, PreparedInstance pr
     : loop_(loop), prepared_(std::move(prepared)), crypto_(std::move(crypto)), worker_(std::move(worker)),
       passwordWorker_(std::move(passwordWorker)),
       httpObservation_(std::move(httpObservation)), taskObservation_(std::move(taskObservation)),
-      runtime_(loop, { prepared_.configuration.metadataQueue, 32 }), identity_(loop, runtime_.metadataExecutor()) {
+      runtime_(loop, { prepared_.configuration.metadataQueue, 32 }), identity_(loop, runtime_.metadataExecutor()),
+      disk_(loop), uploads_(loop, runtime_.metadataExecutor(), disk_, prepared_.configuration.diskSafety) {
     loop_.assertInLoopThread();
+    identity_.setUserDisabledObserver([this](UserId user, bool confirmed){uploads_.notifyUserDisabled(user, confirmed);});
     if (!prepared_.lease || !prepared_.lease->root().is_absolute() || !crypto_.tokens || !crypto_.requests || !worker_ || !passwordWorker_ ||
         !validateInstanceConfiguration(prepared_.configuration)) throw std::invalid_argument("Invalid instance dependencies");
 }
@@ -64,10 +67,26 @@ void InstanceServer::identityInitialized(Result<void> result) {
         notifyReady(result ? Result<void>{ErrorCode::Retryable} : result);
         return;
     }
+    const auto root=prepared_.lease->root();
+    auto started=disk_.start([root]()->Result<std::unique_ptr<TransferFileStore>> {
+        auto opened=infrastructure::storage::openLocalTransferFileStore(root);
+        if(auto* store=std::get_if<std::unique_ptr<TransferFileStore>>(&opened))return std::move(*store);
+        return ErrorCode::IntegrityError;
+    },[this](auto ready){transferInitialized(ready);},[this]{stopMetadata();});
+    if(!started){requestStop();notifyReady(started);}
+}
+void InstanceServer::transferInitialized(Result<void> result) {
+    if(!result || stopCalled_){requestStop();notifyReady(result?Result<void>{ErrorCode::Retryable}:result);return;}
+    uploads_.recover([this](auto recovered){
+        if(!recovered || stopCalled_){requestStop();notifyReady(recovered?Result<void>{ErrorCode::Retryable}:recovered);return;}
+        listen();
+    });
+}
+void InstanceServer::listen() {
     try {
         http::CreateDirectoryHandler handler(runtime_.dispatcher(), [this] { return ready(); }, taskObservation_);
         api_ = std::make_unique<http::HttpApi>(*crypto_.tokens, *crypto_.requests, [this] { return ready(); },
-            handler.stream(), identityDispatcher(), httpObservation_, http::HttpApiOptions{ prepared_.configuration.httpInFlight, 15, 30 });
+            handler.stream(), identityDispatcher(), transferDispatcher(), httpObservation_, http::HttpApiOptions{ prepared_.configuration.httpInFlight, 15, 30 });
         server_ = std::make_unique<muduox::net::HttpServer>(muduox::net::HttpServer::DeferredListen{}, &loop_,
             muduox::net::InetAddress(prepared_.configuration.port, true), "anof");
         api_->configure(*server_);
@@ -106,32 +125,41 @@ void InstanceServer::requestStop() {
     stopCalled_ = true;
     internal::shutdownTrace("instance", "stop_requested", this);
     identity_.requestStop();
-    if (identity_.stopped()) stopMetadata();
+    // ready() 已关闭新 HTTP 准入；现有 PATCH 在 HTTP grace 内仍可 feed/finish。
+    // HTTP 清理后再取消剩余上传，磁盘及 metadata 覆盖迟到结果和尾部清理。
     if (server_ && !httpStopped_) {
         internal::shutdownTrace("http", "stop_requested", this);
         server_->stop(prepared_.configuration.shutdownGraceSeconds, [this] {
             internal::shutdownTrace("http", "stopped", this);
             httpStopped_ = true;
             if (httpStarted_) (void)runtime_.markHttpStopped();
+            uploads_.requestStop([this]{disk_.requestStop();stopMetadata();});
             finishIfStopped();
         });
+    } else {
+        uploads_.requestStop([this]{disk_.requestStop();stopMetadata();});
     }
+    stopMetadata();
     finishIfStopped();
 }
 
 void InstanceServer::stopMetadata() {
+    if(!stopCalled_ || !identity_.stopped() || !uploads_.stopped() || !disk_.snapshot().stopped)return;
     internal::shutdownTrace("instance", "identity_stopped_start_metadata_stop", this);
     runtime_.requestStop();
     if (httpStarted_ && httpStopped_) (void)runtime_.markHttpStopped();
     finishIfStopped();
 }
 
+TransferDispatcher& InstanceServer::transferDispatcher() { loop_.assertInLoopThread(); return uploads_; }
+
+
 IdentityDispatcher& InstanceServer::identityDispatcher() { loop_.assertInLoopThread(); return identity_; }
 
 void InstanceServer::finishIfStopped() {
     if (stopCalled_) internal::shutdownTrace("instance", "barriers", this,
         runtime_.state() == RuntimeState::Stopped, identity_.stopped(), httpStopped_);
-    if (completed_ || runtime_.state() != RuntimeState::Stopped || !identity_.stopped() || !httpStopped_) return;
+    if (completed_ || runtime_.state() != RuntimeState::Stopped || !identity_.stopped() || !uploads_.stopped() || !disk_.snapshot().stopped || !httpStopped_) return;
     completed_ = true;
     internal::shutdownTrace("instance", "all_stopped", this);
     auto callback = std::move(onStopped_);

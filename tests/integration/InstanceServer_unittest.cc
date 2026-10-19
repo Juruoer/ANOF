@@ -1,3 +1,4 @@
+#include <tests/support/EventLoopWait.h>
 #include <anof/runtime/InstanceIdentity.h>
 #include <anof/runtime/internal/ListenerFailure.h>
 #define BOOST_TEST_MODULE InstanceServerIntegration
@@ -34,15 +35,9 @@ namespace {
 using namespace anof::runtime;
 using namespace muduox::net;
 
-bool drive(EventLoop& loop, const std::function<bool()>& predicate) {
-    if (predicate()) return true;
-    bool expired = false;
-    const auto poll = loop.runEvery(0.001, [&] { if (predicate()) loop.quit(); });
-    const auto deadline = loop.runAfter(3, [&] { expired = true; loop.quit(); });
-    loop.loop();
-    loop.cancel(poll);
-    loop.cancel(deadline);
-    return !expired && predicate();
+bool drive(muduox::net::EventLoop& loop, const std::function<bool()>& done,
+           const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
+    return anof::test::waitFor(loop, done, 3, file, line);
 }
 
 // 只观测所有权，不声称验证真实 flock；跨进程锁由 infrastructure 适配测试负责。
@@ -95,13 +90,7 @@ struct Fixture {
         BOOST_REQUIRE(initializeTestInstance(root));
     }
     Result<MetadataWorkerResources> resources() {
-        auto store = infrastructure::sqlite::openSqliteMetadataStore(root / ".anof" / "metadata.sqlite3", {instancePasswordPolicy().verification, {}});
-        if (!store) return store.error();
-        auto clock = infrastructure::system::makeSystemClock();
-        if (!clock) return clock.error();
-        auto ids = infrastructure::crypto::makeSodiumNodeIdGenerator();
-        if (!ids) return ids.error();
-        return MetadataWorkerResources{ std::move(store).value(), std::move(clock).value(), std::move(ids).value() };
+        return makeInstanceMetadataResources(root / ".anof" / "metadata.sqlite3");
     }
     void production() {
         auto result = makeInstanceServer(loop, prepared());
@@ -282,6 +271,47 @@ BOOST_AUTO_TEST_CASE(password_startup_failure_never_binds_and_keeps_lease_until_
     fixture.stopped();
 }
 
+BOOST_AUTO_TEST_CASE(http_cleanup_precedes_upload_dispatcher_stop) {
+    Fixture fixture;
+    fixture.initialize();
+    bool observed = false, accepted = false, completed = false;
+    const RequestContext context{{SessionDigest(SessionDigest::Bytes{}), CredentialMode::Bearer},
+        RequestId::parse("10000000-0000-0000-0000-000000000001").value()};
+    auto prepared = fixture.prepared();
+    prepared.configuration.shutdownGraceSeconds = 1;
+    http::HttpObservation observation;
+    observation.committed = [&](auto) {
+        if (observed) return;
+        observed = true;
+        fixture.server->requestStop();
+        BOOST_CHECK(!fixture.server->ready());
+        // HTTP 交换仍在回调栈中；上传端口必须保留至 HTTP 清理，供既有流完成。
+        auto submission = fixture.server->transferDispatcher().submit(context, GetStorageCommand{},
+            [&](TaskCompletion<StorageView>) { completed = true; });
+        accepted = std::holds_alternative<AcceptedTask>(submission);
+    };
+    auto server = makeInstanceServer(fixture.loop, std::move(prepared), observation);
+    BOOST_REQUIRE(server);
+    fixture.server = std::move(server).value();
+    fixture.start();
+    BOOST_REQUIRE(drive(fixture.loop, [&] { return fixture.readyCalls == 1; }));
+    BOOST_REQUIRE(fixture.server->port());
+    Socket socket;
+    InetAddress address(*fixture.server->port(), true);
+    BOOST_REQUIRE_EQUAL(::connect(socket.fd, address.getSockAddr(), sizeof(sockaddr_in)), 0);
+    const std::string request = "GET /health/live HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    BOOST_REQUIRE_EQUAL(::send(socket.fd, request.data(), request.size(), MSG_NOSIGNAL), static_cast<ssize_t>(request.size()));
+    BOOST_REQUIRE(drive(fixture.loop, [&] { return observed; }));
+    BOOST_CHECK(accepted);
+    ::shutdown(socket.fd, SHUT_RDWR);
+    BOOST_REQUIRE(drive(fixture.loop, [&] { return fixture.stoppedCalls == 1; }));
+    BOOST_CHECK(completed);
+    auto rejected = fixture.server->transferDispatcher().submit(context, GetStorageCommand{}, [](auto) {});
+    BOOST_REQUIRE(std::holds_alternative<SubmitError>(rejected));
+    BOOST_CHECK(std::get<SubmitError>(rejected) == SubmitError::Stopping);
+    fixture.stopped();
+}
+
 BOOST_AUTO_TEST_CASE(missing_database_fails_before_binding_without_creating_database) {
     Fixture fixture;
     fixture.production();
@@ -389,5 +419,20 @@ BOOST_AUTO_TEST_CASE(stop_before_start_is_terminal) {
     fixture.server.reset();
     BOOST_CHECK(!fixture.held);
 }
+BOOST_AUTO_TEST_CASE(content_recovery_failure_never_listens_and_drains_before_lease_release) {
+    Fixture fixture;
+    fixture.initialize();
+    const auto unknown = fixture.root / ".anof/uploads/unknown";
+    { std::ofstream file(unknown); file << "preserve"; }
+    fixture.production();
+    fixture.start();
+    BOOST_REQUIRE(drive(fixture.loop, [&] { return fixture.stoppedCalls == 1; }));
+    BOOST_CHECK(fixture.startupError == ErrorCode::IntegrityError);
+    BOOST_CHECK(!fixture.server->port());
+    BOOST_CHECK(fixture.held);
+    BOOST_CHECK_EQUAL(std::filesystem::file_size(unknown), 8);
+    fixture.stopped();
+}
+
 }  // namespace
 }  // namespace anof::testing

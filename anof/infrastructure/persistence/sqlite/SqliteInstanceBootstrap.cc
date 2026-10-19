@@ -3,14 +3,18 @@
 #include <anof/infrastructure/persistence/sqlite/SqliteInitializedState.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataTransaction.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteBootstrapInternal.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteIdentitySql.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <new>
 
 namespace anof::infrastructure::sqlite {
 namespace {
+static_assert(kSqliteSchemaVersion == InitializationIdentity::schemaVersion);
 class SqliteInstanceBootstrap final : public InstanceBootstrap {
 public:
     SqliteInstanceBootstrap(SqliteBootstrapOptions options, detail::BootstrapHook hook) : options_(options), hook_(hook) {}
-    InitResult<InitReceipt> createCurrent(const InstanceLease& lease, const BootstrapSeed& seed) override {
+    InitResult<InitReceipt> createCurrent(const InstanceLease& lease, const TransferBootstrapSeed& input) override {
+        const auto& seed = input.identity;
         auto stage = InitStage::Validate;
         try {
             if (!validateBootstrapSeed(seed)) return InitFailure{ InitError::InvalidInput, stage };
@@ -45,6 +49,15 @@ public:
                 }
                 const QuotaSnapshot contribution{ { seed.quotas.contribution, { ByteCount{}, NodeCount::from(1).value() }, { ByteCount{}, NodeCount{} } }, Revision{} };
                 if (auto inserted = tx.quotas().insert(PublicContributionQuota{ seed.publicSpaceId, seed.adminUserId }, contribution); !inserted) return detail::maintenanceFailure(inserted.error().code, stage);
+                {
+                    auto statement = SqliteStatement::prepare(*database.value()->connection,
+                        "INSERT INTO storage_accounting VALUES(1,?1,0,0,1)");
+                    if (!statement) return detail::maintenanceFailure(statement.error().code, stage);
+                    if (auto bound = statement.value()->bindInt64(1, input.contentBudget.value()); !bound)
+                        return detail::maintenanceFailure(bound.error().code, stage);
+                    if (auto inserted = statement.value()->step(); !inserted)
+                        return detail::maintenanceFailure(inserted.error().code, stage);
+                }
                 if (hook_) {
                     auto result = hook_(*database.value()->connection, detail::BootstrapPoint::BeforeAudit);
                     if (!result) return detail::maintenanceFailure(result.error().code, stage);

@@ -104,6 +104,7 @@ BOOST_AUTO_TEST_CASE(init_command_creates_real_instance_from_terminal_input) {
         ~Cleanup() { std::error_code ignored; std::filesystem::remove_all(root, ignored); }
     } cleanup{root};
     anof::app::InitArguments arguments;
+    arguments.contentBudget = "1048576";
     arguments.root = root; arguments.login = "admin"; arguments.displayName = "Test administrator";
     arguments.developmentHttp = true;
     arguments.quotas = {"1048576", "10", "1048576", "10", "1048576", "10"};

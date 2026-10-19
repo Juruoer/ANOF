@@ -23,7 +23,7 @@ namespace {
 const InitializationIdentity identity{
     InstanceId::parse("11111111-1111-4111-8111-111111111111").value(),
     OperationId::parse("22222222-2222-4222-8222-222222222222").value() };
-InstanceConfiguration config() { InstanceConfiguration c; c.developmentHttp = true; c.shutdownGraceSeconds = 1.125; return c; }
+InstanceConfiguration config() { InstanceConfiguration c; c.developmentHttp = true; c.shutdownGraceSeconds = 1.125; c.diskSafety = {ByteCount::from(17).value(), SafetyPercent::from(0).value()}; return c; }
 template <typename T>
 void errorIs(const InitResult<T>& result, InitError code, InitStage stage) {
     BOOST_REQUIRE(!result);
@@ -151,7 +151,7 @@ BOOST_AUTO_TEST_CASE(create_holds_same_stable_lease_and_writes_only_current_file
     probe(tree, true);
     BOOST_CHECK_EQUAL(fileStatus(tree.file("instance.lock")).st_ino, inode);
     BOOST_CHECK(!std::filesystem::exists(tree.file("metadata.sqlite3")));
-    BOOST_CHECK(!std::filesystem::exists(tree.file("objects")));
+    BOOST_CHECK(std::filesystem::is_directory(tree.file("objects")));
 }
 
 BOOST_AUTO_TEST_CASE(file_side_finish_preserves_configuration_and_published_marker) {
@@ -289,8 +289,9 @@ BOOST_AUTO_TEST_CASE(configuration_validation_and_no_overwrite_precede_publicati
 
 BOOST_AUTO_TEST_CASE(format_mismatch_unknown_fields_and_version_never_overwrite) {
     for (const auto& marker : {
-        std::string("{\"instance_id\":\"33333333-3333-4333-8333-333333333333\",\"format_version\":2}"),
-        std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":2,\"extra\":0}"),
+        std::string("{\"instance_id\":\"33333333-3333-4333-8333-333333333333\",\"format_version\":3}"),
+        std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":3,\"extra\":0}"),
+        std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":2}"),
         std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":1}") }) {
         Tree tree;
         auto init = initializer();
@@ -365,13 +366,13 @@ BOOST_AUTO_TEST_CASE(pending_sync_failure_classifies_before_and_after_publicatio
 }
 
 BOOST_AUTO_TEST_CASE(format_sync_failures_are_explicitly_finishable_without_overwrite) {
-    for (int point = 1; point <= 3; ++point) {
+    for (int point = 1; point <= 6; ++point) {
         Tree tree;
         auto init = faultInitializer();
         auto lease = create(*init, tree);
         syncCalls = 0; failSync = point;
-        errorIs(lease->publishFormat(), point == 1 ? InitError::IoError : InitError::PublicationOutcomeUnknown, InitStage::PublishFormat);
-        BOOST_CHECK(std::filesystem::exists(tree.file("instance.json")) == (point >= 2));
+        errorIs(lease->publishFormat(), point <= 4 ? InitError::IoError : InitError::PublicationOutcomeUnknown, InitStage::PublishFormat);
+        BOOST_CHECK(std::filesystem::exists(tree.file("instance.json")) == (point >= 5));
         errorIs(lease->clearPending(), InitError::IncompleteInitialization, InitStage::ClearPending);
         lease.reset();
         auto normal = initializer();
@@ -474,4 +475,37 @@ BOOST_AUTO_TEST_CASE(terminated_creator_leaves_pending_and_releases_stable_lock)
         BOOST_REQUIRE(resumed.value()->clearPending());
     }
 }
+BOOST_AUTO_TEST_CASE(content_directory_failures_preserve_pending_and_finish_never_repairs) {
+    for (int point = 5; point <= 8; ++point) {
+        Tree tree;
+        auto init = faultInitializer();
+        failSync = point;
+        errorIs(init->create(tree.root, identity), InitError::IoError, InitStage::CreateDirectory);
+        BOOST_CHECK(std::filesystem::exists(tree.file("initialization.pending")));
+        BOOST_CHECK(!std::filesystem::exists(tree.file("instance.json")));
+        errorIs(init->create(tree.root, identity), InitError::AlreadyExists, InitStage::CreateDirectory);
+    }
+    Tree tree;
+    auto init = initializer();
+    auto lease = create(*init, tree);
+    auto held = fileStatus(tree.file("uploads"));
+    auto named = held;
+    BOOST_REQUIRE(detail::validateContentDirectory(held, named, held.st_dev));
+    // 合成另一个设备号，验证生产属性检查；不声称进行了真实跨挂载点测试。
+    BOOST_CHECK(!detail::validateContentDirectory(held, named, held.st_dev ^ dev_t{1}));
+    ++named.st_ino;
+    BOOST_CHECK(!detail::validateContentDirectory(held, named, held.st_dev));
+    BOOST_REQUIRE_EQUAL(chmod(tree.file("objects").c_str(), 0755), 0);
+    BOOST_CHECK(!lease->publishFormat());
+    lease.reset();
+    BOOST_CHECK(!init->openPending(tree.root));
+    BOOST_CHECK_EQUAL(fileStatus(tree.file("objects")).st_mode & 07777, 0755);
+    BOOST_REQUIRE_EQUAL(chmod(tree.file("objects").c_str(), 0700), 0);
+    std::filesystem::rename(tree.file("uploads"), tree.file("saved"));
+    BOOST_REQUIRE_EQUAL(symlink("saved", tree.file("uploads").c_str()), 0);
+    BOOST_CHECK(!init->openPending(tree.root));
+    BOOST_CHECK(std::filesystem::is_symlink(tree.file("uploads")));
+    BOOST_CHECK(!std::filesystem::exists(tree.file("instance.json")));
+}
+
 }  // namespace anof::infrastructure::system

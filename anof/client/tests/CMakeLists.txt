@@ -10,3 +10,5 @@ target_compile_definitions(anof_client_http_test PRIVATE
     ANOF_TEST_PYTHON="${Python3_EXECUTABLE}"
     ANOF_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
+anof_add_unit_test(anof_client_transfer_test TransferClient_unittest.cc)
+target_link_libraries(anof_client_transfer_test PRIVATE anof_client)

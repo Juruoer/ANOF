@@ -1,3 +1,10 @@
+anof_add_unit_test(anof_http_transfer_protocol_unittest TransferProtocol_unittest.cc)
+target_link_libraries(anof_http_transfer_protocol_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_transfer_protocol_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+anof_add_unit_test(anof_http_upload_handlers_unittest UploadHandlers_unittest.cc)
+target_link_libraries(anof_http_upload_handlers_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_upload_handlers_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
 anof_add_unit_test(anof_http_account_writes_unittest AccountWrites_unittest.cc)
 target_link_libraries(anof_http_account_writes_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
 target_compile_options(anof_http_account_writes_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
@@ -40,6 +47,11 @@ target_compile_options(anof_http_create_directory_unittest PRIVATE -Wall -Wextra
 
 # 每个公开头独立编译，避免调用方依赖偶然的 include 顺序。
 set(http_public_headers
+    DownloadResponse.h
+    DownloadStream.h
+    TransferRequest.h
+    TransferResponse.h
+    UploadStream.h
     BearerCredentials.h
     CreateDirectoryJson.h
     JsonResponse.h
@@ -62,3 +74,10 @@ endforeach()
 add_library(anof_http_public_headers_check OBJECT ${http_header_sources})
 target_link_libraries(anof_http_public_headers_check PRIVATE anof_http)
 target_compile_options(anof_http_public_headers_check PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+anof_add_unit_test(anof_http_download_protocol_unittest DownloadProtocol_unittest.cc)
+target_link_libraries(anof_http_download_protocol_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_download_protocol_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+anof_add_unit_test(anof_http_download_handlers_unittest DownloadHandlers_unittest.cc)
+target_link_libraries(anof_http_download_handlers_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_download_handlers_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)

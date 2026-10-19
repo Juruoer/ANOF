@@ -120,3 +120,26 @@ BOOST_AUTO_TEST_CASE(untrusted_tls_certificate_rejected_before_bearer_http) {
     auto result=transport.perform(server.origin(true),req); server.finish(); BOOST_REQUIRE(!server.error); BOOST_REQUIRE(!result); BOOST_CHECK_EQUAL(result.error().exitCode(),4);
     BOOST_REQUIRE(WIFEXITED(peerStatus)); BOOST_CHECK_EQUAL(WEXITSTATUS(peerStatus),0);
 }
+BOOST_AUTO_TEST_CASE(binary_headers_gate_sink_head_is_read_and_source_is_bounded) {
+    CurlHttpTransport transport;
+    Server rejected([](int fd){receive(fd);sendAll(fd,"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabc");});
+    unsigned writes=0;
+    TransferRequest get{Method::Get,"/api/v1/nodes/content",nullptr,{},0,{},{},{}};
+    get.validate=[](const HttpResponse&)->ClientResult<Done>{return failure(ErrorKind::Protocol,"RANGE_IGNORED");};
+    get.sink=[&](std::string_view)->ClientResult<Done>{++writes;return Done{};};
+    auto result=transport.transfer(rejected.origin(),get);rejected.finish();BOOST_REQUIRE(!result);BOOST_CHECK_EQUAL(writes,0);BOOST_CHECK(result.error().kind==ErrorKind::Protocol);
+    Server head([](int fd){receive(fd);sendAll(fd,"HTTP/1.1 200 OK\r\nContent-Length: 1099511627776\r\n\r\n");});
+    get.method=Method::Head;get.validate={};result=transport.transfer(head.origin(),get);head.finish();BOOST_REQUIRE(result);BOOST_CHECK(result.value().body.view().empty());
+    Server lost([](int fd){receive(fd);});result=transport.transfer(lost.origin(),get);lost.finish();BOOST_REQUIRE(!result);BOOST_CHECK(result.error().kind!=ErrorKind::OutcomeUnknown);
+    std::size_t accepted=0;Server patch([&](int fd){auto input=receive(fd);auto start=input.find("\r\n\r\n")+4;accepted=input.size()-start;char data[4096];while(accepted<150000){auto n=recv(fd,data,sizeof data,0);if(n<=0)break;accepted+=static_cast<std::size_t>(n);}sendAll(fd,"HTTP/1.1 204 No Content\r\nUpload-Offset: 150000\r\n\r\n");});
+    TransferRequest put{Method::Patch,"/api/v1/uploads/test",nullptr,{{"Upload-Offset","0"}},150000,{},{},{}};
+    std::size_t sent=0;put.source=[&](char* data,std::size_t count)->ClientResult<std::size_t>{if(count>65536)return failure(ErrorKind::LocalState);auto n=std::min<std::size_t>(count,150000-sent);std::memset(data,'x',n);sent+=n;return n;};
+    result=transport.transfer(patch.origin(),put);patch.finish();BOOST_REQUIRE(result);BOOST_CHECK_EQUAL(sent,150000);BOOST_CHECK_EQUAL(accepted,150000);BOOST_CHECK_EQUAL(result.value().headers.at("upload-offset"),"150000");
+}
+BOOST_AUTO_TEST_CASE(binary_deadline_is_bounded_and_read_timeout_is_not_interruption) {
+    CurlHttpTransport transport(1000,1000,{100,100,100});
+    Server server([](int fd){receive(fd);pollfd p{fd,POLLIN,0};(void)poll(&p,1,1000);});
+    TransferRequest request{Method::Get,"/api/v1/nodes/content",nullptr,{},0,{},{},{}};
+    auto result=transport.transfer(server.origin(),request);server.finish();BOOST_REQUIRE(!result);BOOST_CHECK(result.error().kind==ErrorKind::Transport);
+    BOOST_CHECK_THROW((CurlHttpTransport(1000,1000,{0,100,100})),std::invalid_argument);
+}

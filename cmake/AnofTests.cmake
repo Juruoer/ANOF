@@ -14,3 +14,10 @@ function(anof_add_persistence_contract_test target factory_source backend_target
     add_test(NAME ${target} COMMAND ${target})
     set_tests_properties(${target} PROPERTIES TIMEOUT 60 LABELS "persistence_contract")
 endfunction()
+
+function(anof_add_transfer_contract_test target factory_source backend_target)
+    add_executable(${target} ${factory_source})
+    target_link_libraries(${target} PRIVATE anof_transfer_contract_cases ${backend_target})
+    add_test(NAME ${target} COMMAND ${target})
+    set_tests_properties(${target} PROPERTIES TIMEOUT 60 LABELS "persistence_contract")
+endfunction()

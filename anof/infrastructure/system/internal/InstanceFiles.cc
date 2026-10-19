@@ -83,6 +83,30 @@ Result<InstanceDirectories> openInstanceDirectories(const std::filesystem::path&
     return InstanceDirectories{ std::move(opened.value().root), std::move(current), std::move(anof) };
 }
 
+Result<void> validateContentDirectory(const struct stat& held, const struct stat& named, dev_t device) {
+    if (!S_ISDIR(held.st_mode) || held.st_uid != ::geteuid() || (held.st_mode & 07777) != 0700 ||
+        held.st_dev != device || held.st_dev != named.st_dev || held.st_ino != named.st_ino) return ErrorCode::IntegrityError;
+    return {};
+}
+
+Result<std::array<OwnedFd, 3>> openContentDirectories(int anof) {
+    struct stat base{};
+    if (::fstat(anof, &base) != 0) return filesystemError(errno);
+    std::array<OwnedFd, 3> result;
+    const char* names[] = { "uploads", "objects", "quarantine" };
+    for (std::size_t i = 0; i < result.size(); ++i) {
+        result[i] = OwnedFd(::openat(anof, names[i], O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+        if (result[i].get() < 0) return filesystemError(errno);
+        auto valid = directoryPermissions(result[i].get(), true);
+        if (!valid) return valid.error();
+        struct stat held{}, named{};
+        if (::fstat(result[i].get(), &held) || ::fstatat(anof, names[i], &named, AT_SYMLINK_NOFOLLOW)) return filesystemError(errno);
+        valid = validateContentDirectory(held, named, base.st_dev);
+        if (!valid) return valid.error();
+    }
+    return result;
+}
+
 Result<void> validatePrivateFile(int fd, bool writable) {
     struct stat status{};
     if (::fstat(fd, &status) != 0) return filesystemError(errno);

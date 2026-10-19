@@ -50,8 +50,8 @@ private:
 struct InitializationIdentity {
     InstanceId instanceId;
     OperationId operationId;
-    static constexpr std::int64_t schemaVersion = 2;
-    static constexpr std::int64_t formatVersion = 2;
+    static constexpr std::int64_t schemaVersion = 3;
+    static constexpr std::int64_t formatVersion = 3;
 };
 struct InitReceipt {
     InitializationIdentity identity;

@@ -1,13 +1,13 @@
 # HTTP 客户端库
 
-`anof_client` 提供同步、类型化的远程调用和本地 profile 存储。依赖 `anof_domain`、`CURL::libcurl` 和 nlohmann-json，不链接服务端应用服务、SQLite、infrastructure、runtime 或 muduox。库不处理终端、进程信号或标准输出；调用者负责展示结果和设置取消标志。
+`anof_client` 提供同步、类型化的远程调用和本地 profile 存储。依赖 `anof_domain`、`CURL::libcurl` 、nlohmann-json 和 libsodium（本地SHA-256及随机传输ID），不链接服务端应用服务、SQLite、infrastructure、runtime 或 muduox。库不处理终端、进程信号或标准输出；调用者负责展示结果和设置取消标志。
 
 ## 接口与生命周期
 
 - [ProfileStore.h](ProfileStore.h)：解析配置目录，添加、枚举、查看、删除 profile，以及获取持锁的 `LockedProfile`。list/show 返回脱敏摘要。
 - [ApiClient.h](ApiClient.h)：注册、登录、登出、当前用户、邀请创建／枚举／撤销、空间、目录枚举、节点详情和创建目录，以及改名／改密、管理用户分页／详情／启禁、空间和公共贡献额度读取／调整。只请求一页；UUID 与受检领域值表达输入，DTO 表达输出。
 - [HttpTransport.h](HttpTransport.h)、[CurlHttpTransport.h](CurlHttpTransport.h)：传输接口、规范 origin 和 libcurl 实现，可注入传输替身测试协议与凭据处理。
-- [Protocol.h](Protocol.h)、[ClientTypes.h](ClientTypes.h)：响应验证、类型化 DTO、固定容量秘密缓冲、错误及远端／本地结果分类。公共接口不暴露 curl 或 JSON 类型。
+- [Protocol.h](Protocol.h)、[ClientTypes.h](ClientTypes.h)：响应验证、类型化 DTO、固定容量秘密缓冲、错误及远端／本地结果分类。公共接口不暴露 curl 类型；传输 DTO 提供经逐字段验证、重建后的只读 JSON 视图。
 
 调用者先获得 `LockedProfile`，再输入秘密并构造 `ApiClient`。transport、profile 和可选 `atomic_bool` 取消标志必须活到同步调用结束。一个持锁句柄用于一个命令；相同 profile 的并发命令立即失败，不等待锁。登录结果已剔除 access token；只有创建邀请的结果包含需交给用户的邀请码。
 
@@ -71,3 +71,38 @@ ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_client_' -j 1
 测试覆盖 DTO／ETag／64位数量、错误与秘密处理、profile 严格读取、权限／链接、锁、原子发布故障、目录上限，以及回环 HTTP 的实际字节预算、期限、中断、重定向、代理和不可信 TLS。使用 KiB／MiB 夹具；1 TiB 仅作为合成数量，不生成大文件。
 
 HTTP 测试需要允许本地回环 socket；TLS 夹具使用 Python 3 标准库 ssl，无需 OpenSSL C++ 开发包。[fixtures](tests/fixtures) 中的证书／私钥仅是公开测试数据，禁止用于实际服务。局部测试不访问外网，不验证正式 HTTPS 部署或断电持久性。远程 CLI、终端交互和真实进程验收见 [命令入口说明](../../apps/anof/README.md)。
+
+
+## 文件传输与恢复
+
+[TransferClient](TransferClient.h) 提供上传、下载、显式resume以及上传分页／查询／complete／cancel、storage读取及带条件更新。
+[TransferProtocol](TransferProtocol.h) 验证传输数量、状态、摘要、实例绑定、标签、偏移及已知错误码，剔除未知字段。
+[TransferTransport](TransferTransport.h) 提供同步借用的有界source/sink及响应头验证回调；curl复用JSON调用的TLS、origin、代理与重定向规则。
+HEAD为只读。二进制source/sink每次至多64KiB，不扩大JSON正文上限；PATCH默认8MiB，每次仅一个请求。
+PATCH总期限365秒，内容GET总期限21660秒，连接5秒，实际字节120秒无进展取消。TransferTimeouts只能缩短期限。
+
+调用者持有profile锁覆盖整个命令；传输记录另持稳定排他锁，目录锁只用于短时创建／计数。
+配置根下transfers目录0700、记录0600，每条最多16KiB、总数1024；校验UID、单硬链接、普通文件和no-follow。
+记录保存profile/origin/user、已知instance、源／目标、摘要、阶段及持久偏移，不保存凭据。
+记录以文件同步、原子替换和目录同步发布，已完成记录保留。不存在自动淘汰或旧实例兼容逻辑。
+
+上传持有同一普通文件FD，流式预哈希，核对dev/ino/size/mtime/ctime；仍需传输时恢复重哈希，每PATCH前后复核；已完成／后台发布状态只查询，不依赖源文件仍然存在。
+创建前保存随机client_upload_id及完整初始记录。未知创建结果只能按原键查询，未找到也不自动重发POST。
+恢复先HEAD/GET，以服务端确认offset为准；未知PATCH不自动重试。complete后每秒有界查询，最多60次；
+成功结果的published区分COMPLETED和已接纳，READY错误须显式complete修正目标。
+
+下载先HEAD验证长度和强sha256 ETag，再使用If-Match或Range/If-Range。只在头验证通过后写part，
+非零偏移收到200会拒绝追加。part与目标同目录，路径分量不跟随符号链接，父目录须由当前UID控制且不可组／其他写入。
+每8MiB或请求结束fdatasync并保存durable_offset；恢复截断未确认尾部、拒绝短文件或inode替换。
+完整长度／摘要验证后保存PUBLISHING，以不覆盖rename发布、同步父目录并保存COMPLETED。
+发布结果不明时根据目标/part身份和摘要确认，冲突不覆盖；part已创建但身份记录尚未保存的歧义现场拒绝自动接管。
+源文件允许普通用户文件权限，凭据／part的0600要求不用于源文件。
+
+传输错误包含可恢复的transfer_id；本地状态增加transfer_saved、download_partial、file_published。
+远端确认成功但本地保存／输出失败仍保留confirmed_success；未知本地发布用unknown。
+正常恢复不会自动删除服务端上传、覆盖既有目标或跳过摘要验证。
+
+[传输测试](tests/TransferClient_unittest.cc) 覆盖未知创建／PATCH、持久偏移、200替代206、摘要失败、part替换、
+目标冲突、记录容量／权限／锁；[curl测试](tests/CurlHttpTransport_unittest.cc) 验证真实二进制回调、头门禁及有限期限。
+[CLI进程测试](../../tests/integration/TransferClientProcess_unittest.cc) 覆盖真实上传、下载、跨进程续传及服务重启。
+测试使用小文件及受控故障，不证明物理掉电一致性、大文件性能或长达生产期限的自然超时行为。

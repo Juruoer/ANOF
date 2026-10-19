@@ -1,16 +1,17 @@
-#include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteFunctions.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
-#include "SqliteSchemaSql.h"
-
-#include <sqlite3.h>
 #include <fcntl.h>
+#include <sqlite3.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
 #include <cerrno>
 #include <chrono>
 #include <memory>
 #include <string>
+
+#include "SqliteSchemaSql.h"
 
 namespace anof::infrastructure::sqlite {
 namespace {
@@ -18,6 +19,7 @@ class RollbackGuard {
 public:
     explicit RollbackGuard(SqliteConnection& connection) : connection_(connection) {}
     ~RollbackGuard() { (void)connection_.rollback(); }
+
 private:
     SqliteConnection& connection_;
 };
@@ -30,7 +32,7 @@ Result<std::int64_t> scalar(SqliteConnection& connection, std::string_view sql) 
     return statement.value()->integer(0);
 }
 
-Result<void> verifyDefinition(SqliteConnection& connection) {
+Result<void> verifyDefinition(SqliteConnection& connection, const char* ddl) {
     // 参考库只执行编译进程序的 DDL，绝不执行数据库记录的 definition。
     sqlite3* raw = nullptr;
     const int code = sqlite3_open_v2(":memory:", &raw, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_NOMUTEX, nullptr);
@@ -38,7 +40,7 @@ Result<void> verifyDefinition(SqliteConnection& connection) {
     if (code != SQLITE_OK) return sqliteError(code, SqliteOperation::Open);
     auto functions = registerSqliteFunctions(raw);
     if (!functions) return functions.error();
-    int result = sqlite3_exec(raw, kSchemaSql, nullptr, nullptr, nullptr);
+    int result = sqlite3_exec(raw, ddl, nullptr, nullptr, nullptr);
     if (result != SQLITE_OK) return sqliteError(result, SqliteOperation::Step);
     sqlite3_stmt* query = nullptr;
     result = sqlite3_prepare_v2(raw, "SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY name", -1, &query, nullptr);
@@ -47,7 +49,7 @@ Result<void> verifyDefinition(SqliteConnection& connection) {
     std::int64_t count = 0;
     while ((result = sqlite3_step(query)) == SQLITE_ROW) {
         auto match = SqliteStatement::prepare(connection,
-            "SELECT count(*) FROM sqlite_schema WHERE type=?1 AND name=?2 AND tbl_name=?3 AND sql=?4");
+                                              "SELECT count(*) FROM sqlite_schema WHERE type=?1 AND name=?2 AND tbl_name=?3 AND sql=?4");
         if (!match) return match.error();
         for (int column = 0; column != 4; ++column) {
             const auto* text = sqlite3_column_text(query, column);
@@ -69,22 +71,22 @@ Result<void> verifyDefinition(SqliteConnection& connection) {
     return {};
 }
 
-Result<void> verifyInside(SqliteConnection& connection) {
+Result<void> verifyInside(SqliteConnection& connection, const char* ddl = kSchemaSql, std::int64_t expectedVersion = kSqliteSchemaVersion) {
     auto exists = scalar(connection, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='schema_info'");
     if (!exists) return exists.error();
     if (exists.value() != 1) return ErrorCode::IntegrityError;
-    auto definition = verifyDefinition(connection);
+    auto definition = verifyDefinition(connection, ddl);
     if (!definition) return definition.error();
     auto record = SqliteStatement::prepare(connection, "SELECT version, definition=?1 FROM schema_info WHERE singleton=1");
     if (!record) return record.error();
-    auto bound = record.value()->bindText(1, kSchemaSql);
+    auto bound = record.value()->bindText(1, ddl);
     if (!bound) return bound.error();
     auto row = record.value()->step();
     if (!row) return row.error();
     if (!row.value()) return ErrorCode::IntegrityError;
     auto version = record.value()->integer(0);
     auto matches = record.value()->integer(1);
-    if (!version || !matches || version.value() != kSqliteSchemaVersion || matches.value() != 1) return ErrorCode::IntegrityError;
+    if (!version || !matches || version.value() != expectedVersion || matches.value() != 1) return ErrorCode::IntegrityError;
     auto foreignKeys = SqliteStatement::prepare(connection, "PRAGMA foreign_key_check");
     if (!foreignKeys) return foreignKeys.error();
     row = foreignKeys.value()->step();
@@ -102,7 +104,7 @@ Result<void> verifyInside(SqliteConnection& connection) {
     if (!row) return row.error();
     return row.value() ? Result<void>(ErrorCode::IntegrityError) : Result<void>();
 }
-}
+}  // namespace
 
 Result<void> verifySqliteSchema(SqliteConnection& connection) {
     if (connection.inTransaction()) return ErrorCode::InvalidArgument;
@@ -173,7 +175,10 @@ Result<void> createSqliteDatabase(const std::filesystem::path& path, SqliteOptio
         return ErrorCode::InternalError;
     }
     // 保留 fd 到 SQLite 连接关闭后，失败保留文件，避免回滚现场被隐式删除。
-    struct CloseFd { int fd; ~CloseFd() { ::close(fd); } } held{ fd };
+    struct CloseFd {
+        int fd;
+        ~CloseFd() { ::close(fd); }
+    } held{ fd };
     struct stat status{};
     if (::fstat(fd, &status) != 0) return ErrorCode::InternalError;
     if (!S_ISREG(status.st_mode) || status.st_uid != ::geteuid() || status.st_nlink != 1 || (status.st_mode & 07777) != 0600) return ErrorCode::IntegrityError;

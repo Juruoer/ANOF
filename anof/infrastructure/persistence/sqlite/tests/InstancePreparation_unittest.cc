@@ -28,7 +28,7 @@
 namespace anof::infrastructure::sqlite {
 namespace {
 namespace fs = std::filesystem;
-constexpr const char* kFormat = R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":2})";
+constexpr const char* kFormat = R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":3})";
 
 template <typename T>
 void errorIs(const Result<T>& result, ErrorCode code) {
@@ -68,6 +68,7 @@ struct Fixture {
         BOOST_REQUIRE(created);
         root = created;
         BOOST_REQUIRE(::mkdir((root / ".anof").c_str(), 0700) == 0);
+        for (const char* name : { "uploads", "objects", "quarantine" }) BOOST_REQUIRE(::mkdir((root / ".anof" / name).c_str(), 0700) == 0);
         auto lockFactory = system::makeLinuxInstanceLockProvider();
         auto configFactory = config::makeTomlInstanceConfigurationLoader();
         auto maintenanceFactory = makeSqliteInstanceMaintenance({ testing::bootstrapBudget, {} });
@@ -258,7 +259,7 @@ BOOST_AUTO_TEST_CASE(maintenance_failures_preserve_categories_release_resources_
     {
         auto connection = openSqliteDatabase(fixture.path("metadata.sqlite3"));
         BOOST_REQUIRE(connection);
-        BOOST_REQUIRE(connection.value()->execute("UPDATE schema_info SET version=3"));
+        BOOST_REQUIRE(connection.value()->execute("UPDATE schema_info SET version=4"));
     }
     const auto futureDatabase = fixture.read("metadata.sqlite3");
     reject(ErrorCode::IntegrityError);
@@ -267,7 +268,7 @@ BOOST_AUTO_TEST_CASE(maintenance_failures_preserve_categories_release_resources_
         // 仅测试夹具显式修复；生产准备流程不得自动修改版本。
         auto connection = SqliteConnection::open(fixture.path("metadata.sqlite3"));
         BOOST_REQUIRE(connection);
-        BOOST_REQUIRE(connection.value()->execute("UPDATE schema_info SET version=2; CREATE TABLE damaged(value INTEGER CHECK(value>0)); PRAGMA ignore_check_constraints=ON; INSERT INTO damaged VALUES(-1)"));
+        BOOST_REQUIRE(connection.value()->execute("UPDATE schema_info SET version=3; CREATE TABLE damaged(value INTEGER CHECK(value>0)); PRAGMA ignore_check_constraints=ON; INSERT INTO damaged VALUES(-1)"));
     }
     reject(ErrorCode::IntegrityError);
     {

@@ -1,4 +1,5 @@
 #include <anof/application/identity/AccountService.h>
+#include <anof/application/ports/TransferMetadataStore.h>
 
 namespace anof {
 namespace {
@@ -105,6 +106,11 @@ Result<AdminUserView> AccountService::execute(const RequestContext& context, Set
     if (!changed) return changed.error();
     if (changed.value().revision != before.value().user.revision) {
         if (!command.enabled) {
+            // 禁用和上传取消意图共享同一个事务；缺少能力时拒绝整个写入。
+            auto* transfer = dynamic_cast<TransferTransaction*>(tx.get());
+            if (!transfer) return ErrorCode::InternalError;
+            auto cancelled = transfer->uploads().requestUserCancellation(command.id);
+            if (!cancelled) return cancelled.error();
             auto revoked = tx->sessions().revokeAll(command.id, clock_.now());
             if (!revoked) return revoked.error();
         }

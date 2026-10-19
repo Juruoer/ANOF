@@ -58,24 +58,29 @@ register 从终端读取邀请码和两次新密码，成功不自动登录；lo
 
 ## 创建实例与初始化收尾
 
+参数解析及离线初始化已接入显式内容预算和磁盘余量；预算写入 SQLite，余量写入 TOML，三组内容目录在格式发布前创建并同步。
+
 新实例的 root 必须已存在、为空、由运行用户所有且权限为 0700；路径不接受符号链接或 `..`。例如：
 
 ```sh
 mkdir -m 700 /absolute/path/to/instance
 ./cmake-build-debug/apps/anof/anof init --root /absolute/path/to/instance \
   --admin-login admin --admin-display-name 'Administrator' --development-http \
+  --content-budget-bytes 1099511627776 \
   --private-bytes 1099511627776 --private-nodes 100000 \
   --public-bytes 1099511627776 --public-nodes 100000 \
   --contribution-bytes 1099511627776 --contribution-nodes 100000
 ```
 
+`--content-budget-bytes` 必填，范围 0～INT64_MAX；它与逻辑额度独立。`--disk-safety-min-bytes` 默认 1073741824，`--disk-safety-percent` 默认 5、范围 0～100；均使用规范十进制，`--finish` 禁止携带这些新建参数。
+
 三组额度必须显式提供，bytes 为 0～INT64_MAX、nodes 为 1～INT64_MAX 的规范十进制整数；额度只是元数据限制，不预分配相应磁盘空间。`--max-users` 默认 10，范围 1～10000，包含管理员。显示名和登录名必填；开发 HTTP 必须显式启用，仅绑定回环地址。
 
 密码只从 `/dev/tty` 无回显读取两次；不接受密码参数、环境变量、文件或 stdin 管道。无控制终端、确认不一致、非法 UTF-8、NUL、少于 12 或超过 1024 字节均拒绝，不裁剪空白。终端设置在成功、输入失败或可捕获的中断后恢复；输入阶段 SIGINT/SIGTERM/SIGHUP/SIGQUIT/SIGTSTP 中止输入。SIGKILL 等不可捕获终止不在恢复保证内。
 
-[Init.cc](Init.cc) 验证参数，[TerminalPassword.cc](TerminalPassword.cc) 管理终端和秘密输入，随后调用同步离线初始化装配。新建密码策略为 Argon2id v19、64 MiB、2 次迭代、parallelism=1；启动维护、业务打开、Bootstrap 和密码验证共用接纳上限。该策略未作物理机性能校准。runtime 已实现独立有界密码 worker 和来源／登录名限流；login 命令通过同一 HTTP 接口认证。
+[InitOptions.cc](InitOptions.cc) 验证参数，[Init.cc](Init.cc) 调用初始化，[TerminalPassword.cc](TerminalPassword.cc) 管理终端和秘密输入，随后调用同步离线初始化装配。新建密码策略为 Argon2id v19、64 MiB、2 次迭代、parallelism=1；启动维护、业务打开、Bootstrap 和密码验证共用接纳上限。该策略未作物理机性能校准。runtime 已实现独立有界密码 worker 和来源／登录名限流；login 命令通过同一 HTTP 接口认证。
 
-初始化创建 schema/format 2，原子引导管理员、公共及私有空间、根和额度；随后发布格式标记并清理 pending。不会签发 Session 或邀请码。成功输出 `ANOF_INITIALIZED`，退出码 0，服务需另行执行 serve。参数/密码输入错误为 2；已存在、锁竞争、初始化/收尾失败为 3，并输出固定 stage/code，不回显秘密或配置。
+初始化接口要求 schema/format 3，原子引导管理员、公共及私有空间、根和额度；随后发布格式标记并清理 pending。不会签发 Session 或邀请码。成功输出 `ANOF_INITIALIZED`，退出码 0，服务需另行执行 serve。参数/密码输入错误为 2；已存在、锁竞争、初始化/收尾失败为 3，并输出固定 stage/code，不回显秘密或配置。
 
 引导已提交但尚未完成文件发布时使用：
 
@@ -138,3 +143,32 @@ ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_client_process_
 ```
 
 这些测试不证明公网部署、TLS 反向代理配置、大文件吞吐或断电持久性。
+
+
+## 上传、下载与续传命令
+
+[TransferCommands](TransferCommands.h) 使用独立客户端库，不读取服务端数据库。公共选项仍放在子命令前，
+远端命令必须指定profile；源和输出为本地绝对路径，服务器目标使用空间／节点ID。
+
+```sh
+anof --profile family upload /home/me/photo.jpg --space SPACE_ID --parent PARENT_ID --name photo.jpg
+anof --profile family upload resume TRANSFER_ID
+anof --profile family upload list --limit 100
+anof --profile family upload show UPLOAD_ID
+anof --profile family upload complete UPLOAD_ID
+anof --profile family upload cancel UPLOAD_ID
+anof --profile family download NODE_ID --output /home/me/saved.jpg
+anof --profile family download resume TRANSFER_ID
+anof --profile family storage show
+anof --profile family storage set --content-budget-bytes 1073741824 --if-match '"storage-INSTANCE_ID-REVISION"'
+```
+
+upload complete可同时指定--parent和--name修正目标；202只代表接纳。高层upload结果包含published、upload_id、
+transfer_id、state及node_id，不将后台处理视为已发布。续传失败诊断显示transfer_id，记录位于配置根的transfers目录。
+未知写结果退出6并要求稍后显式resume，不自动重发或重新创建会话。源文件变更拒绝恢复。
+下载只接受不存在的输出目标，保留受控part及记录用于恢复；成功前校验全文件SHA-256，不根据Content-Disposition选择路径。
+本地保存／输出错误退出5，下载网络／协议／摘要错误退出4；发布不确定时保留现场，不覆盖或清理用户文件。
+
+[传输进程测试](../../tests/integration/TransferClientProcess_unittest.cc) 通过真实可执行文件验证部分上传的跨进程恢复、
+下载未确认尾部截断及Range恢复、服务重启、空文件、源变更和发布记录恢复。文件安全和故障语义另见
+[客户端说明](../../anof/client/README.md)。

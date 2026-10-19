@@ -104,7 +104,7 @@ void seed(SqliteConnection& connection) {
     BOOST_REQUIRE(connection.execute("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0, 'admin', 'Administrator', '" + std::string(kHash) + "', 1, 1, 0, 0)"));
     BOOST_REQUIRE(connection.execute("INSERT INTO spaces VALUES (" + quoted(kSpace) + ", 1, NULL, " + quoted(kRoot) + ")"));
     BOOST_REQUIRE(insertNode(connection, kRoot, "", false, false, nullptr));
-    BOOST_REQUIRE(connection.execute("INSERT INTO blobs VALUES (" + quoted(kBlob) + ", 0, zeroblob(32))"));
+    BOOST_REQUIRE(connection.execute("INSERT INTO blobs(id,size,sha256) VALUES (" + quoted(kBlob) + ", 0, zeroblob(32))"));
     BOOST_REQUIRE(connection.commit());
 }
 
@@ -210,7 +210,7 @@ BOOST_AUTO_TEST_CASE(value_decoding_rejects_corrupt_persistent_values) {
 
 BOOST_AUTO_TEST_CASE(schema_rejects_unknown_definition_and_missing_objects) {
     const std::pair<const char*, ErrorCode> changes[] = {
-        { "UPDATE schema_info SET version=3", ErrorCode::IntegrityError },
+        { "UPDATE schema_info SET version=4", ErrorCode::IntegrityError },
         { "UPDATE schema_info SET version=1", ErrorCode::IntegrityError },
         { "UPDATE schema_info SET definition='changed'", ErrorCode::IntegrityError },
         { "DELETE FROM schema_info", ErrorCode::IntegrityError },
@@ -383,7 +383,7 @@ BOOST_AUTO_TEST_CASE(schema2_identity_values_reject_invalid_encodings_and_ranges
     Database database;
     auto connection = database.current();
     seed(*connection);
-    BOOST_TEST(scalar(*connection, "SELECT version FROM schema_info") == 2);
+    BOOST_TEST(scalar(*connection, "SELECT version FROM schema_info") == 3);
     BOOST_TEST(scalar(*connection, "SELECT count(*) FROM instance_settings") == 0);
     // 未引导库仅供 schema 层测试；没有管理员空间完整性的生产通过结论。
     for (const char* change : {

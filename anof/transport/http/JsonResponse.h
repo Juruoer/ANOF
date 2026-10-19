@@ -34,7 +34,20 @@ enum class ProtocolError {
     CommitOutcomeUnknown,
     InternalError,
     TemporarilyUnavailable,
-    StorageFull
+    StorageFull,
+    TransferStorageFull,
+    LengthRequired,
+    UploadKeyConflict,
+    UploadOffsetMismatch,
+    UploadLengthMismatch,
+    UploadBusy,
+    UploadIncomplete,
+    UploadStateConflict,
+    UploadCommitInProgress,
+    StorageBudgetExceeded,
+    UploadTerminated,
+    UploadLimitReached,
+    NotAFile,
 };
 
 ProtocolError protocolError(ErrorCode code);
@@ -44,6 +57,8 @@ ProtocolError protocolError(SubmitError error);
 struct JsonResponse {
     muduox::net::HttpResponse headers{ false };
     std::string body;
+    // HEAD 上传成功不声明表示长度；错误仍使用实际 JSON 长度。
+    bool omitLength = false;
     muduox::net::HttpResponse buffered(bool close) const;
 };
 

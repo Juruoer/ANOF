@@ -1,8 +1,13 @@
 add_subdirectory(persistence_contract)
+add_subdirectory(support)
 
 # 每个公共头文件单独编译，防止依赖其他头文件的偶然 include 顺序。
 set(public_headers
     apps/anof/ShutdownSignals.h
+    anof/client/TransferTransport.h
+    anof/client/TransferProtocol.h
+    anof/client/TransferClient.h
+    anof/client/CurlHttpTransport.h
     anof/core/Error.h
     anof/core/Result.h
     anof/core/Id.h
@@ -31,6 +36,11 @@ set(public_headers
     anof/runtime/AuthenticationLimiter.h
     anof/runtime/CompletionPump.h
     anof/runtime/MetadataExecutor.h
+    anof/runtime/DiskExecutor.h
+    anof/runtime/UploadExecutor.h
+    anof/application/transfer/DownloadService.h
+    anof/application/transfer/UploadService.h
+    anof/application/transfer/TransferRecovery.h
     anof/application/ports/InstancePreparation.h
     anof/application/maintenance/PrepareInstance.h
     anof/runtime/InstanceInitialization.h
@@ -47,12 +57,27 @@ foreach(header IN LISTS public_headers)
     list(APPEND header_sources "${source}")
 endforeach()
 add_library(anof_public_headers_check OBJECT ${header_sources})
-target_link_libraries(anof_public_headers_check PRIVATE anof_application anof_instance_runtime)
+target_link_libraries(anof_public_headers_check PRIVATE anof_application anof_instance_runtime anof_client)
 
 add_subdirectory(integration)
 
 # 领域与端口独立于具体后端；每个头文件独立编译。
 set(contract_headers
+    anof/domain/drive/Blob.h
+    anof/domain/transfer/TransferValues.h
+    anof/domain/transfer/Upload.h
+    anof/domain/transfer/TransferPolicy.h
+    anof/domain/transfer/Storage.h
+    anof/application/transfer/TransferCommands.h
+    anof/application/maintenance/TransferInitialization.h
+    anof/application/ports/UploadRepository.h
+    anof/application/ports/BlobRepository.h
+    anof/application/ports/StorageRepository.h
+    anof/application/ports/TransferAuditRepository.h
+    anof/application/ports/TransferMetadataStore.h
+    anof/application/ports/TransferFileStore.h
+    anof/application/ports/TransferIdGenerator.h
+    anof/application/ports/TransferDispatcher.h
     anof/core/Clock.h
     anof/core/Error.h
     anof/core/Id.h

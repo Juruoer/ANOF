@@ -2,6 +2,7 @@
 #include <boost/test/unit_test.hpp>
 
 #include <anof/infrastructure/config/TomlInstanceConfiguration.h>
+#include <anof/infrastructure/config/internal/ConfigurationText.h>
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
 #include <anof/infrastructure/system/internal/BoundedFileRead.h>
 #include <anof/infrastructure/system/internal/InstanceFiles.h>
@@ -248,4 +249,31 @@ BOOST_AUTO_TEST_CASE(failed_load_preserves_lease_and_closes_resources) {
     f.write(enabled);
     BOOST_CHECK(f.loader->load(*f.lease));
     BOOST_CHECK_EQUAL(fdCount(), before);
+}
+
+BOOST_AUTO_TEST_CASE(disk_safety_round_trip_defaults_and_strict_types) {
+    Fixture f;
+    f.write(enabled);
+    auto defaults = f.loader->load(*f.lease);
+    BOOST_REQUIRE(defaults);
+    BOOST_CHECK_EQUAL(defaults.value().diskSafety.minimum.value(), 1073741824);
+    BOOST_CHECK_EQUAL(defaults.value().diskSafety.percent.value(), 5);
+    for (auto minimum : {std::int64_t{0}, std::int64_t{17}, INT64_MAX}) {
+        for (auto percent : {0, 37, 100}) {
+            auto value = defaults.value();
+            value.diskSafety = {ByteCount::from(minimum).value(), SafetyPercent::from(percent).value()};
+            auto text = config::detail::serializeConfiguration(value);
+            BOOST_REQUIRE(text);
+            BOOST_CHECK(text.value().find("content_budget") == std::string::npos);
+            f.write(text.value());
+            auto loaded = f.loader->load(*f.lease);
+            BOOST_REQUIRE(loaded);
+            BOOST_CHECK(config::detail::sameConfiguration(value, loaded.value()));
+            BOOST_CHECK(config::detail::parseConfiguration(text.value(), true));
+        }
+    }
+    for (const char* bad : {"disk_safety_min_bytes=-1", "disk_safety_min_bytes=9223372036854775808",
+             "disk_safety_min_bytes=1.0", "disk_safety_min_bytes=true", "disk_safety_min_bytes='1'",
+             "disk_safety_percent=-1", "disk_safety_percent=101", "disk_safety_percent=5.0",
+             "disk_safety_percent=true", "content_budget_bytes=1", "disk_safety_percent=1\ndisk_safety_percent=2"}) f.invalid(enabled+bad);
 }

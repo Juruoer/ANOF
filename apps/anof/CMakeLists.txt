@@ -12,12 +12,17 @@ add_library(anof_terminal_support STATIC TerminalPassword.cc)
 target_link_libraries(anof_terminal_support PUBLIC anof_domain PRIVATE Threads::Threads)
 target_compile_options(anof_terminal_support PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 
-add_library(anof_client_commands STATIC ClientCommands.cc ClientOutput.cc)
+add_library(anof_client_commands STATIC ClientCommands.cc
+    TransferCommands.cc ClientOutput.cc)
 target_link_libraries(anof_client_commands PUBLIC anof_client PRIVATE anof_terminal_support CLI11::CLI11 nlohmann_json::nlohmann_json)
 target_compile_options(anof_client_commands PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 
+add_library(anof_init_options STATIC InitOptions.cc)
+target_link_libraries(anof_init_options PUBLIC anof_application)
+target_compile_options(anof_init_options PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
 add_library(anof_init_support STATIC Init.cc)
-target_link_libraries(anof_init_support PUBLIC anof_application anof_terminal_support PRIVATE anof_instance_setup Threads::Threads)
+target_link_libraries(anof_init_support PUBLIC anof_init_options anof_terminal_support PRIVATE anof_instance_setup Threads::Threads)
 target_compile_options(anof_init_support PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 
 add_executable(anof Main.cc Serve.cc)
@@ -28,7 +33,7 @@ target_compile_options(anof PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 
 if (ANOF_BUILD_TESTS)
     anof_add_unit_test(anof_init_command_unittest tests/Init_unittest.cc)
-    target_link_libraries(anof_init_command_unittest PRIVATE anof_init_support)
+    target_link_libraries(anof_init_command_unittest PRIVATE anof_init_options)
 endif ()
 if (ANOF_BUILD_TESTS)
     anof_add_unit_test(anof_terminal_password_unittest tests/TerminalPassword_unittest.cc)

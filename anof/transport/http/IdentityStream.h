@@ -12,8 +12,8 @@ namespace anof::http {
 // formatter 接收 Value&& 和 RequestId（void 仅 RequestId），返回 Result<JsonResponse>。
 // mapError 仅转换已接纳任务的业务错误；同步提交拒绝沿用公共映射。
 // 依赖和 ready 的引用资源须覆盖全部任务完成及 HTTP 清理；不依赖具体 executor。
-template <typename Command, typename Value, typename Context, typename Parser, typename Formatter>
-muduox::net::HttpStreamCallback makeIdentityStream(IdentityDispatcher& dispatcher, Context context,
+template <typename Command, typename Value, typename Context, typename Parser, typename Formatter, typename Dispatcher>
+muduox::net::HttpStreamCallback makeIdentityStream(Dispatcher& dispatcher, Context context,
     RequestBody bodyKind, Parser parser, Formatter formatter, std::function<bool()> ready, ProtocolError (*mapError)(ErrorCode) = protocolError) {
     static_assert(std::is_same_v<Context, RequestId> || std::is_same_v<Context, RequestContext>);
     if (!ready || !mapError) throw std::invalid_argument("Identity stream requires readiness callback and error mapper");

@@ -1,4 +1,9 @@
 #include <anof/transport/http/HttpApi.h>
+#include <anof/transport/http/TransferRequest.h>
+#include <anof/transport/http/TransferResponse.h>
+#include <anof/transport/http/UploadStream.h>
+#include <anof/transport/http/DownloadStream.h>
+#include <anof/transport/http/DownloadResponse.h>
 #include <anof/transport/http/BearerCredentials.h>
 #include <anof/transport/http/IdentityStream.h>
 #include <anof/transport/http/IdentityResponse.h>
@@ -33,12 +38,15 @@ HttpRequestDecision bodylessDecision(Parsed<Command> parsed, IdentityDispatcher&
 }  // namespace
 
 HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity,
-                 std::function<bool()> ready, CreateDirectoryStream stream, IdentityDispatcher& identityDispatcher,
+                 std::function<bool()> ready, CreateDirectoryStream stream, IdentityDispatcher& identityDispatcher, TransferDispatcher& transferDispatcher,
                  HttpObservation observation, HttpApiOptions options)
-    : identityDispatcher_(identityDispatcher), trace_(identity, std::move(observation)) {
+    : identityDispatcher_(identityDispatcher), transferDispatcher_(transferDispatcher), trace_(identity, std::move(observation)) {
     if (!ready || !stream || options.maxInFlight == 0 || options.maxInFlight > 128 ||
         !std::isfinite(options.bodySeconds) || options.bodySeconds <= 0 || options.bodySeconds > 15 ||
-        !std::isfinite(options.responseSeconds) || options.responseSeconds <= 0 || options.responseSeconds > 30) {
+        !std::isfinite(options.responseSeconds) || options.responseSeconds <= 0 || options.responseSeconds > 30 ||
+        !std::isfinite(options.patchBodySeconds) || options.patchBodySeconds <= 0 || options.patchBodySeconds > 300 ||
+        !std::isfinite(options.patchResponseSeconds) || options.patchResponseSeconds <= 0 || options.patchResponseSeconds > 60 ||
+        !std::isfinite(options.contentResponseSeconds) || options.contentResponseSeconds <= 0 || options.contentResponseSeconds > 21600) {
         throw std::invalid_argument("Invalid HTTP API configuration");
     }
     auto router = std::make_shared<Router>();
@@ -72,10 +80,23 @@ HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity
         registered(router->addStreamRoute(route.first, route.second,
             [](const HttpRequest&, const Router::RouteParams&, const auto&) -> HttpStreamCallbacks { throw std::logic_error("Unbound HTTP account stream"); }, kMaxJsonBytes));
     }
+    for (const auto& route : {std::pair{HttpRequest::kPost, "/api/v1/uploads"}, {HttpRequest::kGet, "/api/v1/uploads"},
+            {HttpRequest::kGet, "/api/v1/uploads/:upload_id"}, {HttpRequest::kHead, "/api/v1/uploads/:upload_id"},
+            {HttpRequest::kPatch, "/api/v1/uploads/:upload_id"}, {HttpRequest::kDelete, "/api/v1/uploads/:upload_id"},
+            {HttpRequest::kPost, "/api/v1/uploads/:upload_id/complete"}, {HttpRequest::kGet, "/api/v1/admin/storage"}, {HttpRequest::kPut, "/api/v1/admin/storage"}}) {
+        const std::size_t limit = route.first == HttpRequest::kPatch ? static_cast<std::size_t>(kMaxPatchBytes) :
+            (route.first == HttpRequest::kPost || route.first == HttpRequest::kPut) ? kMaxJsonBytes : 0;
+        registered(router->addStreamRoute(route.first, route.second,
+            [](const HttpRequest&, const Router::RouteParams&, const auto&) -> HttpStreamCallbacks { throw std::logic_error("Unbound upload stream"); }, limit));
+    }
+    for (const auto method : {HttpRequest::kGet, HttpRequest::kHead}) {
+        registered(router->addStreamRoute(method, "/api/v1/nodes/:node_id/content",
+            [](const HttpRequest&, const Router::RouteParams&, const auto&) -> HttpStreamCallbacks { throw std::logic_error("Unbound download stream"); }, 0));
+    }
     RouterHttpOptions routing;
     routing.methodNotAllowed = true;
     RouterHttpAdapter adapter(router, [](const auto&, auto* response) { response->setStatusCode(HttpResponse::k404NotFound); }, routing);
-    auto terminal = [adapter, trace = trace_, &codec, dispatcher = &identityDispatcher_, ready = std::move(ready), stream = std::move(stream), options]
+    auto terminal = [adapter, trace = trace_, &codec, dispatcher = &identityDispatcher_, uploads = &transferDispatcher_, ready = std::move(ready), stream = std::move(stream), options]
         (const HttpRequest& request, const HttpRequestMetadata& metadata) {
         const auto id = trace.requestId(metadata.exchange);
         // onMiss 无 metadata；在本次选择中把 ID 绑定到 404，保留 Router 的 405 分支。
@@ -108,6 +129,62 @@ HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity
                     const auto credential = readBearerCredentials(head.headers(), codec);
                     if (const auto* error = std::get_if<ProtocolError>(&credential)) return reject(*error, id);
                     const RequestContext context{{std::get<SessionDigest>(credential), CredentialMode::Bearer}, id};
+                    if (pattern == "/api/v1/nodes/:node_id/content") {
+                        if (auto error = validateNoQuery(head.query())) return reject(*error, id);
+                        if (auto error = validateBodylessHeaders(head.headers())) return reject(*error, id);
+                        const auto raw = Router::findParam(selection->match.params, "node_id");
+                        if (!raw) return reject(ProtocolError::InternalError, id);
+                        const auto node = NodeId::parse(*raw);
+                        if (!node || node.value().toString() != *raw) return reject(ProtocolError::InvalidArgument, id);
+                        auto headers = copyDownloadConditions(head.headers());
+                        if (auto* error = std::get_if<ProtocolError>(&headers)) return reject(*error, id);
+                        return HttpRequestDecision::streaming(makeDownloadStream(*uploads, context,
+                            {node.value(), head.method() == HttpRequest::kHead}, std::get<HttpHeaders>(std::move(headers)), ready));
+                    }
+                    if (pattern == "/api/v1/uploads" || pattern == "/api/v1/uploads/:upload_id" || pattern == "/api/v1/uploads/:upload_id/complete" || pattern == "/api/v1/admin/storage") {
+                        const bool json = head.method() == HttpRequest::kPost || head.method() == HttpRequest::kPut;
+                        if (!(pattern == "/api/v1/uploads" && head.method() == HttpRequest::kGet)) {
+                            if (auto error = validateNoQuery(head.query())) return reject(*error, id);
+                        }
+                        if (json) {
+                            if (auto error = validateJsonContentHeaders(head.headers())) return reject(*error, id);
+                        } else if (head.method() != HttpRequest::kPatch) {
+                            if (auto error = validateBodylessHeaders(head.headers())) return reject(*error, id);
+                        }
+                        if (pattern == "/api/v1/uploads") {
+                            if (head.method() == HttpRequest::kPost) return HttpRequestDecision::streaming(makeIdentityStream<CreateUploadCommand, UploadCreated>(*uploads, context, RequestBody::Json, parseCreateUpload, uploadCreatedResponse, ready, transferError));
+                            auto command = parseListUploads(head.query());
+                            if (auto* error = std::get_if<ProtocolError>(&command)) return reject(*error, id);
+                            return HttpRequestDecision::streaming(makeIdentityStream<ListUploadsCommand, Page<UploadView, UploadCursor>>(*uploads, context, RequestBody::None,
+                                [command = std::get<ListUploadsCommand>(command)](auto) -> Parsed<ListUploadsCommand> { return command; }, uploadsResponse, ready, transferError));
+                        }
+                        if (pattern == "/api/v1/admin/storage") {
+                            if (head.method() == HttpRequest::kGet) return HttpRequestDecision::streaming(makeIdentityStream<GetStorageCommand, StorageView>(*uploads, context, RequestBody::None,
+                                [](auto) -> Parsed<GetStorageCommand> { return GetStorageCommand{}; }, storageResponse, ready, transferError));
+                            auto condition = parseStorageCondition(head.headers());
+                            if (auto* error = std::get_if<ProtocolError>(&condition)) return reject(*error, id);
+                            return HttpRequestDecision::streaming(makeIdentityStream<SetStorageBudgetCommand, StorageView>(*uploads, context, RequestBody::Json,
+                                [condition = std::get<StorageCondition>(condition)](auto body) { return parseStorageUpdate(body, condition); }, storageResponse, ready, transferError));
+                        }
+                        auto raw = Router::findParam(selection->match.params, "upload_id");
+                        if (!raw) return reject(ProtocolError::InternalError, id);
+                        auto parsed = parseUploadId(*raw);
+                        if (auto* error = std::get_if<ProtocolError>(&parsed)) return reject(*error, id);
+                        const auto uploadId = std::get<UploadId>(parsed);
+                        if (pattern == "/api/v1/uploads/:upload_id/complete") return HttpRequestDecision::streaming(makeIdentityStream<CompleteUploadCommand, UploadCompletionAccepted>(*uploads, context, RequestBody::Json,
+                            [uploadId](auto body) { return parseCompleteUpload(body, uploadId); }, uploadCompleteResponse, ready, transferError));
+                        if (head.method() == HttpRequest::kPatch) {
+                            auto command = parsePatchHeaders(head.headers(), uploadId);
+                            if (auto* error = std::get_if<ProtocolError>(&command)) return reject(*error, id);
+                            return HttpRequestDecision::streaming(makeUploadPatchStream(*uploads, context, std::get<PreparePatchCommand>(command)));
+                        }
+                        if (head.method() == HttpRequest::kDelete) return HttpRequestDecision::streaming(makeIdentityStream<CancelUploadCommand, void>(*uploads, context, RequestBody::None,
+                            [uploadId](auto) -> Parsed<CancelUploadCommand> { return CancelUploadCommand{uploadId}; }, noContentResponse, ready, transferError));
+                        return HttpRequestDecision::streaming(makeIdentityStream<GetUploadCommand, UploadView>(*uploads, context, RequestBody::None,
+                            [uploadId](auto) -> Parsed<GetUploadCommand> { return GetUploadCommand{uploadId}; },
+                            head.method() == HttpRequest::kHead ? uploadHeadResponse : uploadResponse, ready, transferError));
+                    }
+
                     if (pattern == "/api/v1/nodes") {
                         if (const auto error = validateJsonContentHeaders(head.headers())) return reject(*error, id);
                         return HttpRequestDecision::streaming([context, stream](const auto& req, const auto& writer) {
@@ -203,7 +280,10 @@ HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity
                 }();
                 selected.attributes().merge(original.attributes());
                 if (selection->match.endpoint->pattern != "/health/live" && selection->match.endpoint->pattern != "/health/ready") {
-                    selected.attributes().restrictBodyTimeout(options.bodySeconds).restrictResponseTimeout(options.responseSeconds);
+                    const bool patch = head.method() == HttpRequest::kPatch && selection->match.endpoint->pattern == "/api/v1/uploads/:upload_id";
+                    const bool content = selection->match.endpoint->pattern == "/api/v1/nodes/:node_id/content";
+                    selected.attributes().restrictBodyTimeout(patch ? options.patchBodySeconds : options.bodySeconds)
+                        .restrictResponseTimeout(content ? options.contentResponseSeconds : patch ? options.patchResponseSeconds : options.responseSeconds);
                 }
                 return selected;
             }, [&](const auto&, const auto&, const RouterSelectionResult& selection) { missed = selection.kind == RouterDispatchKind::OnMiss; });
@@ -230,6 +310,10 @@ void HttpApi::configure(HttpServer& server) {
     server.getLoop()->assertInLoopThread();
     if (configured_) throw std::logic_error("HTTP API already configured");
     server.setThreadNum(0);
+    HttpRequestLimits limits; limits.bodyBytes = static_cast<std::size_t>(kMaxPatchBytes); server.setRequestLimits(limits);
+    HttpTimeouts timeouts; timeouts.headers = 15; timeouts.idle = 60; timeouts.body = 300;
+    timeouts.response = 21600; timeouts.write = 3600; timeouts.close = 5; server.setTimeouts(timeouts);
+    HttpOutputLimits output; output.highWaterBytes = 1024 * 1024; server.setOutputLimits(output);
     server.setExchangeObserverFactory(trace_.observerFactory());
     server.setResponseHeaderPolicy(trace_.headerPolicy());
     server.setHttpRequestSelector(selector_);

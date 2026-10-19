@@ -139,3 +139,7 @@ ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_(session_token_
 ```
 
 Release 使用同名目标及 `cmake-build-release` 目录，两者均需开启 `ANOF_BUILD_TESTS`。密码学五组共 32 个案例，串行执行；另保留 system 的 UTC 时钟回归。测试只处理内存中的小数据，不运行校准、内存压力或随机源压力测试。内部错误注入不触发真实熵源失效、系统内存耗尽或进程终止；局部测试不验证 HTTP、真实 Session 鉴权、SQL 事务或完整实例关闭。
+
+## TransferIdGenerator
+
+[SodiumTransferIdGenerator](SodiumTransferIdGenerator.h) 的工厂 `makeSodiumTransferIdGenerator()` 初始化 libsodium，返回独占 `TransferIdGenerator`。UploadId 和 BlobId 各使用新鲜的安全随机 UUID v4，复用内部 UUID 位布局；不查询数据库或处理碰撞。有限 ID 样本与格式检查包含在 `anof_transfer_files_unittest` 中，不证明绝对无碰撞。

@@ -13,7 +13,7 @@
 namespace anof::client {
 enum class ErrorKind { InvalidArgument, AuthenticationRequired, Application, Transport, Protocol, LocalState, OutcomeUnknown, Interrupted };
 enum class RemoteOutcome { NotSent, Rejected, ConfirmedSuccess, Unknown };
-enum class LocalState { Unchanged, CredentialSaved, CredentialCleared, Unknown };
+enum class LocalState { Unchanged, CredentialSaved, CredentialCleared, TransferSaved, DownloadPartial, FilePublished, Unknown };
 struct ClientError {
     ErrorKind kind;
     std::string code;
@@ -22,6 +22,7 @@ struct ClientError {
     RemoteOutcome remote = RemoteOutcome::NotSent;
     LocalState local = LocalState::Unchanged;
     std::optional<std::string> profileName; // 仅含已验证的本地名称，用于定位损坏的列表项。
+    std::optional<std::string> transferId;
     int exitCode() const noexcept;
 };
 ClientError failure(ErrorKind kind, std::string code = {});

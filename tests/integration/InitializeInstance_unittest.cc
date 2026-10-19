@@ -13,6 +13,7 @@
 #include <anof/infrastructure/system/LinuxInstanceInitializer.h>
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
 #include <anof/infrastructure/system/SystemClock.h>
+#include <anof/infrastructure/storage/local/LocalTransferFileStore.h>
 #include <unistd.h>
 
 using namespace anof;
@@ -53,7 +54,10 @@ struct FailingPublication : InstanceInitializer {
 }
 BOOST_AUTO_TEST_CASE(real_init_password_billing_and_prepare_share_policy) {
     Tree tree;
-    auto result = initializeTestInstance(tree.root);
+    auto options = testInitOptions(tree.root);
+    options.contentBudget = ByteCount::from(987654).value();
+    options.instance.configuration.diskSafety = {ByteCount::from(12345).value(), SafetyPercent::from(17).value()};
+    auto result = runtime::initializeInstance(std::move(options), PasswordInput::parse("fixture password only").value());
     BOOST_REQUIRE(result);
     BOOST_CHECK(!std::filesystem::exists(tree.root / ".anof/initialization.pending"));
     auto locks = system::makeLinuxInstanceLockProvider();
@@ -62,6 +66,29 @@ BOOST_AUTO_TEST_CASE(real_init_password_billing_and_prepare_share_policy) {
     BOOST_REQUIRE(locks && config && maintenance);
     auto prepared = prepareInstance(tree.root, *locks.value(), *config.value(), *maintenance.value());
     BOOST_REQUIRE(prepared);
+    BOOST_CHECK_EQUAL(prepared.value().configuration.diskSafety.minimum.value(), 12345);
+    BOOST_CHECK_EQUAL(prepared.value().configuration.diskSafety.percent.value(), 17);
+    auto transfer = sqlite::openSqliteTransferMetadataStore(tree.root / ".anof/metadata.sqlite3", {runtime::instancePasswordPolicy().verification, {}});
+    BOOST_REQUIRE(transfer);
+    auto transferRead = transfer.value()->beginTransferRead();
+    BOOST_REQUIRE(transferRead);
+    auto accounting = transferRead.value()->storage().get();
+    BOOST_REQUIRE(accounting);
+    BOOST_CHECK_EQUAL(accounting.value().budget.value(), 987654);
+    BOOST_CHECK_EQUAL(accounting.value().retained.value(), 0);
+    BOOST_CHECK_EQUAL(accounting.value().reserved.value(), 0);
+    BOOST_CHECK_EQUAL(accounting.value().revision.value(), 1);
+    BOOST_CHECK(!transfer.value()->beginRead());
+    transferRead.value().reset();
+    // 真正初始化的目录能够直接交给文件适配器；lease 覆盖全部句柄寿命。
+    auto files = storage::openLocalTransferFileStore(tree.root);
+    BOOST_REQUIRE(std::holds_alternative<std::unique_ptr<TransferFileStore>>(files));
+    auto& fileStore = *std::get<std::unique_ptr<TransferFileStore>>(files);
+    for (auto area : {InventoryArea::Uploads, InventoryArea::Objects, InventoryArea::Quarantine}) {
+        auto page = fileStore.inventory(area, PageSize::from(1).value(), {});
+        BOOST_REQUIRE((std::holds_alternative<Page<InventoryEntry, InventoryCursor>>(page)));
+        BOOST_CHECK((std::get<Page<InventoryEntry, InventoryCursor>>(page).items.empty()));
+    }
     BOOST_CHECK(!locks.value()->acquire(tree.root));
     auto store = sqlite::openSqliteMetadataStore(tree.root / ".anof/metadata.sqlite3", {runtime::instancePasswordPolicy().verification, {}});
     BOOST_REQUIRE(store);
@@ -122,7 +149,7 @@ BOOST_AUTO_TEST_CASE(committed_bootstrap_can_finish_without_rehash_or_reseed) {
 BOOST_AUTO_TEST_CASE(invalid_options_never_create_instance_tree) {
     Tree tree;
     auto options = testInitOptions(tree.root);
-    options.quotas.contribution.nodes = NodeCount{};
+    options.instance.quotas.contribution.nodes = NodeCount{};
     auto result = runtime::initializeInstance(std::move(options), PasswordInput::parse("fixture password only").value());
     BOOST_REQUIRE(!result);
     BOOST_CHECK(result.error().code == InitError::InvalidInput);

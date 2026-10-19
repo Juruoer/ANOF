@@ -40,6 +40,8 @@ add_library(anof_infrastructure STATIC
     SqliteInstanceFiles.h
     SqliteBootstrapInternal.h
     SqliteInstanceFiles.cc
+    SqliteUploadRepository.cc
+    SqliteTransferRepositories.cc
     SqliteMetadataStore.cc
     SqliteMetadataReadSnapshot.cc
     SqliteMetadataTransaction.cc

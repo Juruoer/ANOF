@@ -28,6 +28,8 @@ public:
             if (!text) return text.error();
             auto format = files::parseFormat(text.value(), InitStage::Verify);
             if (!format) return detail::maintenanceError(format.error().code);
+            auto content = files::openContentDirectories(directory);
+            if (!content) return content.error();
             auto database = detail::openInstanceDatabase(lease, options_.connection, false);
             if (!database) return detail::maintenanceError(database.error().code);
             auto checked = detail::verifyInitialized(*database.value()->connection, options_.passwordHashLimits);

@@ -1,6 +1,6 @@
+#include <anof/infrastructure/persistence/sqlite/SqliteIdentitySql.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteQuotaRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteIdentitySql.h>
 
 namespace anof::infrastructure::sqlite {
 namespace {
@@ -29,8 +29,7 @@ Result<void> validate(const QuotaState& state) {
 
 Result<QuotaSnapshot> SqliteQuotaRepository::get(const QuotaScope& scope) {
     const Scope key(scope);
-    auto query = detail::query(context_, "SELECT limit_bytes,limit_nodes,used_bytes,used_nodes,reserved_bytes,reserved_nodes,revision,s.kind FROM " + key.table +
-        " q JOIN spaces s ON s.id=q.space_id WHERE " + key.condition(), { key.space, key.owner() });
+    auto query = detail::query(context_, "SELECT limit_bytes,limit_nodes,used_bytes,used_nodes,reserved_bytes,reserved_nodes,revision,s.kind FROM " + key.table + " q JOIN spaces s ON s.id=q.space_id WHERE " + key.condition(), { key.space, key.owner() });
     if (!query) return query.error();
     auto row = query.value()->step();
     if (!row) return context_.fail(row.error());
@@ -57,18 +56,16 @@ Result<void> SqliteQuotaRepository::insert(const QuotaScope& scope, const QuotaS
     const Scope key(scope);
     const auto& q = quota.state;
     const auto sql = "INSERT INTO " + key.table + "(space_id," + (key.user.empty() ? std::string{} : "user_id,") +
-        "limit_bytes,limit_nodes,used_bytes,used_nodes,reserved_bytes,reserved_nodes,revision) SELECT ?1," +
-        (key.user.empty() ? std::string{} : "?2,") + "?3,?4,?5,?6,?7,?8,1" + (key.user.empty() ? " WHERE ?2 IS NULL" : "");
-    return detail::one(context_, detail::write(context_, sql, { key.space, key.owner(), q.limit.bytes.value(), q.limit.nodes.value(),
-        q.used.bytes.value(), q.used.nodes.value(), q.reserved.bytes.value(), q.reserved.nodes.value() }));
+                     "limit_bytes,limit_nodes,used_bytes,used_nodes,reserved_bytes,reserved_nodes,revision) SELECT ?1," +
+                     (key.user.empty() ? std::string{} : "?2,") + "?3,?4,?5,?6,?7,?8,1" + (key.user.empty() ? " WHERE ?2 IS NULL" : "");
+    return detail::one(context_, detail::write(context_, sql, { key.space, key.owner(), q.limit.bytes.value(), q.limit.nodes.value(), q.used.bytes.value(), q.used.nodes.value(), q.reserved.bytes.value(), q.reserved.nodes.value() }));
 }
 
 Result<void> SqliteQuotaRepository::update(const QuotaScope& scope, const QuotaSnapshot& quota) {
     const Scope key(scope);
     const auto& q = quota.state;
-    return detail::one(context_, detail::write(context_, "UPDATE " + key.table +
-        " SET limit_bytes=?3,limit_nodes=?4,used_bytes=?5,used_nodes=?6,revision=?7 WHERE " + key.condition() + " AND revision=?8",
-        { key.space, key.owner(), q.limit.bytes.value(), q.limit.nodes.value(), q.used.bytes.value(), q.used.nodes.value(), quota.revision.value(), quota.revision.value() - 1 }));
+    return detail::one(context_, detail::write(context_, "UPDATE " + key.table + " SET limit_bytes=?3,limit_nodes=?4,used_bytes=?5,used_nodes=?6,reserved_bytes=?9,reserved_nodes=?10,revision=?7 WHERE " + key.condition() + " AND revision=?8",
+                                               { key.space, key.owner(), q.limit.bytes.value(), q.limit.nodes.value(), q.used.bytes.value(), q.used.nodes.value(), quota.revision.value(), quota.revision.value() - 1, q.reserved.bytes.value(), q.reserved.nodes.value() }));
 }
 
 Result<QuotaSnapshot> SqliteQuotaRepository::setLimit(const QuotaScope& scope, Revision expected, QuotaDelta limit) {
@@ -96,5 +93,34 @@ Result<void> SqliteQuotaRepository::chargeUsed(const QuotaScope& scope, QuotaDel
     auto next = current.value().revision.add(1);
     if (!next) return context_.fail(next.error());
     return update(scope, { charged.value(), next.value() });
+}
+Result<void> SqliteQuotaRepository::reserve(const QuotaScope& s, QuotaDelta d) { return reservation(s, d, 0); }
+Result<void> SqliteQuotaRepository::commitReservation(const QuotaScope& s, QuotaDelta d) { return reservation(s, d, 1); }
+Result<void> SqliteQuotaRepository::releaseReservation(const QuotaScope& s, QuotaDelta d) { return reservation(s, d, 2); }
+Result<void> SqliteQuotaRepository::reservation(const QuotaScope& scope, QuotaDelta delta, int mode) {
+    auto value = get(scope);
+    if (!value) return value.error();
+    auto q = value.value();
+    if (mode == 0) {
+        auto checked = anof::chargeUsed(q.state, delta);
+        if (!checked) return context_.fail(checked.error());
+        q.state.reserved.bytes = q.state.reserved.bytes.add(delta.bytes.value()).value();
+        q.state.reserved.nodes = q.state.reserved.nodes.add(delta.nodes.value()).value();
+    } else {
+        if (delta.bytes.value() > q.state.reserved.bytes.value() || delta.nodes.value() > q.state.reserved.nodes.value()) return context_.fail(ErrorCode::IntegrityError);
+        q.state.reserved.bytes = ByteCount::from(q.state.reserved.bytes.value() - delta.bytes.value()).value();
+        q.state.reserved.nodes = NodeCount::from(q.state.reserved.nodes.value() - delta.nodes.value()).value();
+        if (mode == 1) {
+            auto b = q.state.used.bytes.add(delta.bytes.value());
+            auto n = q.state.used.nodes.add(delta.nodes.value());
+            if (!b || !n) return context_.fail(ErrorCode::IntegrityError);
+            q.state.used = { b.value(), n.value() };
+        }
+    }
+    if (!delta.bytes.value() && !delta.nodes.value()) return {};
+    auto next = q.revision.add(1);
+    if (!next) return context_.fail(next.error());
+    q.revision = next.value();
+    return update(scope, q);
 }
 }  // namespace anof::infrastructure::sqlite

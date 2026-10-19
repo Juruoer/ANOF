@@ -173,6 +173,7 @@ struct IdentityExecutor::Impl {
     Result<void> startupResult;
     MetadataExecutor::Started onStarted;
     MetadataExecutor::Stopped onStopped;
+    std::function<void(UserId, bool)> userDisabled;
     std::thread worker;
     std::promise<void> exitPromise;
     std::future<void> exited = exitPromise.get_future();
@@ -373,7 +374,23 @@ TaskSubmission IdentityExecutor::submit(RequestContext context, Command command,
 ANOF_ACCOUNT_SUBMIT(UpdateDisplayNameCommand, UserProfile)
 ANOF_ACCOUNT_SUBMIT(ListUsersCommand, Page<UserProfile, UserCursor>)
 ANOF_ACCOUNT_SUBMIT(GetUserCommand, AdminUserView)
-ANOF_ACCOUNT_SUBMIT(SetUserEnabledCommand, AdminUserView)
+void IdentityExecutor::setUserDisabledObserver(std::function<void(UserId, bool)> observer) {
+    impl_->loop.assertInLoopThread();impl_->userDisabled=std::move(observer);
+}
+TaskSubmission IdentityExecutor::submit(RequestContext context,SetUserEnabledCommand command,Completion<AdminUserView> callback) {
+    if(!callback)return SubmitError::InternalError;
+    const bool disabling=!command.enabled;
+    return impl_->submit<SimpleJob<SetUserEnabledCommand,AdminUserView,true>>(std::move(context),std::move(command),
+        Completion<AdminUserView>{[this,disabling,user=command.id,callback=std::move(callback)](auto completion){
+            // 未知提交也提示协调器读取持久标志；通知不替代事务判断。
+            if(disabling && impl_->userDisabled) {
+                auto* result = std::get_if<Result<AdminUserView>>(&completion.outcome);
+                if(result && (*result || result->error().code == ErrorCode::CommitOutcomeUnknown))
+                    impl_->userDisabled(user, bool(*result));
+            }
+            callback(std::move(completion));
+        }});
+}
 ANOF_ACCOUNT_SUBMIT(GetQuotaCommand, ManagedQuota)
 ANOF_ACCOUNT_SUBMIT(SetQuotaLimitCommand, ManagedQuota)
 #undef ANOF_ACCOUNT_SUBMIT

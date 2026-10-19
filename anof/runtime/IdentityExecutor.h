@@ -21,6 +21,7 @@ public:
     ~IdentityExecutor() override;
     Result<void> start(Factory, MetadataExecutor::Started = {}, MetadataExecutor::Stopped = {});
     void requestStop();
+    void setUserDisabledObserver(std::function<void(UserId, bool)>);
     bool stopped() const;
     TaskSubmission submit(RequestId, RegisterCommand, Completion<UserProfile>) override;
     TaskSubmission submit(RequestId, LoginCommand, Completion<LoginResult>) override;

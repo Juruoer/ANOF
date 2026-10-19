@@ -1,6 +1,7 @@
 #pragma once
 
 #include <anof/core/Result.h>
+#include <anof/domain/transfer/TransferValues.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -18,6 +19,7 @@ struct InstanceConfiguration {
     std::size_t metadataQueue = 256;
     std::size_t httpInFlight = 128;
     double shutdownGraceSeconds = 30;
+    DiskSafetyPolicy diskSafety;
 };
 
 // 成功取得后独占整个实例，析构释放；不得删除锁文件或以 PID 文件代替内核锁。

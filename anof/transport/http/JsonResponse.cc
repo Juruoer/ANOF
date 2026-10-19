@@ -36,6 +36,19 @@ ErrorDescription describe(ProtocolError error) {
     case ProtocolError::CommitOutcomeUnknown: return {500, "Internal Server Error", "COMMIT_OUTCOME_UNKNOWN", "Commit outcome is unknown"};
     case ProtocolError::InternalError: return {500, "Internal Server Error", "INTERNAL_ERROR", "Internal error"};
     case ProtocolError::TemporarilyUnavailable: return {503, "Service Unavailable", "TEMPORARILY_UNAVAILABLE", "Service temporarily unavailable"};
+    case ProtocolError::UploadKeyConflict: return {409, "Conflict", "UPLOAD_KEY_CONFLICT", "Conflict"};
+    case ProtocolError::UploadOffsetMismatch: return {409, "Conflict", "UPLOAD_OFFSET_MISMATCH", "Conflict"};
+    case ProtocolError::UploadLengthMismatch: return {409, "Conflict", "UPLOAD_LENGTH_MISMATCH", "Conflict"};
+    case ProtocolError::UploadBusy: return {409, "Conflict", "UPLOAD_BUSY", "Conflict"};
+    case ProtocolError::UploadIncomplete: return {409, "Conflict", "UPLOAD_INCOMPLETE", "Conflict"};
+    case ProtocolError::UploadStateConflict: return {409, "Conflict", "UPLOAD_STATE_CONFLICT", "Conflict"};
+    case ProtocolError::UploadCommitInProgress: return {409, "Conflict", "UPLOAD_COMMIT_IN_PROGRESS", "Conflict"};
+    case ProtocolError::StorageBudgetExceeded: return {409, "Conflict", "STORAGE_BUDGET_EXCEEDED", "Conflict"};
+    case ProtocolError::UploadTerminated: return {410, "Gone", "UPLOAD_TERMINATED", "Gone"};
+    case ProtocolError::UploadLimitReached: return {429, "Too Many Requests", "UPLOAD_LIMIT_REACHED", "Too Many Requests"};
+    case ProtocolError::NotAFile: return {409, "Conflict", "NOT_A_FILE", "Conflict"};
+    case ProtocolError::LengthRequired: return {411, "Length Required", "LENGTH_REQUIRED", "Content-Length required"};
+    case ProtocolError::TransferStorageFull: return {503, "Service Unavailable", "STORAGE_FULL", "Storage full"};
     case ProtocolError::StorageFull: return {507, "Insufficient Storage", "STORAGE_FULL", "Storage full"};
     }
     throw std::invalid_argument("Unknown protocol error");
@@ -45,7 +58,7 @@ ErrorDescription describe(ProtocolError error) {
 JsonResponse internal::jsonResponse(int status, const char* reason, RequestId requestId, const nlohmann::json& body, std::size_t limit) {
     // 当前 muduox 无部分命名枚举；只允许本模块已审定的状态码进入转换。
     switch (status) {
-    case 200: case 201: case 400: case 401: case 403: case 404: case 409:
+    case 202: case 410: case 411: case 200: case 201: case 400: case 401: case 403: case 404: case 409:
     case 412: case 413: case 415: case 428: case 429: case 500: case 503: case 507: break;
     default: throw std::invalid_argument("Unsupported HTTP status");
     }
@@ -64,6 +77,17 @@ using internal::jsonResponse;
 
 ProtocolError protocolError(ErrorCode code) {
     switch (code) {
+    case ErrorCode::UploadKeyConflict: return ProtocolError::UploadKeyConflict;
+    case ErrorCode::UploadOffsetMismatch: return ProtocolError::UploadOffsetMismatch;
+    case ErrorCode::UploadLengthMismatch: return ProtocolError::UploadLengthMismatch;
+    case ErrorCode::UploadBusy: return ProtocolError::UploadBusy;
+    case ErrorCode::UploadIncomplete: return ProtocolError::UploadIncomplete;
+    case ErrorCode::UploadStateConflict: return ProtocolError::UploadStateConflict;
+    case ErrorCode::UploadCommitInProgress: return ProtocolError::UploadCommitInProgress;
+    case ErrorCode::StorageBudgetExceeded: return ProtocolError::StorageBudgetExceeded;
+    case ErrorCode::UploadTerminated: return ProtocolError::UploadTerminated;
+    case ErrorCode::UploadLimitReached: return ProtocolError::UploadLimitReached;
+    case ErrorCode::NotAFile: return ProtocolError::NotAFile;
     case ErrorCode::LoginConflict: return ProtocolError::LoginConflict;
     case ErrorCode::InviteUnavailable: return ProtocolError::InviteUnavailable;
     case ErrorCode::UserLimitReached: return ProtocolError::UserLimitReached;

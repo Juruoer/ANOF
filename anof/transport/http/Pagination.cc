@@ -197,4 +197,48 @@ Parsed<ListUsersCommand> parseListUsers(std::string_view query) {
     }
     return ListUsersCommand{params.size, std::move(cursor)};
 }
+Parsed<UploadCursor> decodeUploadCursor(std::string_view cursor) {
+    auto decoded = unbase64(cursor);
+    if (!decoded) return ProtocolError::InvalidArgument;
+    internal::FlatJson json{{"v", internal::FieldType::Integer}, {"kind"}, {"user_id"}, {"after_created_at"}, {"after_id"}};
+    if (json.parse(decoded.value(), kMaxDecodedCursorBytes) || json[0].integer != 1 || json[1].text != "uploads") return ProtocolError::InvalidArgument;
+    auto user = canonicalId<UserId>(json[2].text);
+    auto time = parseUtcTimestamp(json[3].text);
+    auto after = canonicalId<UploadId>(json[4].text);
+    if (!user || !time || !after) return ProtocolError::InvalidArgument;
+    return UploadCursor{user.value(), {time.value(), after.value()}};
+}
+Result<std::string> encodeCursor(const UploadCursor& cursor) {
+    auto time = formatUtcTimestamp(cursor.position.createdAt);
+    if (!time) return time.error();
+    return encoded({{"v", 1}, {"kind", "uploads"}, {"user_id", cursor.userId.toString()}, {"after_created_at", time.value()}, {"after_id", cursor.position.id.toString()}});
+}
+Parsed<ListUploadsCommand> parseListUploads(std::string_view query) {
+    auto parsed = muduox::net::parseHttpQuery(query, muduox::net::HttpQueryMode::Percent, {8192, 3, 4096});
+    auto* params = std::get_if<muduox::net::HttpQueryParams>(&parsed);
+    if (!params) return ProtocolError::InvalidArgument;
+    ListUploadsCommand result{PageSize::from(100).value(), {}, {}};
+    bool limit = false;
+    for (const auto& p : *params) {
+        if (!p.hasEquals || p.value.empty()) return ProtocolError::InvalidArgument;
+        if (p.name == "limit") {
+            auto number = parseTransferDecimal(p.value);
+            if (limit || !number) return ProtocolError::InvalidArgument;
+            auto size = PageSize::from(number.value().value());
+            if (!size) return ProtocolError::InvalidArgument;
+            result.size = size.value(); limit = true;
+        } else if (p.name == "cursor") {
+            if (result.after || result.clientUploadId) return ProtocolError::InvalidArgument;
+            auto value = decodeUploadCursor(p.value);
+            if (auto* error = std::get_if<ProtocolError>(&value)) return *error;
+            result.after = std::get<UploadCursor>(value);
+        } else if (p.name == "client_upload_id") {
+            if (result.after || result.clientUploadId) return ProtocolError::InvalidArgument;
+            auto id = canonicalId<OperationId>(p.value);
+            if (!id) return ProtocolError::InvalidArgument;
+            result.clientUploadId = id.value();
+        } else return ProtocolError::InvalidArgument;
+    }
+    return result;
+}
 }  // namespace anof::http

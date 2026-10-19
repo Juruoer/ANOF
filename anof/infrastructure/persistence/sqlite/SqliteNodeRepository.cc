@@ -1,9 +1,8 @@
+#include <anof/domain/drive/DirectoryPolicy.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteIdentitySql.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteNodeRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSpaceRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteIdentitySql.h>
-#include <anof/domain/drive/DirectoryPolicy.h>
-
 #include <sqlite3.h>
 
 #include <algorithm>
@@ -82,7 +81,7 @@ Result<bool> idExists(SqliteConnection& connection, NodeId id) {
 
 Result<bool> nameExists(SqliteConnection& connection, const NewDirectory& directory) {
     auto prepared = SqliteStatement::prepare(connection,
-        "SELECT 1 FROM nodes WHERE space_id=?1 AND parent_id=?2 AND name=?3 COLLATE BINARY AND trashed=0");
+                                             "SELECT 1 FROM nodes WHERE space_id=?1 AND parent_id=?2 AND name=?3 COLLATE BINARY AND trashed=0");
     if (!prepared) return prepared.error();
     auto& statement = *prepared.value();
     auto bound = statement.bindText(1, directory.spaceId.toString());
@@ -105,8 +104,8 @@ Result<DirectoryPath> SqliteNodeRepository::readPath(const Space& space, NodeId 
     for (std::size_t depth = 0; depth <= kMaxDirectoryDepth; ++depth) {
         if (!visited.insert(current).second) return ErrorCode::IntegrityError;
         auto prepared = SqliteStatement::prepare(context_.connection(),
-            "SELECT id, space_id, parent_id, name, created_by, revision, created_at, updated_at, kind, trashed, blob_id "
-            "FROM nodes WHERE id=?1");
+                                                 "SELECT id, space_id, parent_id, name, created_by, revision, created_at, updated_at, kind, trashed, blob_id "
+                                                 "FROM nodes WHERE id=?1");
         if (!prepared) return prepared.error();
         auto& statement = *prepared.value();
         auto bound = statement.bindText(1, current.toString());
@@ -120,8 +119,10 @@ Result<DirectoryPath> SqliteNodeRepository::readPath(const Space& space, NodeId 
         if (node.metadata.id != current) return ErrorCode::IntegrityError;
         if (node.metadata.spaceId != space.id) return depth == 0 ? ErrorCode::NotFound : ErrorCode::IntegrityError;
         if (node.trashed) return ErrorCode::NotFound;
-        if (depth == 0) targetIsFile = node.file;
-        else if (node.file) return ErrorCode::IntegrityError;
+        if (depth == 0)
+            targetIsFile = node.file;
+        else if (node.file)
+            return ErrorCode::IntegrityError;
         if (current == space.rootNodeId) {
             if (node.file || node.metadata.parentId || !node.metadata.name.empty()) return ErrorCode::IntegrityError;
             // 先验证祖先可见性，再报告目标文件类型，避免泄漏隐藏子树的信息。
@@ -174,12 +175,10 @@ Result<Page<NodeDetails, ChildPosition>> SqliteNodeRepository::listChildren(
     auto path = findActiveDirectoryPath(space, parent);
     if (!path) return path.error();
     if (after && !validateDirectoryName(after->name)) return context_.fail(ErrorCode::InvalidArgument);
-    auto query = after ? detail::query(context_, std::string(detailsQuery) +
-        "WHERE n.space_id=?1 AND n.parent_id=?2 AND n.trashed=0 AND (n.name COLLATE BINARY,n.id)>(?3,?4) ORDER BY n.name COLLATE BINARY,n.id LIMIT ?5",
-        { space.toString(), parent.toString(), after->name, after->id.toString(), size.value() + 1 }) :
-        detail::query(context_, std::string(detailsQuery) +
-        "WHERE n.space_id=?1 AND n.parent_id=?2 AND n.trashed=0 ORDER BY n.name COLLATE BINARY,n.id LIMIT ?3",
-        { space.toString(), parent.toString(), size.value() + 1 });
+    auto query = after ? detail::query(context_, std::string(detailsQuery) + "WHERE n.space_id=?1 AND n.parent_id=?2 AND n.trashed=0 AND (n.name COLLATE BINARY,n.id)>(?3,?4) ORDER BY n.name COLLATE BINARY,n.id LIMIT ?5",
+                                       { space.toString(), parent.toString(), after->name, after->id.toString(), size.value() + 1 })
+                       : detail::query(context_, std::string(detailsQuery) + "WHERE n.space_id=?1 AND n.parent_id=?2 AND n.trashed=0 ORDER BY n.name COLLATE BINARY,n.id LIMIT ?3",
+                                       { space.toString(), parent.toString(), size.value() + 1 });
     if (!query) return query.error();
     Page<NodeDetails, ChildPosition> result;
     for (;;) {
@@ -211,8 +210,8 @@ Result<void> SqliteNodeRepository::insertRoot(const RootDirectory& root) {
         if (!row.value()) return context_.fail(ErrorCode::IntegrityError);
     }
     return detail::one(context_, detail::write(context_,
-        "INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES(?1,?2,NULL,'',0,?3,NULL,1,0,?4,?4)",
-        { root.id.toString(), root.spaceId.toString(), root.createdBy.toString(), root.createdAt.time_since_epoch().count() }));
+                                               "INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES(?1,?2,NULL,'',0,?3,NULL,1,0,?4,?4)",
+                                               { root.id.toString(), root.spaceId.toString(), root.createdBy.toString(), root.createdAt.time_since_epoch().count() }));
 }
 
 Result<DirectorySnapshot> SqliteNodeRepository::insertDirectory(const NewDirectory& directory) {
@@ -232,8 +231,8 @@ Result<DirectorySnapshot> SqliteNodeRepository::insertDirectory(const NewDirecto
     if (!existing) return context_.fail(existing.error());
     if (existing.value()) return context_.fail(ErrorCode::IntegrityError);
     auto prepared = SqliteStatement::prepare(context_.connection(),
-        "INSERT INTO nodes(id, space_id, parent_id, name, kind, created_by, blob_id, revision, trashed, created_at, updated_at) "
-        "VALUES (?1, ?2, ?3, ?4, 0, ?5, NULL, 1, 0, ?6, ?6)");
+                                             "INSERT INTO nodes(id, space_id, parent_id, name, kind, created_by, blob_id, revision, trashed, created_at, updated_at) "
+                                             "VALUES (?1, ?2, ?3, ?4, 0, ?5, NULL, 1, 0, ?6, ?6)");
     if (!prepared) return context_.fail(prepared.error());
     auto& statement = *prepared.value();
     auto bound = statement.bindText(1, directory.id.toString());
@@ -281,7 +280,7 @@ Result<Revision> SqliteNodeRepository::advanceRevision(NodeId id, Revision expec
     if (!next) return context_.fail(next.error());
     prepared.value().reset();
     auto update = SqliteStatement::prepare(context_.connection(),
-        "UPDATE nodes SET revision=?1, updated_at=?2 WHERE id=?3 AND revision=?4");
+                                           "UPDATE nodes SET revision=?1, updated_at=?2 WHERE id=?3 AND revision=?4");
     if (!update) return context_.fail(update.error());
     bound = update.value()->bindInt64(1, next.value().value());
     if (!bound) return context_.fail(bound.error());
@@ -298,4 +297,33 @@ Result<Revision> SqliteNodeRepository::advanceRevision(NodeId id, Revision expec
     return next.value();
 }
 
+Result<NodeDetails> SqliteNodeRepository::insertFile(const NewFile& file) {
+    const auto& directory = file.metadata;
+    auto ready = context_.requireOpen();
+    if (!ready) return ready.error();
+    auto valid = validateDirectoryName(directory.name);
+    if (!valid) return context_.fail(valid.error());
+    SqliteSpaceRepository spaces(context_);
+    auto space = spaces.find(directory.spaceId);
+    if (!space) return space.error();
+    if (!space.value()) return context_.fail(ErrorCode::NotFound);
+    auto path = readPath(*space.value(), directory.parentId);
+    if (!path) return context_.fail(path.error());
+    valid = validateDirectoryParent(*space.value(), directory.parentId, path.value());
+    if (!valid) return context_.fail(valid.error());
+    auto existing = idExists(context_.connection(), directory.id);
+    if (!existing) return context_.fail(existing.error());
+    if (existing.value()) return context_.fail(ErrorCode::IntegrityError);
+    auto duplicate = nameExists(context_.connection(), directory);
+    if (!duplicate) return context_.fail(duplicate.error());
+    if (duplicate.value()) return context_.fail(ErrorCode::NameConflict);
+    auto written = detail::one(context_, detail::write(context_,
+                                                       "INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES(?1,?2,?3,?4,1,?5,?6,1,0,?7,?7)",
+                                                       { directory.id.toString(), directory.spaceId.toString(), directory.parentId.toString(), directory.name, directory.createdBy.toString(), file.blobId.toString(), directory.createdAt.time_since_epoch().count() }));
+    if (!written) return written.error();
+    auto value = find(directory.id);
+    if (!value) return value.error();
+    if (!value.value()) return context_.fail(ErrorCode::IntegrityError);
+    return *value.value();
+}
 }  // namespace anof::infrastructure::sqlite

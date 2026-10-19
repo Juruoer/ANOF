@@ -1,13 +1,36 @@
 #define BOOST_TEST_MODULE ClientProcess
 #include <tests/integration/ClientProcess.h>
+#include <anof/runtime/InstancePasswordPolicy.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
+#include <anof/infrastructure/config/TomlInstanceConfiguration.h>
+#include <anof/infrastructure/system/LinuxInstanceLock.h>
 using namespace anof::testing::cli;
 namespace {
 constexpr const char* password="fixture secret password";
 void add(const Temp& temp,const std::string& name,unsigned port) { run(temp,"",{"profile","add",name,"--server","http://127.0.0.1:"+std::to_string(port),"--development-http"}); }
 void initialize(const std::filesystem::path& root) {
     Process p({"init","--root",root.string(),"--admin-login","admin","--admin-display-name","Administrator","--development-http",
-        "--private-bytes","1099511627776","--private-nodes","4","--public-bytes","1099511627776","--public-nodes","10","--contribution-bytes","1099511627776","--contribution-nodes","10"},true);
+        "--content-budget-bytes","1048576","--disk-safety-min-bytes","12345","--disk-safety-percent","17","--private-bytes","1099511627776","--private-nodes","4","--public-bytes","1099511627776","--public-nodes","10","--contribution-bytes","1099511627776","--contribution-nodes","10"},true);
     p.input("Administrator password: ",password);p.input("Confirm password: ",password);p.finish(0); BOOST_CHECK(p.out.find("ANOF_INITIALIZED")!=std::string::npos); BOOST_CHECK(p.tty.find(password)==std::string::npos);
+    BOOST_CHECK_EQUAL(jsonFile(root/".anof/instance.json")["format_version"].get<int>(), 3);
+    {
+        namespace infra = anof::infrastructure;
+        auto locks = infra::system::makeLinuxInstanceLockProvider();
+        auto loader = infra::config::makeTomlInstanceConfigurationLoader();
+        BOOST_REQUIRE(locks && loader);
+        auto lease = locks.value()->acquire(root); BOOST_REQUIRE(lease);
+        auto config = loader.value()->load(*lease.value()); BOOST_REQUIRE(config);
+        BOOST_CHECK_EQUAL(config.value().diskSafety.minimum.value(), 12345);
+        BOOST_CHECK_EQUAL(config.value().diskSafety.percent.value(), 17);
+        auto store = infra::sqlite::openSqliteTransferMetadataStore(root/".anof/metadata.sqlite3",
+            {anof::runtime::instancePasswordPolicy().verification, {}});
+        BOOST_REQUIRE(store);
+        auto read = store.value()->beginTransferRead(); BOOST_REQUIRE(read);
+        auto storage = read.value()->storage().get(); BOOST_REQUIRE(storage);
+        BOOST_CHECK_EQUAL(storage.value().budget.value(), 1048576);
+        BOOST_CHECK_EQUAL(storage.value().reserved.value(), 0);
+        BOOST_CHECK_EQUAL(storage.value().retained.value(), 0);
+    }
     file(root/".anof/config.toml","development_http=true\nport=0\n");
 }
 Json privateSpace(const Json& result) {for(const auto& s:result.at("data").at("items")) if(s.at("kind")=="private") return s; throw std::runtime_error("private space missing");}
@@ -239,4 +262,21 @@ BOOST_AUTO_TEST_CASE(account_cli_validates_before_prompt_and_password_confirmati
     Process rival(command(temp,"alice",{"account","password","--if-match",tag}),true);
     BOOST_CHECK_EQUAL(rival.failure(5)["code"].get<std::string>(),"PROFILE_BUSY");BOOST_CHECK(rival.tty.empty());
     BOOST_REQUIRE_EQUAL(kill(pending.pid,SIGINT),0);BOOST_CHECK_EQUAL(pending.failure(130)["remote_outcome"].get<std::string>(),"not_sent");
+}
+
+BOOST_AUTO_TEST_CASE(init_rejects_missing_budget_and_finish_overrides_before_prompt) {
+    Temp temp;
+    const auto root = temp.path / "instance";
+    std::filesystem::create_directory(root); chmod(root.c_str(), 0700);
+    Process missing({"init", "--root", root.string(), "--admin-login", "admin", "--admin-display-name", "Admin",
+        "--development-http", "--private-bytes", "0", "--private-nodes", "1", "--public-bytes", "0",
+        "--public-nodes", "1", "--contribution-bytes", "0", "--contribution-nodes", "1"}, true);
+    missing.finish(2);
+    BOOST_CHECK(missing.tty.empty());
+    for (const auto* flag : {"--content-budget-bytes", "--disk-safety-min-bytes", "--disk-safety-percent"}) {
+        Process rejected({"init", "--root", root.string(), "--finish", flag, "0"}, true);
+        rejected.finish(2);
+        BOOST_CHECK(rejected.tty.empty());
+    }
+    BOOST_CHECK(std::filesystem::is_empty(root));
 }

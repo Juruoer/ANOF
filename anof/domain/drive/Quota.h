@@ -36,6 +36,9 @@ struct QuotaState {
 struct QuotaSnapshot { QuotaState state; Revision revision; };
 
 // 纯计算不修改输入；数据库端口必须在事务内将检查与更新原子化。
+Result<QuotaState> reserveQuota(const QuotaState&, QuotaDelta);
+Result<QuotaState> commitQuotaReservation(const QuotaState&, QuotaDelta);
+Result<QuotaState> releaseQuotaReservation(const QuotaState&, QuotaDelta);
 Result<QuotaState> chargeUsed(const QuotaState& state, QuotaDelta delta);
 
 }  // namespace anof

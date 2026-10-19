@@ -2,7 +2,7 @@
 
 本文固定 infrastructure 启动适配器的接口、文件格式与安全边界，供实现和验收使用。Linux 实例锁及安全打开工具已有实现，接口和测试说明见 system/README.md；TOML 配置加载已有实现，接口和测试见 config/README.md；实例格式和 SQLite 维护已有实现，接口和测试见 persistence/sqlite/README.md。现有 SQLite、crypto 和系统时钟行为不受此契约改动。
 
-当前格式和 schema 均为 2；事务化引导、格式发布及 M2 启动维护已实现。启动必须拒绝 pending，并核对 settings 与格式 ID、完整身份／空间／额度及初始化审计。旧开发实例只拒绝，不升级、不删除。
+当前格式和 schema 均为 3；事务化引导、格式发布及 M2 启动维护已实现。启动必须拒绝 pending，并核对 settings 与格式 ID、完整身份／空间／额度及初始化审计。旧开发实例只拒绝，不升级、不删除。
 
 ## 接口与内部组织
 
@@ -47,6 +47,8 @@ development_http = true
 metadata_queue = 256
 http_in_flight = 128
 shutdown_grace_seconds = 30
+disk_safety_min_bytes = 1073741824
+disk_safety_percent = 5
 ```
 
 | TOML 键 | 类型及范围 | 对应公共字段 |
@@ -56,6 +58,8 @@ shutdown_grace_seconds = 30
 | development_http | 布尔，必须显式 true | developmentHttp |
 | metadata_queue | 整数，1～256 | metadataQueue |
 | http_in_flight | 整数，1～128 | httpInFlight |
+| disk_safety_min_bytes | 整数，0～INT64_MAX，缺省 1073741824 | diskSafety.minimum |
+| disk_safety_percent | 整数，0～100，缺省 5 | diskSafety.percent |
 | shutdown_grace_seconds | 整数或浮点数，有限 0～30 | shutdownGraceSeconds |
 
 以 `InstanceConfiguration{}` 为唯一默认来源，缺省键不另设默认值。developmentHttp 的默认 false 故意不通过校验。整数先检查符号和范围再缩窄；宽限期接受整数和有限浮点数，拒绝 NaN／infinity。拒绝重复定义、未知键、错误类型、溢出及 TOML 语法错误。调用现有 validateInstanceConfiguration 复验公共约束，返回自有值；load 不保留 lease 或 TOML 节点。
@@ -65,10 +69,10 @@ shutdown_grace_seconds = 30
 固定读取 `.anof/instance.json`，包括增长在内最多 4096 字节，UTF-8 JSON，顶层必须是对象且恰好含以下两项：
 
 ```json
-{"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":2}
+{"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":3}
 ```
 
-instance_id 必须是小写规范分组、非 nil UUID 字符串，不强制 UUID 版本；不把它当 UserId 或节点 ID，公共端口不增加字段。format_version 必须是 JSON 整数 2，布尔、浮点数及字符串均不接受。拒绝未知／重复字段、超范围数字、额外尾随 JSON、BOM 和格式错误；前后 JSON 空白允许。使用有界解析并拒绝字段值中的嵌套结构。
+instance_id 必须是小写规范分组、非 nil UUID 字符串，不强制 UUID 版本；不把它当 UserId 或节点 ID，公共端口不增加字段。format_version 必须是 JSON 整数 3，布尔、浮点数及字符串均不接受。拒绝未知／重复字段、超范围数字、额外尾随 JSON、BOM 和格式错误；前后 JSON 空白允许。使用有界解析并拒绝字段值中的嵌套结构。
 
 此文件是独立实例格式标记，不代替 SQLite schema 版本；不隐含校验对象目录、上传恢复、GC 状态或完整 init 工作流。初始化文件由 LinuxInstanceInitializer 创建；数据库引导由 SqliteInstanceBootstrap 完成，均使用调用方提供的 typed ID。
 
@@ -94,10 +98,12 @@ verify 返回前销毁全部维护连接、语句及事务；业务连接由 wor
 | 创建锁文件时 ENOSPC／EDQUOT | StorageFull |
 | SQLite 打开／验证错误 | 保留后端现有分类，包括 Retryable、StorageFull 等 |
 
-当前 schema 2 校验对不支持的版本返回 IntegrityError；格式标记的未来版本为 IntegrityError。错误不回显配置／格式内容，也不把无法确认的提交结果转换为可安全重试。锁和普通文件系统操作不额外引入业务重试循环。
+当前 schema 3 校验对不支持的版本返回 IntegrityError；格式标记的未来版本为 IntegrityError。错误不回显配置／格式内容，也不把无法确认的提交结果转换为可安全重试。锁和普通文件系统操作不额外引入业务重试循环。
 
 ## 构建与验证边界
 
 启动与初始化适配器使用同一 anof_infrastructure 目标；TOML 依赖 `tomlplusplus::tomlplusplus`，JSON 依赖 `nlohmann_json::nlohmann_json`，均私有链接。公开头只依赖现有 application 端口和标准库。
 
 锁和安全文件打开已接入局部真实进程／文件测试。TOML 配置的有界读取和解析已有局部测试；instance.json 格式校验、维护关闭、真实 schema／外键／完整性检查已有局部测试。InstancePreparation_unittest.cc 通过实际 prepareInstance 组合三个生产适配器，覆盖成功移交、配置短路、维护失败、异常释放、跨进程再取锁及另一线程独立打开业务仓储；边界注入的错误只验证分类透传，不冒充真实 OS 故障。完整 serve／信号停止组合保持在根集成范围。
+
+内容目录 uploads、objects、quarantine 由初始化创建并同步；启动维护在打开 SQLite 前检查其所有权、0700 权限、身份及同设备属性。物理预算单例必须存在，允许合法待恢复上传和超预算读／清理状态；文件归属、计量对账与恢复编排不在结构维护入口内执行。
