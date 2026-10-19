@@ -179,3 +179,20 @@ BOOST_AUTO_TEST_CASE(password_clear_only_after_valid_success_and_never_retries) 
     transport.reply=[](const auto&,const auto&)->ClientResult<HttpResponse>{auto r=rawResponse(204,"");r.headers.erase("content-type");return r;};
     BOOST_REQUIRE(api.changePassword(password,password,tag));BOOST_CHECK(!held.value().profile().credential);
 }
+
+BOOST_AUTO_TEST_CASE(backwards_account_timestamp_is_unknown_write_not_database_commit_evidence) {
+    auto data=userJson();
+    data["updated_at"]="2026-10-11T09:59:59.999999Z";
+    auto wire=response(200,data);
+    wire.headers["etag"]="\"user-"+uid+"-9223372036854775807\"";
+    auto changed=decodeResponse(Operation::Rename,wire);
+    BOOST_REQUIRE(!changed);
+    BOOST_CHECK(changed.error().kind==ErrorKind::OutcomeUnknown);
+    BOOST_CHECK_EQUAL(changed.error().exitCode(),6);
+    auto read=decodeResponse(Operation::Me,wire);
+    BOOST_REQUIRE(!read);
+    BOOST_CHECK(read.error().kind==ErrorKind::Protocol);
+    data["updated_at"]=data["created_at"];
+    wire=response(200,data);wire.headers["etag"]="\"user-"+uid+"-9223372036854775807\"";
+    BOOST_CHECK(decodeResponse(Operation::Rename,wire));
+}

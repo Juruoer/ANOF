@@ -19,6 +19,9 @@ public:
     virtual Result<UserCount> countUsers() = 0;
 };
 // 所有方法借用所属事务；唯一性、条件版本与身份复验不能跨事务拆开。
+// 更新方法的UtcTime为原始观测值：适配器在同一事务按nondecreasingEventTime(now, createdAt,
+// updatedAt)持久化并返回更新时间。无操作不得改时间/revision；条件失败不得写入。
+// 新用户createdAt==updatedAt；此规则不改变Session/Invite到期判断。
 class UserRepository : public UserReader {
 public:
     virtual Result<void> insert(const NewUser&) = 0;

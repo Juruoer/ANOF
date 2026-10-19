@@ -280,3 +280,19 @@ BOOST_AUTO_TEST_CASE(init_rejects_missing_budget_and_finish_overrides_before_pro
     }
     BOOST_CHECK(std::filesystem::is_empty(root));
 }
+
+BOOST_AUTO_TEST_CASE(process_failure_summary_excludes_secrets_and_raw_messages) {
+    Process process({"--help"});process.finish(0);
+    process.err=Json{{"error",{{"code","OUTCOME_UNKNOWN"},{"request_id","10000000-0000-4000-8000-000000000001"},
+        {"http_status",500},{"remote_outcome","unknown"},{"local_state","unchanged"},
+        {"message","private message marker"},{"access_token","private token marker"}}}}.dump();
+    auto diagnostic=process.failureSummary();
+    BOOST_CHECK(diagnostic.find("OUTCOME_UNKNOWN")!=std::string::npos);
+    BOOST_CHECK(diagnostic.find("http_status=500")!=std::string::npos);
+    BOOST_CHECK(diagnostic.find("private")==std::string::npos);
+    process.err="unstructured private token marker";
+    diagnostic=process.failureSummary();
+    BOOST_CHECK(diagnostic.find("stderr_format=non_json")!=std::string::npos);
+    BOOST_CHECK(diagnostic.find("private")==std::string::npos);
+    process.err.clear();
+}

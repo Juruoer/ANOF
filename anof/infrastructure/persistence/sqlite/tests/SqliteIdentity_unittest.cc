@@ -946,4 +946,143 @@ BOOST_AUTO_TEST_CASE(malformed_session_and_oversized_hash_are_integrity_errors) 
         errorIs(t.users.findPasswordById(id<UserId>(2)), ErrorCode::IntegrityError);
     }
 }
+BOOST_AUTO_TEST_CASE(account_event_times_survive_rollback_and_connection_reopen) {
+    for (int operation = 0; operation < 3; ++operation) {
+        Database f;
+        {
+            Transaction t(*f.connection, f.active);
+            BOOST_REQUIRE(t.context.begin());
+            auto u = newUser(3, "clock");
+            u.profile.createdAt = u.profile.updatedAt = time(100);
+            BOOST_REQUIRE(t.users.insert(u));
+            BOOST_REQUIRE(t.context.commit());
+        }
+        auto mutate = [&](Transaction& t, UtcTime observed, bool stale = false) -> Result<UserProfile> {
+            auto old = t.users.find(id<UserId>(3));
+            BOOST_REQUIRE(old && old.value());
+            auto revision = stale ? Revision{} : old.value()->revision;
+            if (operation == 0) return t.users.setDisplayName(id<UserId>(3), revision,
+                                                              DisplayName::parse("Name" + std::to_string(revision.value())).value(), observed);
+            if (operation == 1) return t.users.setEnabled(id<UserId>(3), revision, !old.value()->enabled, observed);
+            auto password = t.users.findPasswordById(id<UserId>(3));
+            BOOST_REQUIRE(password && password.value());
+            const auto& p = *password.value();
+            return t.users.replacePassword(id<UserId>(3), { p.passwordVersion, p.authEpoch, revision }, hash(), observed);
+        };
+        {
+            Transaction t(*f.connection, f.active);
+            BOOST_REQUIRE(t.context.begin());
+            BOOST_REQUIRE(mutate(t, time(200)));
+            // 向前更新时间也随未提交事务回滚。
+        }
+        BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT updated_at FROM users WHERE login='clock'"), 100);
+        BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT revision FROM users WHERE login='clock'"), 1);
+        if (operation < 2) {
+            Transaction t(*f.connection, f.active);
+            BOOST_REQUIRE(t.context.begin());
+            auto old = t.users.find(id<UserId>(3)).value().value();
+            auto unchanged = operation == 0
+                                 ? t.users.setDisplayName(old.id, old.revision, old.displayName, time(200))
+                                 : t.users.setEnabled(old.id, old.revision, old.enabled, time(200));
+            BOOST_REQUIRE(unchanged);
+            BOOST_CHECK(unchanged.value().updatedAt == old.updatedAt);
+            BOOST_CHECK(unchanged.value().revision == old.revision);
+            BOOST_REQUIRE(t.context.commit());
+        }
+        std::int64_t expectedTime = 100;
+        std::int64_t revision = 1;
+        for (auto observed : { INT64_MIN, std::int64_t{ 100 }, std::int64_t{ 110 }, std::int64_t{ 105 }, std::int64_t{ 110 }, INT64_MAX }) {
+            expectedTime = std::max(expectedTime, observed);
+            {
+                Transaction t(*f.connection, f.active);
+                BOOST_REQUIRE(t.context.begin());
+                auto updated = mutate(t, time(observed));
+                BOOST_REQUIRE(updated);
+                BOOST_CHECK_EQUAL(updated.value().updatedAt.time_since_epoch().count(), expectedTime);
+                BOOST_CHECK_EQUAL(updated.value().revision.value(), ++revision);
+                auto read = t.users.find(id<UserId>(3));
+                BOOST_REQUIRE(read && read.value());
+                BOOST_CHECK(read.value()->updatedAt == updated.value().updatedAt);
+                BOOST_REQUIRE(t.context.commit());
+            }
+            f.connection.reset();
+            f.connection = f.open();
+            BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT updated_at FROM users WHERE login='clock'"), expectedTime);
+        }
+        // 陈旧条件和未提交变更不得留下 revision／时间变化。
+        {
+            Transaction t(*f.connection, f.active);
+            BOOST_REQUIRE(t.context.begin());
+            errorIs(mutate(t, time(INT64_MIN), true), ErrorCode::PreconditionFailed);
+            BOOST_CHECK(!t.context.commit());
+        }
+        {
+            Transaction t(*f.connection, f.active);
+            BOOST_REQUIRE(t.context.begin());
+            BOOST_REQUIRE(mutate(t, time(INT64_MIN)));
+        }
+        BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT revision FROM users WHERE login='clock'"), revision);
+        BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT updated_at FROM users WHERE login='clock'"), INT64_MAX);
+        if (operation < 2) {
+            Transaction t(*f.connection, f.active);
+            BOOST_REQUIRE(t.context.begin());
+            auto old = t.users.find(id<UserId>(3)).value().value();
+            auto unchanged = operation == 0
+                                 ? t.users.setDisplayName(old.id, old.revision, old.displayName, time(INT64_MIN))
+                                 : t.users.setEnabled(old.id, old.revision, old.enabled, time(INT64_MIN));
+            BOOST_REQUIRE(unchanged);
+            BOOST_CHECK(unchanged.value().updatedAt == old.updatedAt);
+            BOOST_CHECK(unchanged.value().revision == old.revision);
+            BOOST_CHECK(unchanged.value().authEpoch == old.authEpoch);
+            BOOST_REQUIRE(t.context.commit());
+        }
+    }
+}
+BOOST_AUTO_TEST_CASE(invite_revoke_event_time_is_persistent_and_expiry_uses_raw_utc) {
+    for (auto observed : { std::int64_t{ 99 }, std::int64_t{ 100 }, std::int64_t{ 150 } }) {
+        Database f;
+        {
+            Transaction t(*f.connection, f.active);
+            BOOST_REQUIRE(t.context.begin());
+            BOOST_REQUIRE(t.invites.insert(newInvite(1, 5, 100, 200)));
+            BOOST_REQUIRE(t.context.commit());
+        }
+        {
+            Transaction t(*f.connection, f.active);
+            BOOST_REQUIRE(t.context.begin());
+            // 未提交的撤销不可留下时间。
+            BOOST_REQUIRE(t.invites.revoke(id<InviteId>(1), time(observed)).value());
+        }
+        BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT revoked_at IS NULL FROM invites"), 1);
+        {
+            Transaction t(*f.connection, f.active);
+            BOOST_REQUIRE(t.context.begin());
+            errorIs(t.invites.consume(inviteDigest(1), time(200)), ErrorCode::InviteUnavailable);
+        }
+        {
+            Transaction t(*f.connection, f.active);
+            BOOST_REQUIRE(t.context.begin());
+            BOOST_REQUIRE(t.invites.consume(inviteDigest(1), time(99)));
+            BOOST_REQUIRE(t.invites.revoke(id<InviteId>(1), time(observed)).value());
+            BOOST_REQUIRE(t.context.commit());
+        }
+        f.connection.reset();
+        f.connection = f.open();
+        const auto expected = std::max(observed, std::int64_t{ 100 });
+        for (auto repeated : { std::int64_t{ 0 }, expected, std::int64_t{ 300 } }) {
+            Transaction t(*f.connection, f.active);
+            BOOST_REQUIRE(t.context.begin());
+            auto revoked = t.invites.revoke(id<InviteId>(1), time(repeated));
+            BOOST_REQUIRE(revoked);
+            BOOST_CHECK(!revoked.value());
+            auto read = t.invites.find(id<InviteId>(1));
+            BOOST_REQUIRE(read && read.value() && read.value()->revokedAt);
+            BOOST_CHECK_EQUAL(read.value()->revokedAt->time_since_epoch().count(), expected);
+            BOOST_REQUIRE(t.context.commit());
+        }
+        Transaction t(*f.connection, f.active);
+        BOOST_REQUIRE(t.context.begin());
+        errorIs(t.invites.consume(inviteDigest(1), time(99)), ErrorCode::InviteUnavailable);
+    }
+}
 }

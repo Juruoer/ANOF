@@ -135,6 +135,7 @@ Result<UserProfile> SqliteUserRepository::setDisplayName(UserId id, Revision exp
     if (user.displayName.value() == name.value()) return user;
     auto next = user.revision.add(1);
     if (!next) return context_.fail(next.error());
+    now = nondecreasingEventTime(now, user.createdAt, user.updatedAt);
     auto changed = detail::one(context_, detail::write(context_, "UPDATE users SET display_name=?1,revision=?2,updated_at=?3 WHERE id=?4 AND revision=?5", {name.value(), next.value().value(), now.time_since_epoch().count(), id.toString(), expected.value() }));
     if (!changed) return changed.error();
     user.displayName = std::move(name);
@@ -154,6 +155,7 @@ Result<UserProfile> SqliteUserRepository::setEnabled(UserId id, Revision expecte
     auto next = user.revision.add(1);
     auto epoch = user.authEpoch.add(enabled ? 0:1);
     if (!next || !epoch) return context_.fail(ErrorCode::IntegrityError);
+    now = nondecreasingEventTime(now, user.createdAt, user.updatedAt);
     auto changed = detail::one(context_, detail::write(context_, "UPDATE users SET enabled=?1,auth_epoch=?2,revision=?3,updated_at=?4 WHERE id=?5 AND revision=?6", {std::int64_t(enabled ? 1:0), epoch.value().value(), next.value().value(), now.time_since_epoch().count(), id.toString(), expected.value() }));
     if (!changed) return changed.error();
     user.enabled = enabled;
@@ -174,6 +176,10 @@ Result<UserProfile> SqliteUserRepository::replacePassword(UserId id, const Passw
     auto epoch = snapshot.authEpoch.add(1);
     auto rev = snapshot.userRevision.add(1);
     if (!pv || !epoch || !rev) return context_.fail(ErrorCode::IntegrityError);
+    auto previous = find(id);
+    if (!previous) return previous.error();
+    if (!previous.value()) return context_.fail(ErrorCode::IntegrityError);
+    now = nondecreasingEventTime(now, previous.value()->createdAt, previous.value()->updatedAt);
     auto changed = detail::one(context_, detail::write(context_, "UPDATE users SET password_hash=?1,password_version=?2,auth_epoch=?3,revision=?4,updated_at=?5 WHERE id=?6 AND password_version=?7 AND auth_epoch=?8 AND revision=?9 AND enabled=1",
     {
         hash.view(), pv.value().value(), epoch.value().value(), rev.value().value(), now.time_since_epoch().count(), id.toString(), expected.passwordVersion.value(), expected.authEpoch.value(), expected.userRevision.value() }));

@@ -1,5 +1,6 @@
 #define BOOST_TEST_MODULE HttpIdentityIntegration
 #include <tests/integration/HttpInstanceFixture.h>
+#include <anof/client/Protocol.h>
 BOOST_AUTO_TEST_CASE(two_users_real_http_invites_spaces_paging_mkdir_logout_and_restart) {
     Fixture f; f.start(); auto admin = f.login();
     auto invite = f.call("POST", "/api/v1/admin/invites", 201, {{"max_uses", 2}}, admin);
@@ -152,4 +153,43 @@ BOOST_AUTO_TEST_CASE(account_http_authorization_before_binding_and_unknown_passw
     auto confirmed=f.call("POST","/api/v1/auth/sessions",201,login);BOOST_CHECK(confirmed.contains("access_token"));
     auto after=f.call("GET","/api/v1/users/me",200,nullptr,confirmed["access_token"].get<std::string>());
     BOOST_CHECK_EQUAL(std::stoll(after["revision"].get<std::string>()),std::stoll(before["revision"].get<std::string>())+1);
+}
+
+BOOST_AUTO_TEST_CASE(account_rollback_http_response_is_client_valid_and_survives_restart) {
+    Fixture f;
+    UtcTime created;
+    {
+        auto resources=makeInstanceMetadataResources(f.root / ".anof/metadata.sqlite3");BOOST_REQUIRE(resources);
+        auto tx=resources.value().metadata->beginRead();BOOST_REQUIRE(tx);
+        auto password=tx.value()->users().findPassword(LoginName::parse("administrator").value());BOOST_REQUIRE(password&&password.value());
+        auto user=tx.value()->users().find(password.value()->userId);BOOST_REQUIRE(user&&user.value());
+        created=user.value()->createdAt;
+    }
+    const auto base=created.time_since_epoch().count();
+    f.controlledUtc=std::make_shared<std::atomic<std::int64_t>>(base+2000000);
+    f.start();auto token=f.login();
+    auto user=f.call("GET","/api/v1/users/me",200,nullptr,token);
+    std::string latestTime;
+    // 前进、早于创建、重启后仍早于上次进度；保留真实 HTTP 头和正文给客户端解析。
+    for (int step=0;step<3;++step) {
+        if (step==1) f.controlledUtc->store(base-1);
+        if (step==2) { f.stop();f.controlledUtc->store(base+1000000);f.start(); }
+        auto wire=f.exchange(request("PATCH","/api/v1/users/me",{{"display_name","Clock name "+std::to_string(step)}},token,condition(user)));
+        BOOST_REQUIRE(wire.find("HTTP/1.1 200 ")==0);
+        auto split=wire.find("\r\n\r\n");BOOST_REQUIRE(split!=std::string::npos);
+        anof::client::HttpResponse response;response.status=200;
+        for (auto pos=wire.find("\r\n")+2;pos<split;) {
+            auto end=wire.find("\r\n",pos);auto colon=wire.find(":",pos);
+            BOOST_REQUIRE(colon<end);
+            response.headers.emplace(wire.substr(pos,colon-pos),wire.substr(colon+2,end-colon-2));
+            pos=end+2;
+        }
+        BOOST_REQUIRE(response.body.append(wire.substr(split+4)));
+        auto decoded=anof::client::decodeResponse(anof::client::Operation::Rename,response);BOOST_REQUIRE(decoded);
+        user=Json::parse(response.body.view());
+        if (step==0) latestTime=user["updated_at"].get<std::string>();
+        BOOST_CHECK_EQUAL(user["updated_at"].get<std::string>(),latestTime);
+        auto stored=f.call("GET","/api/v1/users/me",200,nullptr,token);
+        BOOST_CHECK(stored==user);
+    }
 }

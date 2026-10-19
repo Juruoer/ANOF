@@ -80,6 +80,7 @@ add_test(NAME anof_identity_executor_integration_unittest COMMAND anof_identity_
 set_tests_properties(anof_identity_executor_integration_unittest PROPERTIES TIMEOUT 30 LABELS "integration;sqlite;runtime;identity")
 
 add_executable(anof_http_identity_integration_unittest HttpIdentity_unittest.cc)
+target_link_libraries(anof_http_identity_integration_unittest PRIVATE anof_client)
 target_link_libraries(anof_http_identity_integration_unittest PRIVATE
     anof_instance_runtime anof_instance_setup anof_identity_resources anof_infrastructure
     nlohmann_json::nlohmann_json Boost::unit_test_framework)

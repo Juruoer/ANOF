@@ -18,6 +18,7 @@ class NodeRepository : public NodeReader {
 public:
     virtual Result<void> insertRoot(const RootDirectory&) = 0;
     virtual Result<DirectorySnapshot> insertDirectory(const NewDirectory&) = 0;
+    // 同事务按nondecreasingEventTime(now, createdAt, updatedAt)更新；revision仍精确+1，时间可相等。
     virtual Result<Revision> advanceRevision(NodeId, Revision expected, UtcTime) = 0;
 };
 }  // namespace anof

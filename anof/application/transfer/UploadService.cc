@@ -1,8 +1,29 @@
 #include <anof/application/transfer/UploadService.h>
 #include <anof/domain/drive/DirectoryPolicy.h>
+#include <cstdio>
+#include <cstdlib>
 
 namespace anof {
 namespace {
+// 仅按需输出固定字段；不含凭据、名称、正文或数据库错误文本。
+void traceFailure(const char* stage, Error error, const Upload& before, const Upload& after,
+                  std::optional<UtcTime> attemptedProgress = {}) noexcept {
+    const auto* enabled = std::getenv("ANOF_TRANSFER_DIAGNOSTICS");
+    if (!enabled || enabled[0] != '1' || enabled[1] != '\0') return;
+    const char* code = error.code == ErrorCode::IntegrityError ? "IntegrityError" :
+                       error.code == ErrorCode::CommitOutcomeUnknown ? "CommitOutcomeUnknown" :
+                       error.code == ErrorCode::Retryable ? "Retryable" : "Other";
+    try {
+        const auto id = before.id.toString();
+        std::fprintf(stderr, "ANOF_TRANSFER_DIAGNOSTIC upload_id=%s stage=%s error=%s error_value=%d created_us=%lld previous_progress_us=%lld attempted_progress_us=%lld terminal_us=%lld generation=%lld offset=%lld\n",
+            id.c_str(), stage, code, static_cast<int>(error.code),
+            static_cast<long long>(before.createdAt.time_since_epoch().count()),
+            static_cast<long long>(before.lastProgressAt.time_since_epoch().count()),
+            static_cast<long long>(attemptedProgress.value_or(after.lastProgressAt).time_since_epoch().count()),
+            static_cast<long long>(after.terminalAt ? after.terminalAt->time_since_epoch().count() : -1),
+            static_cast<long long>(before.generation.value()), static_cast<long long>(after.durableOffset.value()));
+    } catch (...) {} // 诊断分配失败不得替换原始业务错误。
+}
 Result<Upload> require(UploadReader& rows, UploadId id, std::optional<UserId> owner = {}) {
     auto row = rows.find(id);
     if (!row) return row.error();
@@ -69,8 +90,12 @@ QuotaDelta reservation(const Upload& u) {
     return { ByteCount::from(u.original.length.value()).value(), NodeCount::from(1).value() };
 }
 Result<void> progress(Upload& u, UtcTime now) {
+    now = nondecreasingEventTime(now, u.createdAt, u.lastProgressAt);
     auto expiry = uploadExpiry(u.createdAt, now);
-    if (!expiry) return expiry.error();
+    if (!expiry) {
+        traceFailure("progress.expiry", expiry.error(), u, u, now);
+        return expiry.error();
+    }
     u.lastProgressAt = now;
     u.expiresAt = expiry.value();
     return {};
@@ -81,13 +106,13 @@ Result<Upload> save(TransferTransaction& tx, const Upload& old, Upload next, con
     if (!generation) return generation.error();
     next.generation = generation.value();
     auto changed = tx.uploads().replace(old.id, { old.state, old.generation, old.durableOffset }, next);
-    if (!changed) return changed.error();
+    if (!changed) { traceFailure("save.replace", changed.error(), old, next); return changed.error(); }
     if (ctx) {
         auto valid = authenticate(tx.authorization(), *ctx, *clock);
         if (!valid) return valid.error();
     }
     auto committed = tx.commit();
-    if (!committed) return committed.error();
+    if (!committed) { traceFailure("save.commit", committed.error(), old, next); return committed.error(); }
     return next;
 }
 Result<void> active(const Upload& u, UtcTime now) {
@@ -220,7 +245,7 @@ Result<Upload> UploadService::refresh(const RequestContext& ctx, UploadId id) {
         return u;
     u.state = u.cancelRequested ? UploadState::Cancelled : UploadState::Expired;
     u.lastError = u.cancelRequested ? TransferFailure::UserDisabled : TransferFailure::UploadExpired;
-    u.terminalAt = clock_.now();
+    u.terminalAt = nondecreasingEventTime(clock_.now(), u.createdAt, u.lastProgressAt);
     u.cleanupPending = true;
     auto charge = scopes(tx.spaces(), u);
     if (!charge) return charge.error();
@@ -397,7 +422,7 @@ Result<Upload> UploadService::recordVerification(UploadId id, UploadGeneration g
     if (u.original.expectedSha256 && *u.original.expectedSha256 != digest) {
         u.state = UploadState::Failed;
         u.lastError = TransferFailure::ChecksumMismatch;
-        u.terminalAt = clock_.now();
+        u.terminalAt = nondecreasingEventTime(clock_.now(), u.createdAt, u.lastProgressAt);
         u.cleanupPending = true;
         auto charge = scopes(tx.spaces(), u);
         if (!charge) return charge.error();
@@ -462,10 +487,11 @@ Result<Upload> UploadService::commitPublish(UploadId id, UploadGeneration genera
     auto u = old.value();
     auto valid = target(tx, actor.value(), u.original.spaceId, u.target);
     if (!valid) return valid.error();
+    const auto publishedAt = nondecreasingEventTime(clock_.now(), u.createdAt, u.lastProgressAt);
     auto inserted = tx.blobs().insert({ *u.pendingBlobId, u.original.length, *u.actualSha256 });
     if (!inserted) return inserted.error();
     auto file = tx.nodes().insertFile(
-        { { node.value(), u.original.spaceId, u.target.parentId, u.target.name, u.userId, clock_.now() },
+        { { node.value(), u.original.spaceId, u.target.parentId, u.target.name, u.userId, publishedAt },
           *u.pendingBlobId });
     if (!file) return file.error();
     auto parent = tx.nodes().find(u.target.parentId);
@@ -484,7 +510,7 @@ Result<Upload> UploadService::commitPublish(UploadId id, UploadGeneration genera
     u.state = UploadState::Completed;
     u.location = StagingLocation::Object;
     u.resultNodeId = node.value();
-    u.terminalAt = clock_.now();
+    u.terminalAt = publishedAt;
     u.lastError.reset();
     auto event = audit(tx, u, TransferEventKind::Publish, request, clock_.now());
     if (!event) return event.error();
@@ -531,7 +557,7 @@ Result<Upload> UploadService::cancel(const RequestContext& ctx, UploadId id) {
     auto u = old.value();
     u.state = UploadState::Cancelled;
     u.cleanupPending = true;
-    u.terminalAt = clock_.now();
+    u.terminalAt = nondecreasingEventTime(clock_.now(), u.createdAt, u.lastProgressAt);
     u.lastError = TransferFailure::UploadCancelled;
     auto charge = scopes(tx.spaces(), u);
     if (!charge) return charge.error();
@@ -557,7 +583,7 @@ Result<Upload> UploadService::terminate(UploadId id, UploadGeneration generation
     auto u = old.value();
     u.state = state;
     u.cleanupPending = true;
-    u.terminalAt = clock_.now();
+    u.terminalAt = nondecreasingEventTime(clock_.now(), u.createdAt, u.lastProgressAt);
     u.lastError = failure;
     auto charge = scopes(tx.spaces(), u);
     if (!charge) return charge.error();

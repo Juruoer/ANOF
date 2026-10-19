@@ -87,6 +87,7 @@ Result<bool> SqliteInviteRepository::revoke(InviteId id, UtcTime now) {
     if (!value) return value.error();
     if (!value.value()) return context_.fail(ErrorCode::NotFound);
     if (value.value()->revokedAt) return false;
+    now = nondecreasingEventTime(now, value.value()->createdAt, value.value()->createdAt);
     auto result = detail::one(context_, detail::write(context_, "UPDATE invites SET revoked_at=?1 WHERE id=?2 AND revoked_at IS NULL", {now.time_since_epoch().count(), id.toString() }));
     if (!result) return result.error();
     return true;

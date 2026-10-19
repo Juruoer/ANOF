@@ -9,6 +9,8 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <set>
+#include <sstream>
 #include <cerrno>
 #include <fcntl.h>
 #include <poll.h>
@@ -34,7 +36,28 @@ struct Process {
     std::optional<int> status;
     std::string out,err,tty;
     termios original{};
+    std::string diagnosticCommand;
+    std::string failureSummary() const {
+        std::ostringstream text;
+        text << "command=" << diagnosticCommand << " stdout_bytes=" << out.size() << " stderr_bytes=" << err.size();
+        // 只输出结构化分类，不回显message、原始响应、凭据、参数值或PTY内容。
+        auto value=Json::parse(err,nullptr,false);
+        if(value.is_object() && value.contains("error") && value["error"].is_object()) {
+            for(const auto* key:{"code","request_id","remote_outcome","local_state"}) {
+                auto it=value["error"].find(key);
+                if(it==value["error"].end() || !it->is_string()) continue;
+                const auto word=it->get<std::string>();
+                if(word.size()<=80 && word.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")==std::string::npos)
+                    text << " " << key << "=" << word;
+            }
+            auto it=value["error"].find("http_status");
+            if(it!=value["error"].end() && it->is_number_integer()) text << " http_status=" << *it;
+        } else text << " stderr_format=non_json";
+        return text.str();
+    }
     Process(std::vector<std::string> args,bool terminal=false,bool closedOutput=false) {
+        static const std::set<std::string> verbs{"init","serve","profile","login","register","logout","me","spaces","ls","stat","mkdir","invite","account","user","quota","upload","download","storage","add","list","show","create","revoke","rename","password","disable","enable","set","resume","complete","cancel"};
+        for(const auto& arg:args) if(verbs.count(arg)) diagnosticCommand+=(diagnosticCommand.empty()?"":" ")+arg;
         args.insert(args.begin(),ANOF_EXECUTABLE); std::vector<char*> argv; for(auto& arg:args) argv.push_back(arg.data()); argv.push_back(nullptr);
         int stdoutPipe[2],stderrPipe[2];
         if(pipe2(stdoutPipe,O_CLOEXEC)||pipe2(stderrPipe,O_CLOEXEC)) throw std::runtime_error("pipe failed");
@@ -62,6 +85,16 @@ struct Process {
         for(int fd:{output,error}) if(fd>=0&&fcntl(fd,F_SETFL,O_NONBLOCK)<0) throw std::runtime_error("pipe flags failed");
     }
     ~Process() {
+        // 保留服务子进程按需诊断；固定字段日志不包含请求正文或凭据。
+        try {
+            pump();
+            std::istringstream lines(err);std::string line;unsigned emitted=0;
+            while(std::getline(lines,line) && emitted<16)
+                if(line.rfind("ANOF_TRANSFER_DIAGNOSTIC ",0)==0 && line.size()<1024 &&
+                   line.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-=. ")==std::string::npos) {
+                    std::cerr << line << '\n';++emitted;
+                }
+        } catch(...) {}
         if(pid>0&&!status) { kill(pid,SIGKILL); while(waitpid(pid,nullptr,0)<0&&errno==EINTR) {} }
         for(int fd:{output,error,master,slave}) if(fd>=0) close(fd);
     }
@@ -81,10 +114,10 @@ struct Process {
         const auto line=secret+"\n"; BOOST_REQUIRE_EQUAL(write(master,line.data(),line.size()),static_cast<ssize_t>(line.size()));
     }
     void finish(int code) {
-        until([&]{return status.has_value();}); BOOST_REQUIRE(WIFEXITED(*status)); BOOST_CHECK_EQUAL(WEXITSTATUS(*status),code);
+        until([&]{return status.has_value();}); BOOST_REQUIRE(WIFEXITED(*status)); BOOST_CHECK_MESSAGE(WEXITSTATUS(*status)==code, failureSummary() << " expected_exit=" << code << " actual_exit=" << WEXITSTATUS(*status));
         if(slave>=0) {termios state{}; BOOST_REQUIRE_EQUAL(tcgetattr(slave,&state),0); BOOST_CHECK_EQUAL(state.c_lflag,original.c_lflag);}
     }
-    Json success() { finish(0); BOOST_CHECK(err.empty()); BOOST_REQUIRE(!out.empty()); BOOST_CHECK_EQUAL(std::count(out.begin(),out.end(),'\n'),1); auto j=Json::parse(out); BOOST_REQUIRE(j.at("ok").get<bool>()); return j; }
+    Json success() { finish(0); BOOST_CHECK_MESSAGE(err.empty(),failureSummary()); BOOST_REQUIRE_MESSAGE(!out.empty(),failureSummary()); BOOST_CHECK_EQUAL(std::count(out.begin(),out.end(),'\n'),1); auto j=Json::parse(out); BOOST_REQUIRE(j.at("ok").get<bool>()); return j; }
     Json failure(int code) { finish(code); BOOST_CHECK(out.empty()); BOOST_REQUIRE(!err.empty()); BOOST_CHECK_EQUAL(std::count(err.begin(),err.end(),'\n'),1); auto j=Json::parse(err); BOOST_REQUIRE(!j.at("ok").get<bool>()); return j.at("error"); }
     unsigned port() { const std::string prefix="ANOF_READY address=127.0.0.1 port="; until([&]{return out.find(prefix)!=std::string::npos||status.has_value();}); BOOST_REQUIRE(!status); return static_cast<unsigned>(std::stoul(out.substr(out.find(prefix)+prefix.size()))); }
     void stop() { BOOST_REQUIRE_EQUAL(kill(pid,SIGTERM),0); finish(0); }

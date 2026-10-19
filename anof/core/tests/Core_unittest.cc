@@ -1,6 +1,7 @@
 #define BOOST_TEST_MODULE AnofCore
 #include <boost/test/unit_test.hpp>
 
+#include <anof/core/Clock.h>
 #include <anof/core/Id.h>
 #include <anof/core/Quantity.h>
 
@@ -77,4 +78,15 @@ BOOST_AUTO_TEST_CASE(void_result_preserves_success_and_error_across_assignment) 
     moved = std::move(failed);
     BOOST_REQUIRE(moved);
     BOOST_CHECK_NO_THROW(moved.value());
+}
+
+BOOST_AUTO_TEST_CASE(record_event_time_preserves_order_without_increment_or_overflow) {
+    auto t = [](std::int64_t us) { return UtcTime{std::chrono::microseconds{us}}; };
+    BOOST_CHECK(nondecreasingEventTime(t(9), t(10), t(12)) == t(12));
+    BOOST_CHECK(nondecreasingEventTime(t(12), t(10), t(12)) == t(12));
+    BOOST_CHECK(nondecreasingEventTime(t(14), t(10), t(12)) == t(14));
+    BOOST_CHECK(nondecreasingEventTime(t(1), t(10), t(8)) == t(10));
+    BOOST_CHECK(nondecreasingEventTime(t(std::numeric_limits<std::int64_t>::min()), t(0),
+                                      t(std::numeric_limits<std::int64_t>::max())) ==
+                t(std::numeric_limits<std::int64_t>::max()));
 }

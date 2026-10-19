@@ -266,7 +266,7 @@ Result<DirectorySnapshot> SqliteNodeRepository::insertDirectory(const NewDirecto
 Result<Revision> SqliteNodeRepository::advanceRevision(NodeId id, Revision expected, UtcTime now) {
     auto ready = context_.requireOpen();
     if (!ready) return ready.error();
-    auto prepared = SqliteStatement::prepare(context_.connection(), "SELECT revision FROM nodes WHERE id=?1");
+    auto prepared = SqliteStatement::prepare(context_.connection(), "SELECT revision,created_at,updated_at FROM nodes WHERE id=?1");
     if (!prepared) return context_.fail(prepared.error());
     auto bound = prepared.value()->bindText(1, id.toString());
     if (!bound) return context_.fail(bound.error());
@@ -278,6 +278,10 @@ Result<Revision> SqliteNodeRepository::advanceRevision(NodeId id, Revision expec
     if (current.value() != expected) return context_.fail(ErrorCode::Conflict);
     auto next = current.value().add(1);
     if (!next) return context_.fail(next.error());
+    auto created = readTime(*prepared.value(), 1);
+    auto updated = readTime(*prepared.value(), 2);
+    if (!created || !updated) return context_.fail(ErrorCode::IntegrityError);
+    now = nondecreasingEventTime(now, created.value(), updated.value());
     prepared.value().reset();
     auto update = SqliteStatement::prepare(context_.connection(),
                                            "UPDATE nodes SET revision=?1, updated_at=?2 WHERE id=?3 AND revision=?4");

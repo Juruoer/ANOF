@@ -327,4 +327,35 @@ BOOST_AUTO_TEST_CASE(writes_detect_zero_affected_rows_and_do_not_return_success)
     BOOST_TEST(db.scalar("SELECT count(*) FROM nodes") == 2);
 }
 
+BOOST_AUTO_TEST_CASE(node_event_time_uses_persistent_lower_bound) {
+    Database db;
+    db.sql("UPDATE nodes SET created_at=100,updated_at=100");
+    BOOST_REQUIRE(db.start().advanceRevision(kRoot, Revision{}, UtcTime{ std::chrono::microseconds{ 200 } }));
+    db.transaction.reset();
+    BOOST_CHECK_EQUAL(db.scalar("SELECT updated_at FROM nodes WHERE id=" + quoted(kRoot)), 100);
+    BOOST_CHECK_EQUAL(db.scalar("SELECT revision FROM nodes WHERE id=" + quoted(kRoot)), 1);
+    std::int64_t revision = 1, expectedTime = 100;
+    for (auto observed : { INT64_MIN, std::int64_t{ 100 }, std::int64_t{ 120 }, std::int64_t{ 110 }, std::int64_t{ 120 }, INT64_MAX }) {
+        expectedTime = std::max(expectedTime, observed);
+        auto& nodes = db.start();
+        auto next = nodes.advanceRevision(kRoot, Revision::from(revision).value(), UtcTime{ std::chrono::microseconds{ observed } });
+        BOOST_REQUIRE(next);
+        BOOST_CHECK_EQUAL(next.value().value(), ++revision);
+        auto node = nodes.find(kRoot);
+        BOOST_REQUIRE(node && node.value());
+        BOOST_CHECK_EQUAL(node.value()->metadata.updatedAt.time_since_epoch().count(), expectedTime);
+        BOOST_REQUIRE(db.transaction->commit());
+        db.transaction.reset();
+        db.connection.reset();
+        db.connection = std::move(openSqliteDatabase(db.file(), { 0 })).value();
+        BOOST_CHECK_EQUAL(db.scalar("SELECT updated_at FROM nodes WHERE id=" + quoted(kRoot)), expectedTime);
+    }
+    errorIs(db.start().advanceRevision(kRoot, Revision{}, kNow), ErrorCode::Conflict);
+    BOOST_CHECK(!db.transaction->commit());
+    BOOST_REQUIRE(db.start().advanceRevision(kRoot, Revision::from(revision).value(), kNow));
+    db.transaction.reset();
+    BOOST_CHECK_EQUAL(db.scalar("SELECT revision FROM nodes WHERE id=" + quoted(kRoot)), revision);
+    BOOST_CHECK_EQUAL(db.scalar("SELECT updated_at FROM nodes WHERE id=" + quoted(kRoot)), INT64_MAX);
+}
+
 }  // namespace anof::infrastructure::sqlite

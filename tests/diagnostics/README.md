@@ -53,3 +53,33 @@ python3 tests/diagnostics/observe_clocks.py --serve-only --build cmake-build-deb
 
 诊断输出会影响线程调度，尤其最后通知与真正退出之间的窗口；观察到的先后关系只说明该次运行。
 关停策略、线程 join 条件、grace 和父进程超时均未因诊断改变。
+
+## 业务 UTC 与上传失败诊断
+
+设置 `ANOF_TRANSFER_DIAGNOSTICS=1` 后，上传应用在进度有效期计算、仓储替换或事务提交失败时，
+向 stderr 输出 `ANOF_TRANSFER_DIAGNOSTIC`。默认关闭，不改变时钟返回值、事务结果、重试或期限。
+字段包括规范 upload_id、stage、错误分类及枚举数值、创建／前后进度／终态 UTC 微秒、generation和offset；
+terminal_us=-1表示无终态时间。不输出凭据、名称、请求正文或SQL文本；诊断仍会影响执行时序。
+`progress.expiry`与`save.replace`失败不能等同于SQLite COMMIT失败，真正提交阶段标为`save.commit`。
+数值错误码仅用于当前源码定位，不是稳定wire协议。
+
+根HTTP测试失败会显示method、无query的path、期望状态和响应；下载夹具的PATCH另显示offset/length。
+上传子进程夹具失败打印错误枚举及UTC前后值、steady经过时间，父进程区分提前退出与计划SIGKILL。
+CLI进程失败只输出命令类别、stdout/stderr长度和白名单错误字段，不回显参数值、PTY、原始message或凭据。
+服务子进程退出时最多转录16条固定格式上传诊断，避免其stderr随夹具销毁丢失。
+
+一次有界诊断可使用：
+
+```sh
+ANOF_TRANSFER_DIAGNOSTICS=1 BOOST_TEST_LOG_LEVEL=test_suite \
+ctest --test-dir cmake-build-debug -V --output-on-failure -j 1 \
+  -R '^(anof_account_service_integration_unittest|anof_upload_executor_integration_unittest|anof_http_upload_integration_unittest|anof_http_download_integration_unittest|anof_client_protocol_test|anof_client_process_integration_unittest|anof_transfer_client_process_unittest)$'
+```
+
+[账户及上传应用测试](../integration/AccountService_unittest.cc) 的 `clock_rollback_*` 用例注入可控业务时钟，
+核对上传回拨下进度、终态及保留量，以及账户更新时间与提交响应的一致性；
+[客户端协议测试](../../anof/client/tests/Protocol_unittest.cc) 核对逆序时间响应被分类为未知写结果。
+[HTTP 身份集成测试](../integration/HttpIdentity_unittest.cc) 还覆盖回拨与服务重启后的真实响应及客户端解码。
+客户端拒绝畸形逆序响应的用例继续保留，不放宽协议校验。
+真实系统时钟的UploadExecutor用例没有注入回拨。日志中的CommitOutcomeUnknown也可能来自原有故障注入，
+必须结合用例边界和stage判断，不能仅凭某一条诊断认定环境故障。以上命令不修改宿主／WSL时间。

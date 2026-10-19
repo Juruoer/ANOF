@@ -151,10 +151,17 @@ struct UncertainStore final : TransferMetadataStore {
         return std::unique_ptr<MetadataTransaction>(new UncertainTransaction(std::move(result).value()));
     }
 };
+// 测试线程设置读数，metadata worker 读取；不调整系统时钟。
+struct ControlledClock final : Clock {
+    std::shared_ptr<std::atomic<std::int64_t>> micros;
+    explicit ControlledClock(std::shared_ptr<std::atomic<std::int64_t>> value) : micros(std::move(value)) {}
+    UtcTime now() const override { return UtcTime{std::chrono::microseconds{micros->load()}}; }
+};
 struct Fixture {
     std::filesystem::path root;
     muduox::net::EventLoop loop;
     Gate gate;
+    std::shared_ptr<std::atomic<std::int64_t>> controlledUtc;
     anof::test::CommitFault transferFault;
     std::unique_ptr<InstanceServer> server;
     explicit Fixture(std::int64_t budget = 1048576) {
@@ -187,7 +194,7 @@ struct Fixture {
         auto prepared = prepareInstance(root, *locks.value(), *config.value(), *maintenance.value());
         BOOST_REQUIRE(prepared);
         prepared.value().configuration.shutdownGraceSeconds = grace;
-        if (!password && !uncertain && !transferFaults) {
+        if (!password && !uncertain && !transferFaults && !controlledUtc) {
             auto created = makeInstanceServer(loop, std::move(prepared).value());
             BOOST_REQUIRE(created);
             server = std::move(created).value();
@@ -198,6 +205,7 @@ struct Fixture {
             server = std::make_unique<InstanceServer>(loop, std::move(prepared).value(), InstanceCrypto{ std::move(codec).value(), std::move(ids).value() }, [this, uncertain, transferFaults]() -> Result<MetadataWorkerResources> {
                     auto resources = makeInstanceMetadataResources(root / ".anof/metadata.sqlite3");
                     if (!resources) return resources.error();
+                    if (controlledUtc) resources.value().clock = std::make_unique<ControlledClock>(controlledUtc);
                     if (transferFaults) {
                         auto* store = dynamic_cast<TransferMetadataStore*>(resources.value().metadata.get());
                         if (!store) return ErrorCode::InternalError;
@@ -221,7 +229,8 @@ struct Fixture {
     }
     Json call(std::string method, std::string path, int status, const Json& body = nullptr, std::string token = {}, std::string extra = {}) {
         auto wire = exchange(request(method, path, body, token, extra));
-        BOOST_REQUIRE_MESSAGE(wire.find("HTTP/1.1 " + std::to_string(status) + " ") == 0, wire);
+        BOOST_REQUIRE_MESSAGE(wire.find("HTTP/1.1 " + std::to_string(status) + " ") == 0,
+            method << " " << path.substr(0, path.find('?')) << " expected=" << status << " response=" << wire);
         BOOST_CHECK(wire.find("cache-control: no-store\r\n") != std::string::npos);
         BOOST_CHECK(wire.find("x-request-id: ") != std::string::npos);
         auto split = wire.find("\r\n\r\n");

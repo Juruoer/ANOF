@@ -77,6 +77,8 @@ UserRepository 构造还须显式传入 PasswordHashLimits，接纳范围为 8..
 
 显示名和启用状态先检查预期 revision，再判断无变化；无变化保留 revision、updated_at 和 auth_epoch。管理员禁用保护也在 revision 比较之后。实际禁用增加 auth_epoch／revision，重新启用只增加 revision，旧 Session 不恢复。改密比较 enabled 和 password_version／auth_epoch／用户 revision，成功递增三项版本；相同密码编码仍算一次更新。版本溢出返回 IntegrityError，条件失配返回 PreconditionFailed。
 
+账户实际更新在同一写事务内读取旧记录，以 `max(now, created_at, updated_at)` 写入并返回 updated_at；允许时间相等，不通过加一制造递增。无变化仍保留原时间。邀请首次撤销保存 `max(now, created_at)`，重复撤销返回 false 并保留首次时间。此规则只约束记录事件时间；认证、到期、保留期判断和审计观察时间仍使用调用方传入的原始 UTC，不对系统时钟作全局钳制。
+
 Session 全部撤销和成功审计须由调用方显式加入同一事务；无变化时调用方跳过审计。显示名更新不撤销会话。改密最终认证应在自身撤销会话之前完成，事务内不执行密码计算。审计拒绝或忽略插入均使整个事务失败；未提交析构回滚。CommitOutcomeUnknown 不等于已回滚，事务结束且连接不可复用，不能自动重试业务。
 
 调用方在 BEGIN IMMEDIATE 写事务内依次 count→检查上限→insert；第二连接须取得写锁后重新读取计数。仓储不管理人数策略、不淘汰 Session、不签发凭据，也不在事务内执行密码工作。邀请消费、注册相关写入和审计使用同一上下文，后续失败会回滚已消费次数。分页位置只控制排序，不代表权限。
@@ -107,6 +109,8 @@ find 返回活动节点自有元数据，目录使用 DirectoryContent，文件�
 
 listChildren 校验父路径，按名称 UTF-8 原始字节、NodeId 有界 seek，每批最多 200 项，额外读取一项判断 next；不使用 OFFSET。它不信任游标为授权凭证，应用仍须在同一快照认证并验证空间访问权。已有创建目录的同名唯一性、父 revision、目录深度和回滚行为保持不变。
 
+`advanceRevision` 在同一写事务读取节点旧 revision、created_at 和 updated_at，保留预期 revision 检查，并以 `max(now, created_at, updated_at)` 保存 updated_at。时间回拨仍可推进 revision，时间相等合法；条件冲突、溢出和回滚语义保持不变。
+
 [QuotaRepository](SqliteQuotaRepository.h) 提供 get、insert、setLimit 和 chargeUsed。插入 revision 固定为 1；空间和公共贡献额度共享受检逻辑。实际修改 limit 或 used 都增加 revision，无变化不增加。setLimit 首先核对 expected revision，过期为 PreconditionFailed，下调到 used＋reserved 以下为 QuotaExceeded；缺行、损坏或整数／revision 溢出为 IntegrityError。读、检查与条件写共享写事务，两类额度及审计可一起回滚。
 
 ## 构建与测试
@@ -125,17 +129,19 @@ ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_sqlite_(foundat
 
 Release 使用 cmake-build-release。各测试有有限超时；[22 个案例](tests/SqliteFoundation_unittest.cc) 使用真实小型临时数据库，保留设置、重开、绑定／值解码、DDL 失败回滚、目录根／外键、名称竞争、配额／Blob、独立写连接竞争、SQLITE_FULL 和提交未知分类覆盖，并验证身份字段／Session／邀请／设置／审计约束、实际定义篡改、CHECK 损坏、旧库无修改拒绝及独占建库。七个基础头文件独立编译，不需要仓储或 transport。
 
-[27 个身份案例](tests/SqliteIdentity_unittest.cc) 覆盖读取所有权、事务失效、条件更新／溢出、Session 认证／清理、邀请消费／分页、设置和各类审计、业务与审计原子回滚、独立连接锁竞争后的登录名冲突及人数／Session 上限检查。另有八个身份内部头文件独立编译。测试的 count→insert 编排不等同于真实应用身份流程。
+[29 个身份案例](tests/SqliteIdentity_unittest.cc) 覆盖读取所有权、事务失效、条件更新／溢出、Session 认证／清理、邀请消费／分页、设置和各类审计、业务与审计原子回滚、独立连接锁竞争后的登录名冲突及人数／Session 上限检查。另有八个身份内部头文件独立编译。测试的 count→insert 编排不等同于真实应用身份流程。
 
 SQLITE_FULL 通过限制页数触发，提交／DDL 故障使用 authorizer；不填满磁盘，不模拟硬件掉电。未引导夹具的密码编码只用于结构验证，不能用于真实登录，也不是生产默认密码。
 
 [22 个快照／接口案例](tests/SqliteReadSnapshot_unittest.cc) 覆盖只读动态类型、WAL 一致性、清理故障、完整事务访问器、空间／根原子创建、文件元数据、分页、额度 revision／竞争／溢出、身份审计回滚和生产 Store 门禁。真实 Blob 文件读写不在本模块；1 TiB 文件大小仅作合成数值测试。
 
-事务、节点、额度／审计和故障专项分别保留 13、11、17、7 个案例，包含两连接竞争、WAL、进程中断和受控 VFS 故障。上述七组共 119 个案例；完整 SQLite 头文件目标检查 22 个头文件。局部数据库验证不等于硬件断电或身份端到端验收。
+事务、节点、额度／审计和故障专项分别保留 13、12、17、7 个案例，包含两连接竞争、WAL、进程中断和受控 VFS 故障。上述七组共 122 个案例；完整 SQLite 头文件目标检查 22 个头文件。局部数据库验证不等于硬件断电或身份端到端验收。
 
 [SqliteTestMetadataBackend](tests/SqliteTestMetadataBackend.h) 及 [SqliteTestStore](tests/SqliteTestStore.h) 使用当前 schema 和显式小密码预算，通过内部连接装配支持未引导库；故障测试允许注入损坏或额外触发器，测试观察接口不执行生产启动门禁。公开打开工厂没有绕过开关，并另行验证拒绝未引导库。
 
 `anof_sqlite_contract_unittest` 运行根目录维护的共享后端语义用例；模块局部测试不替代共享契约或上层业务验收。初始化与启动维护的专项覆盖见下节。
+
+账户、节点及邀请的时间专项使用真实临时 SQLite，覆盖回拨／相等／前进、时间整数边界、返回值与持久化一致、连接关闭重开、无变化／陈旧条件及未提交回滚；邀请另验证首次／重复撤销和原始 UTC 到期判断。
 
 账户专项还覆盖精确 used+reserved 下限、零值／INT64_MAX、缺失额度行及版本溢出；私有／公共空间与管理员／普通成员贡献分别验证。独立连接的写事务重叠时，竞争方先收到 Retryable，再显式开启新事务读取当前状态：计费先提交使旧调额 revision 失效；降额先提交使后续超额计费失败。测试不依赖 sleep 或无限重试。
 

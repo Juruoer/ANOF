@@ -322,3 +322,105 @@ BOOST_AUTO_TEST_CASE(upload_query_expiry_retains_physical_budget_until_cleanup){
     auto cleared=uploads.confirmCleanup(row.value().id,row.value().generation);BOOST_REQUIRE(cleared);
     budget=uploads.storage(ctx);BOOST_REQUIRE(budget);BOOST_CHECK_EQUAL(budget.value().accounting.reserved.value(),0);
 }
+
+// 可控 UTC 回拨；真实仓储验证应用事件时间与预留，不修改系统时间。
+BOOST_AUTO_TEST_CASE(clock_rollback_preserves_upload_progress_and_cancel) {
+    Fixture f;
+    auto admin=f.login();auto ctx=f.context(admin);auto& r=*f.resources;
+    auto& store=dynamic_cast<TransferMetadataStore&>(*r.metadata);
+    UploadService uploads(store,*r.clock,*r.transferIds,*r.nodeIds);
+    auto read=store.beginTransferRead();BOOST_REQUIRE(read);
+    auto space=read.value()->spaces().findPrivate(admin.user.id);BOOST_REQUIRE(space&&space.value());
+    read.value().reset();
+    const auto createdTime=f.clock->time;
+    auto created=uploads.create(ctx,{OperationId::parse("33333333-2222-4333-8444-555555555555").value(),
+        {space.value()->id,{space.value()->rootNodeId,"clock-probe"},FileLength::from(3).value(),{}}},
+        ByteCount::from(1048576).value(),{});BOOST_REQUIRE(created);
+    auto opened=uploads.opened(created.value().upload.id,created.value().upload.generation);BOOST_REQUIRE(opened);
+    auto id=opened.value().id;
+    auto first=uploads.preparePatch(ctx,{id,{},ByteCount::from(1).value()});BOOST_REQUIRE(first);
+    f.clock->time=createdTime-std::chrono::microseconds(1);
+    auto initial=uploads.commitPatch(ctx,first.value());BOOST_REQUIRE(initial);
+    BOOST_CHECK(initial.value().lastProgressAt==createdTime);
+    BOOST_CHECK(initial.value().expiresAt==created.value().upload.expiresAt);
+    f.clock->time=createdTime+std::chrono::seconds(2);
+    auto second=uploads.preparePatch(ctx,{id,UploadOffset::from(1).value(),ByteCount::from(1).value()});BOOST_REQUIRE(second);
+    auto committed=uploads.commitPatch(ctx,second.value());BOOST_REQUIRE(committed);
+    f.clock->time=createdTime+std::chrono::seconds(1);
+    auto third=uploads.preparePatch(ctx,{id,UploadOffset::from(2).value(),ByteCount::from(1).value()});BOOST_REQUIRE(third);
+    auto backwards=uploads.commitPatch(ctx,third.value());BOOST_REQUIRE(backwards);
+    BOOST_CHECK(backwards.value().lastProgressAt==committed.value().lastProgressAt);
+    BOOST_CHECK(backwards.value().expiresAt==committed.value().expiresAt);
+    auto cancelled=uploads.cancel(ctx,id);BOOST_REQUIRE(cancelled);
+    auto stored=uploads.read(id);BOOST_REQUIRE(stored);
+    BOOST_CHECK(stored.value().state==UploadState::Cancelled);
+    BOOST_REQUIRE(stored.value().terminalAt);
+    BOOST_CHECK(*stored.value().terminalAt==committed.value().lastProgressAt);
+    BOOST_CHECK_EQUAL(stored.value().durableOffset.value(),3);
+    auto repeated=uploads.cancel(ctx,id);BOOST_REQUIRE(repeated);
+    BOOST_CHECK(repeated.value().terminalAt==stored.value().terminalAt);
+    auto budget=uploads.storage(ctx);BOOST_REQUIRE(budget);
+    BOOST_CHECK_EQUAL(budget.value().accounting.reserved.value(),3);
+    BOOST_REQUIRE(uploads.confirmCleanup(id,stored.value().generation));
+    budget=uploads.storage(ctx);BOOST_REQUIRE(budget);
+    BOOST_CHECK_EQUAL(budget.value().accounting.reserved.value(),0);
+    BOOST_CHECK(f.clock->now()==createdTime+std::chrono::seconds(1));
+}
+
+BOOST_AUTO_TEST_CASE(clock_rollback_preserves_account_timestamp_and_committed_response) {
+    Fixture f;auto admin=f.login();auto ctx=f.context(admin);
+    const auto originalTime=f.clock->time;
+    f.clock->time=admin.user.createdAt-std::chrono::microseconds(1);
+    auto changed=f.accounts->execute(ctx,UpdateDisplayNameCommand{
+        condition(admin.user),DisplayName::parse("Clock probe").value()});
+    BOOST_REQUIRE(changed);
+    BOOST_CHECK(changed.value().updatedAt==admin.user.updatedAt);
+    BOOST_CHECK_EQUAL(changed.value().revision.value(),admin.user.revision.value()+1);
+    f.clock->time=originalTime;
+    auto read=f.resources->metadata->beginRead();BOOST_REQUIRE(read);
+    auto stored=read.value()->users().find(admin.user.id);BOOST_REQUIRE(stored&&stored.value());
+    BOOST_CHECK(stored.value()->updatedAt==changed.value().updatedAt);
+    BOOST_CHECK(stored.value()->revision==changed.value().revision);
+    BOOST_CHECK_EQUAL(stored.value()->displayName.value(),"Clock probe");
+}
+
+// 应用发布边界测试，不代表真实文件发布或断电持久性。
+BOOST_AUTO_TEST_CASE(clock_rollback_preserves_verification_and_publication_terminal_time) {
+    for (bool mismatch : {false,true}) {
+        BOOST_TEST_CONTEXT("checksum mismatch " << mismatch) {
+            Fixture f;auto admin=f.login();auto ctx=f.context(admin);auto& r=*f.resources;
+            auto& store=dynamic_cast<TransferMetadataStore&>(*r.metadata);
+            UploadService uploads(store,*r.clock,*r.transferIds,*r.nodeIds);
+            auto read=store.beginTransferRead();BOOST_REQUIRE(read);
+            auto space=read.value()->spaces().findPrivate(admin.user.id);BOOST_REQUIRE(space&&space.value());read.value().reset();
+            auto expected=Sha256::parse(std::string(64,'0'));BOOST_REQUIRE(expected);
+            auto actual=Sha256::parse(std::string(64,mismatch?'1':'0'));BOOST_REQUIRE(actual);
+            auto created=uploads.create(ctx,{OperationId::parse("44444444-2222-4333-8444-555555555555").value(),
+                {space.value()->id,{space.value()->rootNodeId,"publication-clock"},FileLength::from(3).value(),expected.value()}},
+                ByteCount::from(1048576).value(),{});BOOST_REQUIRE(created);
+            auto u=created.value().upload;BOOST_REQUIRE(uploads.opened(u.id,u.generation));
+            f.clock->time=u.createdAt+std::chrono::seconds(2);
+            auto patch=uploads.preparePatch(ctx,{u.id,{},ByteCount::from(3).value()});BOOST_REQUIRE(patch);
+            BOOST_REQUIRE(uploads.commitPatch(ctx,patch.value()));
+            auto accepted=uploads.acceptComplete(ctx,{u.id,{}});BOOST_REQUIRE(accepted);
+            f.clock->time=u.createdAt-std::chrono::microseconds(1);
+            auto verified=uploads.recordVerification(u.id,accepted.value().generation,actual.value(),ctx.requestId);BOOST_REQUIRE(verified);
+            if (mismatch) {
+                BOOST_CHECK(verified.value().state==UploadState::Failed);
+                BOOST_REQUIRE(verified.value().terminalAt);
+                BOOST_CHECK(*verified.value().terminalAt==accepted.value().lastProgressAt);
+            } else {
+                auto prepared=uploads.preparePublish(u.id,verified.value().generation);BOOST_REQUIRE(prepared);
+                auto completed=uploads.commitPublish(u.id,prepared.value().generation,ctx.requestId);BOOST_REQUIRE(completed);
+                BOOST_CHECK(completed.value().state==UploadState::Completed);
+                BOOST_REQUIRE(completed.value().terminalAt);
+                BOOST_CHECK(*completed.value().terminalAt==accepted.value().lastProgressAt);
+                auto tx=store.beginTransferRead();BOOST_REQUIRE(tx);
+                auto node=tx.value()->nodes().find(*completed.value().resultNodeId);BOOST_REQUIRE(node&&node.value());
+                BOOST_CHECK(node.value()->metadata.createdAt==*completed.value().terminalAt);
+            }
+            auto budget=uploads.storage(ctx);BOOST_REQUIRE(budget);
+            BOOST_CHECK_EQUAL(budget.value().accounting.reserved.value(),mismatch?3:0);
+        }
+    }
+}
