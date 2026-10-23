@@ -1,9 +1,10 @@
-#include <anof/infrastructure/persistence/sqlite/SqliteInitializedState.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteDriveIntegrity.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteIdentitySql.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteInitializedState.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSettingsRepository.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteStorageRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteUserRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteStorageRepository.h>
 namespace anof::infrastructure::sqlite {
 namespace detail {
 // 业务 Store 的数据库完整性门禁；文件发布和实例配置匹配由维护入口负责。
@@ -12,22 +13,25 @@ Result<InitReceipt> verifyInitialized(SqliteConnection& connection, PasswordHash
     SqliteTransactionContext context(connection, active);
     auto begun = context.beginRead();
     if (!begun) return begun.error();
+    auto membership = verifyDriveMembership(connection);
+    if (!membership) return membership.error();
     SqliteSettingsRepository settings(context);
     auto stored = settings.get();
     if (!stored) return stored.error();
     if (!stored.value()) return ErrorCode::NotFound;
     auto check = detail::query(context,
-        "SELECT (SELECT count(*) FROM users WHERE role=1 AND enabled=1)=1 "
-        "AND (SELECT count(*) FROM spaces WHERE kind=1)=1 "
-        "AND (SELECT count(*) FROM users)<=?1 "
-        "AND NOT EXISTS(SELECT 1 FROM users u WHERE NOT EXISTS(SELECT 1 FROM spaces s WHERE s.kind=0 AND s.owner_id=u.id)) "
-        "AND NOT EXISTS(SELECT 1 FROM spaces s LEFT JOIN nodes n ON n.id=s.root_node_id LEFT JOIN space_quotas q ON q.space_id=s.id "
-        "WHERE n.id IS NULL OR n.space_id<>s.id OR n.parent_id IS NOT NULL OR n.name<>'' OR n.kind<>0 OR n.trashed<>0 OR n.blob_id IS NOT NULL "
-        "OR q.space_id IS NULL OR q.used_nodes<1 OR (s.kind=0 AND n.created_by<>s.owner_id) "
-        "OR (s.kind=1 AND n.created_by<>(SELECT id FROM users WHERE role=1))) "
-        "AND NOT EXISTS(SELECT 1 FROM users u CROSS JOIN spaces s LEFT JOIN public_contribution_quotas q ON q.space_id=s.id AND q.user_id=u.id "
-        "WHERE s.kind=1 AND (q.user_id IS NULL OR (u.role=1 AND q.used_nodes<1)))",
-        { stored.value()->maxUsers.value() });
+                               "SELECT EXISTS(SELECT 1 FROM node_accounting WHERE singleton=1 AND used_nodes=(SELECT count(*) FROM nodes) AND reserved_nodes=(SELECT count(*) FROM uploads WHERE state<5)) "
+                               "AND (SELECT count(*) FROM users WHERE role=1 AND enabled=1)=1 "
+                               "AND (SELECT count(*) FROM spaces WHERE kind=1)=1 "
+                               "AND (SELECT count(*) FROM users)<=?1 "
+                               "AND NOT EXISTS(SELECT 1 FROM users u WHERE NOT EXISTS(SELECT 1 FROM spaces s WHERE s.kind=0 AND s.owner_id=u.id)) "
+                               "AND NOT EXISTS(SELECT 1 FROM spaces s LEFT JOIN nodes n ON n.id=s.root_node_id LEFT JOIN space_quotas q ON q.space_id=s.id "
+                               "WHERE n.id IS NULL OR n.space_id<>s.id OR n.parent_id IS NOT NULL OR n.name<>'' OR n.kind<>0 OR n.trashed<>0 OR n.blob_id IS NOT NULL "
+                               "OR q.space_id IS NULL OR q.used_nodes<1 OR (s.kind=0 AND n.created_by<>s.owner_id) "
+                               "OR (s.kind=1 AND n.created_by<>(SELECT id FROM users WHERE role=1))) "
+                               "AND NOT EXISTS(SELECT 1 FROM users u CROSS JOIN spaces s LEFT JOIN public_contribution_quotas q ON q.space_id=s.id AND q.user_id=u.id "
+                               "WHERE s.kind=1 AND (q.user_id IS NULL OR (u.role=1 AND q.used_nodes<1)))",
+                               { stored.value()->maxUsers.value() });
     if (!check) return check.error();
     auto row = check.value()->step();
     if (!row) return row.error();
@@ -61,29 +65,41 @@ Result<InitReceipt> verifyInitialized(SqliteConnection& connection, PasswordHash
     auto common = readId<SpaceId>(*receipt.value(), 1);
     auto personal = readId<SpaceId>(*receipt.value(), 2);
     if (!admin || !common || !personal) return ErrorCode::IntegrityError;
+    auto lifecycle = detail::query(context,
+                                   "SELECT NOT EXISTS(SELECT 1 FROM blobs b WHERE "
+                                   "(b.state=1 AND (EXISTS(SELECT 1 FROM nodes n WHERE n.blob_id=b.id) OR EXISTS(SELECT 1 FROM uploads u WHERE u.pending_blob_id=b.id AND (u.state IN (3,4) OR u.cleanup_pending=1)))) OR "
+                                   "(b.state=0 AND ((b.unreferenced_at IS NULL)<>EXISTS(SELECT 1 FROM nodes n WHERE n.blob_id=b.id)))) "
+                                   "AND NOT EXISTS(SELECT 1 FROM uploads u LEFT JOIN nodes n ON n.id=u.result_node_id LEFT JOIN blobs b ON b.id=n.blob_id WHERE u.state=5 AND "
+                                   "((u.result_deleted_at IS NOT NULL AND n.id IS NOT NULL) OR (u.result_deleted_at IS NULL AND (n.id IS NULL OR n.blob_id IS NOT u.pending_blob_id OR b.size<>u.length OR lower(hex(b.sha256))<>u.actual_sha256))))");
+    if (!lifecycle) return lifecycle.error();
+    auto lifeRow = lifecycle.value()->step();
+    if (!lifeRow) return lifeRow.error();
+    if (!lifeRow.value()) return ErrorCode::IntegrityError;
+    auto consistent = readBoolean(*lifecycle.value(), 0);
+    if (!consistent || !consistent.value()) return ErrorCode::IntegrityError;
     SqliteStorageRepository storage(context);
     auto accounting = storage.get();
     if (!accounting) return accounting.error();
     if (initial) {
         auto exact = detail::query(context,
-            "SELECT NOT EXISTS(SELECT 1 FROM uploads) AND NOT EXISTS(SELECT 1 FROM transfer_audit_events) "
-            "AND NOT EXISTS(SELECT 1 FROM storage_accounting WHERE retained_bytes<>0 OR reserved_bytes<>0 OR revision<>1) "
-            "AND (SELECT count(*) FROM users)=1 AND (SELECT count(*) FROM spaces)=2 "
-            "AND (SELECT count(*) FROM nodes)=2 AND (SELECT count(*) FROM space_quotas)=2 "
-            "AND (SELECT count(*) FROM public_contribution_quotas)=1 "
-            "AND NOT EXISTS(SELECT 1 FROM sessions) AND NOT EXISTS(SELECT 1 FROM invites) "
-            "AND NOT EXISTS(SELECT 1 FROM blobs) AND NOT EXISTS(SELECT 1 FROM audit_events) "
-            "AND (SELECT count(*) FROM identity_audit_events)=1 "
-            "AND NOT EXISTS(SELECT 1 FROM space_quotas WHERE used_bytes<>0 OR used_nodes<>1 OR reserved_bytes<>0 OR reserved_nodes<>0 OR revision<>1) "
-            "AND NOT EXISTS(SELECT 1 FROM public_contribution_quotas WHERE used_bytes<>0 OR used_nodes<>1 OR reserved_bytes<>0 OR reserved_nodes<>0 OR revision<>1) "
-            "AND NOT EXISTS(SELECT 1 FROM users WHERE auth_epoch<>0 OR password_version<>1 OR revision<>1 OR created_at<>?1 OR updated_at<>?1) "
-            "AND NOT EXISTS(SELECT 1 FROM nodes WHERE revision<>1 OR created_at<>?1 OR updated_at<>?1) "
-            "AND NOT EXISTS(SELECT 1 FROM instance_settings WHERE revision<>1) "
-            "AND EXISTS(SELECT 1 FROM space_quotas q JOIN spaces s ON s.id=q.space_id CROSS JOIN instance_settings i "
-            "WHERE s.kind=0 AND q.limit_bytes=i.default_private_bytes AND q.limit_nodes=i.default_private_nodes) "
-            "AND EXISTS(SELECT 1 FROM public_contribution_quotas q CROSS JOIN instance_settings i "
-            "WHERE q.limit_bytes=i.default_contribution_bytes AND q.limit_nodes=i.default_contribution_nodes)",
-            { stored.value()->initializedAt.time_since_epoch().count() });
+                                   "SELECT NOT EXISTS(SELECT 1 FROM trash_entries) AND NOT EXISTS(SELECT 1 FROM drive_audit_events) AND EXISTS(SELECT 1 FROM node_accounting WHERE used_nodes=(SELECT count(*) FROM nodes) AND reserved_nodes=0 AND revision=1) AND NOT EXISTS(SELECT 1 FROM uploads) AND NOT EXISTS(SELECT 1 FROM transfer_audit_events) "
+                                   "AND NOT EXISTS(SELECT 1 FROM storage_accounting WHERE retained_bytes<>0 OR reserved_bytes<>0 OR revision<>1) "
+                                   "AND (SELECT count(*) FROM users)=1 AND (SELECT count(*) FROM spaces)=2 "
+                                   "AND (SELECT count(*) FROM nodes)=2 AND (SELECT count(*) FROM space_quotas)=2 "
+                                   "AND (SELECT count(*) FROM public_contribution_quotas)=1 "
+                                   "AND NOT EXISTS(SELECT 1 FROM sessions) AND NOT EXISTS(SELECT 1 FROM invites) "
+                                   "AND NOT EXISTS(SELECT 1 FROM blobs) AND NOT EXISTS(SELECT 1 FROM audit_events) "
+                                   "AND (SELECT count(*) FROM identity_audit_events)=1 "
+                                   "AND NOT EXISTS(SELECT 1 FROM space_quotas WHERE used_bytes<>0 OR used_nodes<>1 OR reserved_bytes<>0 OR reserved_nodes<>0 OR revision<>1) "
+                                   "AND NOT EXISTS(SELECT 1 FROM public_contribution_quotas WHERE used_bytes<>0 OR used_nodes<>1 OR reserved_bytes<>0 OR reserved_nodes<>0 OR revision<>1) "
+                                   "AND NOT EXISTS(SELECT 1 FROM users WHERE auth_epoch<>0 OR password_version<>1 OR revision<>1 OR created_at<>?1 OR updated_at<>?1) "
+                                   "AND NOT EXISTS(SELECT 1 FROM nodes WHERE revision<>1 OR created_at<>?1 OR updated_at<>?1) "
+                                   "AND NOT EXISTS(SELECT 1 FROM instance_settings WHERE revision<>1) "
+                                   "AND EXISTS(SELECT 1 FROM space_quotas q JOIN spaces s ON s.id=q.space_id CROSS JOIN instance_settings i "
+                                   "WHERE s.kind=0 AND q.limit_bytes=i.default_private_bytes AND q.limit_nodes=i.default_private_nodes) "
+                                   "AND EXISTS(SELECT 1 FROM public_contribution_quotas q CROSS JOIN instance_settings i "
+                                   "WHERE q.limit_bytes=i.default_contribution_bytes AND q.limit_nodes=i.default_contribution_nodes)",
+                                   { stored.value()->initializedAt.time_since_epoch().count() });
         if (!exact) return exact.error();
         auto present = exact.value()->step();
         if (!present) return present.error();

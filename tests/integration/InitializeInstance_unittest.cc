@@ -68,9 +68,9 @@ BOOST_AUTO_TEST_CASE(real_init_password_billing_and_prepare_share_policy) {
     BOOST_REQUIRE(prepared);
     BOOST_CHECK_EQUAL(prepared.value().configuration.diskSafety.minimum.value(), 12345);
     BOOST_CHECK_EQUAL(prepared.value().configuration.diskSafety.percent.value(), 17);
-    auto transfer = sqlite::openSqliteTransferMetadataStore(tree.root / ".anof/metadata.sqlite3", {runtime::instancePasswordPolicy().verification, {}});
+    auto transfer = sqlite::openSqliteDriveMetadataStore(tree.root / ".anof/metadata.sqlite3", {runtime::instancePasswordPolicy().verification, {}});
     BOOST_REQUIRE(transfer);
-    auto transferRead = transfer.value()->beginTransferRead();
+    auto transferRead = transfer.value()->beginDriveRead();
     BOOST_REQUIRE(transferRead);
     auto accounting = transferRead.value()->storage().get();
     BOOST_REQUIRE(accounting);
@@ -78,7 +78,20 @@ BOOST_AUTO_TEST_CASE(real_init_password_billing_and_prepare_share_policy) {
     BOOST_CHECK_EQUAL(accounting.value().retained.value(), 0);
     BOOST_CHECK_EQUAL(accounting.value().reserved.value(), 0);
     BOOST_CHECK_EQUAL(accounting.value().revision.value(), 1);
+    auto nodes = transferRead.value()->nodeAccounting().get();
+    BOOST_REQUIRE(nodes);
+    BOOST_CHECK_EQUAL(nodes.value().used.value(), 2);
+    BOOST_CHECK_EQUAL(nodes.value().reserved.value(), 0);
+    BOOST_CHECK_EQUAL(nodes.value().revision.value(), 1);
+    auto gc = transferRead.value()->blobLifecycle().gcStatistics();
+    BOOST_REQUIRE(gc);
+    BOOST_CHECK_EQUAL(gc.value().pendingObjects.value(), 0);
+    BOOST_CHECK_EQUAL(gc.value().pendingBytes.value(), 0);
+    BOOST_CHECK_EQUAL(gc.value().deletingObjects.value(), 0);
+    BOOST_CHECK_EQUAL(gc.value().deletingBytes.value(), 0);
     BOOST_CHECK(!transfer.value()->beginRead());
+    BOOST_CHECK(!transfer.value()->beginTransferWrite());
+    BOOST_CHECK(!transfer.value()->beginDriveWrite());
     transferRead.value().reset();
     // 真正初始化的目录能够直接交给文件适配器；lease 覆盖全部句柄寿命。
     auto files = storage::openLocalTransferFileStore(tree.root);

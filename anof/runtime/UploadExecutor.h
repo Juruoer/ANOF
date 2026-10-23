@@ -2,6 +2,7 @@
 #include <anof/application/ports/TransferDispatcher.h>
 #include <anof/domain/transfer/TransferValues.h>
 #include <anof/runtime/DiskExecutor.h>
+#include <anof/runtime/BlobAccessRegistry.h>
 #include <anof/runtime/MetadataExecutor.h>
 
 namespace anof::runtime {
@@ -14,6 +15,7 @@ public:
     // 用户禁用提交后触发扫描；持久取消标志是权威依据。
     void notifyUserDisabled(UserId, bool confirmed = true);
     bool blobPinned(BlobId) const;
+    BlobAccessRegistry& blobAccess();
     void requestStop(std::function<void()>);
     bool stopped() const;
     TaskSubmission submit(RequestContext, OpenDownloadCommand, Completion<OpenedDownload>) override;

@@ -434,5 +434,61 @@ BOOST_AUTO_TEST_CASE(content_recovery_failure_never_listens_and_drains_before_le
     fixture.stopped();
 }
 
+BOOST_AUTO_TEST_CASE(active_drive_task_retires_before_instance_unlock_without_stop_cycle) {
+    std::atomic<bool> armed{false};
+    Fixture fixture;
+    fixture.initialize();
+    struct GatedClock : Clock {
+        std::unique_ptr<Clock> inner;
+        Fixture& fixture;
+        std::atomic<bool>& armed;
+        GatedClock(std::unique_ptr<Clock> c, Fixture& f, std::atomic<bool>& a)
+            : inner(std::move(c)), fixture(f), armed(a) {}
+        UtcTime now() const override {
+            if (armed.exchange(false)) {
+                std::unique_lock<std::mutex> lock(fixture.mutex);
+                fixture.entered = true;
+                if (!fixture.changed.wait_for(lock, std::chrono::seconds(5), [&]{return fixture.released;}))
+                    throw std::runtime_error("drive gate timeout");
+            }
+            return inner->now();
+        }
+    };
+    fixture.injected([&]() -> Result<MetadataWorkerResources> {
+        auto resources = fixture.resources();
+        if (!resources) return resources.error();
+        resources.value().clock = std::make_unique<GatedClock>(std::move(resources.value().clock), fixture, armed);
+        return std::move(resources).value();
+    });
+    fixture.start();
+    BOOST_REQUIRE(drive(fixture.loop, [&]{return fixture.server->ready();}));
+    // ready可在启动完成项的回调内发布；容量为1时须等该任务退休后再设置业务闸门。
+    BOOST_REQUIRE(drive(fixture.loop, [&]{return fixture.server->metadataSnapshot().outstanding == 0;}));
+    const RequestContext context{{SessionDigest(SessionDigest::Bytes{}), CredentialMode::Bearer},
+        RequestId::parse("10000000-0000-0000-0000-000000000001").value()};
+    unsigned completed = 0;
+    armed = true;
+    auto task = fixture.server->driveDispatcher().submit(context,
+        GetTrashCommand{TrashId::parse("10000000-0000-0000-0000-000000000001").value()},
+        [&](TaskCompletion<TrashView> c) {
+            BOOST_REQUIRE(std::holds_alternative<Result<TrashView>>(c.outcome));
+            auto& result = std::get<Result<TrashView>>(c.outcome);
+            BOOST_REQUIRE(!result); BOOST_CHECK(result.error().code == ErrorCode::Unauthenticated);
+            BOOST_CHECK(fixture.held); ++completed;
+        });
+    BOOST_REQUIRE(std::holds_alternative<AcceptedTask>(task));
+    BOOST_REQUIRE(drive(fixture.loop, [&]{return fixture.entered.load();}));
+    fixture.server->requestStop();
+    bool stopObserved = false;
+    fixture.loop.queueInLoop([&]{stopObserved = true;});
+    BOOST_REQUIRE(drive(fixture.loop, [&]{return stopObserved;}));
+    // 上传清理也可能等待metadata；不要求worker在运行中Drive退休前进入Stopping。
+    BOOST_CHECK(fixture.server->state() == RuntimeState::Stopping);
+    BOOST_CHECK(fixture.held); BOOST_CHECK_EQUAL(fixture.stoppedCalls, 0); BOOST_CHECK_EQUAL(completed, 0);
+    fixture.release();
+    fixture.stopped();
+    BOOST_CHECK_EQUAL(completed, 1);
+}
+
 }  // namespace
 }  // namespace anof::testing

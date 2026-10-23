@@ -55,13 +55,14 @@ public:
     bool ready = true;
     std::vector<HttpTraceRecord> finished;
     UnexpectedTransferDispatcher uploadDispatcher;
+    UnexpectedDriveDispatcher driveDispatcher;
     HttpApi api;
     HttpServer server{&loop, InetAddress(0, true), "account-read-test"};
     bool stopped = false;
     explicit Fixture(HttpApiOptions options = {})
         : api(codec, identity, [this] { return ready; }, [](auto, const auto&, const auto&) -> HttpStreamCallbacks {
             BOOST_ERROR("Read routed to mkdir"); return {};
-        }, dispatcher, uploadDispatcher, {{}, [this](auto record) { finished.push_back(std::move(record)); }}, options) {
+        }, dispatcher, uploadDispatcher, driveDispatcher, {{}, [this](auto record) { finished.push_back(std::move(record)); }}, options) {
         api.configure(server); server.start();
     }
     void until(const std::function<bool()>& done,

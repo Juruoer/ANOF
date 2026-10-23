@@ -1,11 +1,11 @@
 #pragma once
 
-#include <anof/application/ports/TransferMetadataStore.h>
+#include <anof/application/ports/DriveMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteConnection.h>
 
 namespace anof::infrastructure::sqlite::detail {
 // SQLite 内部连接装配。业务调用方只能使用经过引导校验的公开打开工厂。
-class MetadataStoreImpl final : public TransferMetadataStore {
+class MetadataStoreImpl final : public DriveMetadataStore {
 public:
     MetadataStoreImpl(std::unique_ptr<SqliteConnection> connection, PasswordHashLimits limits)
         : connection_(std::move(connection)), limits_(limits) {}
@@ -13,6 +13,9 @@ public:
     Result<std::unique_ptr<MetadataReadSnapshot>> beginRead() override;
     Result<std::unique_ptr<TransferTransaction>> beginTransferWrite() override;
     Result<std::unique_ptr<TransferReadSnapshot>> beginTransferRead() override;
+
+    Result<std::unique_ptr<DriveTransaction>> beginDriveWrite() override;
+    Result<std::unique_ptr<DriveReadSnapshot>> beginDriveRead() override;
 
 private:
     std::unique_ptr<SqliteConnection> connection_;

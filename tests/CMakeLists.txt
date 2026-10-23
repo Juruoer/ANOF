@@ -6,6 +6,9 @@ set(public_headers
     apps/anof/ShutdownSignals.h
     anof/client/TransferTransport.h
     anof/client/TransferProtocol.h
+    anof/client/DriveClient.h
+    anof/client/DriveProtocol.h
+    apps/anof/DriveCommands.h
     anof/client/TransferClient.h
     anof/client/CurlHttpTransport.h
     anof/core/Error.h
@@ -167,3 +170,35 @@ add_library(anof_identity_headers_check OBJECT
 target_link_libraries(anof_identity_headers_check PRIVATE anof_runtime)
 
 add_subdirectory(diagnostics)
+
+# M4根侧端口独立验证，不经尚未交付schema4的具体适配器。
+set(drive_headers
+    anof/application/drive/MaintenanceService.h
+    anof/application/drive/PurgeTree.h
+    anof/runtime/BlobAccessRegistry.h
+    anof/runtime/MaintenanceExecutor.h
+    anof/application/drive/DriveService.h
+    anof/runtime/DriveExecutor.h
+    anof/domain/drive/Trash.h
+    anof/domain/drive/TreePolicy.h
+    anof/domain/drive/NodeAccounting.h
+    anof/domain/drive/Blob.h
+    anof/application/drive/DriveCommands.h
+    anof/application/ports/DriveMetadataStore.h
+    anof/application/ports/TreeRepository.h
+    anof/application/ports/TrashRepository.h
+    anof/application/ports/NodeAccountingRepository.h
+    anof/application/ports/DriveAuditRepository.h
+    anof/application/ports/DriveIdGenerator.h
+    anof/application/ports/DriveDispatcher.h
+    tests/persistence_contract/TestDriveBackend.h
+)
+set(drive_header_sources)
+foreach(header IN LISTS drive_headers)
+    string(REPLACE "/" "_" source_name "${header}")
+    set(source "${CMAKE_CURRENT_BINARY_DIR}/drive_headers/${source_name}.cc")
+    file(GENERATE OUTPUT "${source}" CONTENT "#include <${header}>\n")
+    list(APPEND drive_header_sources "${source}")
+endforeach()
+add_library(anof_drive_headers_check OBJECT ${drive_header_sources})
+target_link_libraries(anof_drive_headers_check PRIVATE anof_application)

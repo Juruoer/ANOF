@@ -3,7 +3,9 @@
 #include <anof/application/maintenance/PrepareInstance.h>
 #include <anof/runtime/AnofRuntime.h>
 #include <anof/runtime/IdentityExecutor.h>
+#include <anof/runtime/DriveExecutor.h>
 #include <anof/runtime/UploadExecutor.h>
+#include <anof/runtime/MaintenanceExecutor.h>
 #include <anof/transport/http/CreateDirectoryHandler.h>
 
 #include <memory>
@@ -39,6 +41,7 @@ public:
     std::size_t notificationExceptions() const;
     IdentityDispatcher& identityDispatcher();
     TransferDispatcher& transferDispatcher();
+    DriveDispatcher& driveDispatcher();
 
 private:
     void initialized(Result<void> result);
@@ -46,6 +49,7 @@ private:
     void transferInitialized(Result<void>);
     void listen();
     void stopMetadata();
+    void stopDisk();
     void notifyReady(Result<void> result);
     void finishIfStopped();
     muduox::net::EventLoop& loop_;
@@ -57,8 +61,10 @@ private:
     http::DirectoryTaskObserver taskObservation_;
     AnofRuntime runtime_;
     IdentityExecutor identity_;
+    DriveExecutor drive_;
     DiskExecutor disk_;
     UploadExecutor uploads_;
+    MaintenanceExecutor maintenance_;
     std::unique_ptr<http::HttpApi> api_;
     std::unique_ptr<muduox::net::HttpServer> server_;
     MetadataExecutor::Started onReady_;

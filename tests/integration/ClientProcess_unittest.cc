@@ -1,6 +1,7 @@
 #define BOOST_TEST_MODULE ClientProcess
 #include <tests/integration/ClientProcess.h>
 #include <anof/runtime/InstancePasswordPolicy.h>
+#include <anof/application/maintenance/Initialization.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
 #include <anof/infrastructure/config/TomlInstanceConfiguration.h>
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
@@ -12,7 +13,7 @@ void initialize(const std::filesystem::path& root) {
     Process p({"init","--root",root.string(),"--admin-login","admin","--admin-display-name","Administrator","--development-http",
         "--content-budget-bytes","1048576","--disk-safety-min-bytes","12345","--disk-safety-percent","17","--private-bytes","1099511627776","--private-nodes","4","--public-bytes","1099511627776","--public-nodes","10","--contribution-bytes","1099511627776","--contribution-nodes","10"},true);
     p.input("Administrator password: ",password);p.input("Confirm password: ",password);p.finish(0); BOOST_CHECK(p.out.find("ANOF_INITIALIZED")!=std::string::npos); BOOST_CHECK(p.tty.find(password)==std::string::npos);
-    BOOST_CHECK_EQUAL(jsonFile(root/".anof/instance.json")["format_version"].get<int>(), 3);
+    BOOST_CHECK_EQUAL(jsonFile(root/".anof/instance.json")["format_version"].get<int>(), anof::InitializationIdentity::formatVersion);
     {
         namespace infra = anof::infrastructure;
         auto locks = infra::system::makeLinuxInstanceLockProvider();
@@ -295,4 +296,19 @@ BOOST_AUTO_TEST_CASE(process_failure_summary_excludes_secrets_and_raw_messages) 
     BOOST_CHECK(diagnostic.find("stderr_format=non_json")!=std::string::npos);
     BOOST_CHECK(diagnostic.find("private")==std::string::npos);
     process.err.clear();
+}
+
+BOOST_AUTO_TEST_CASE(drive_cli_confirmation_unknown_and_conflict_do_not_retry) {
+    const std::string node="20000000-0000-4000-8000-000000000001", tag="\"node-"+node+"-1\"";
+    for(int mode:{0,1,2}) {
+        Temp temp;Peer peer;add(temp,"alice",peer.port);credential(temp);
+        Process child(command(temp,"alice",{"rename",node,"--name","after","--if-match",tag}));peer.request();
+        if(mode==0)peer.respond(200,{{"unexpected","untrusted"}});
+        else peer.respond(mode==1?500:412,{{"error",{{"code",mode==1?"COMMIT_OUTCOME_UNKNOWN":"PRECONDITION_FAILED"},{"message","never print this remote message"},{"request_id","40000000-0000-4000-8000-000000000001"},{"details",Json::object()}}}});
+        auto e=child.failure(mode==2?3:6);BOOST_CHECK_EQUAL(e["operation"].get<std::string>(),"rename");BOOST_CHECK_EQUAL(e["source_id"].get<std::string>(),node);BOOST_CHECK_EQUAL(e["remote_outcome"].get<std::string>(),mode==2?"rejected":"unknown");
+        BOOST_CHECK(child.err.find(fixtureToken)==std::string::npos);BOOST_CHECK(child.err.find("never print this remote message")==std::string::npos);peer.noRetry();
+    }
+    Temp temp;Peer peer;add(temp,"alice",peer.port);credential(temp);
+    Process missing(command(temp,"alice",{"trash","purge",node,"--if-match","\"trash-"+node+"-1\""}));BOOST_CHECK_EQUAL(missing.failure(2)["operation"].get<std::string>(),"trash purge");peer.noRetry();
+    Process interrupted(command(temp,"alice",{"rm",node,"--if-match",tag}));peer.request();BOOST_REQUIRE_EQUAL(kill(interrupted.pid,SIGINT),0);auto e=interrupted.failure(6);BOOST_CHECK_EQUAL(e["source_id"].get<std::string>(),node);peer.noRetry();
 }

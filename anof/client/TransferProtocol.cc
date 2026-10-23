@@ -1,4 +1,5 @@
 #include <anof/client/TransferProtocol.h>
+#include <anof/domain/drive/NodeAccounting.h>
 #include <anof/client/internal/Json.h>
 #include <anof/domain/drive/DirectoryPolicy.h>
 #include <anof/domain/transfer/TransferValues.h>
@@ -50,6 +51,13 @@ Json upload(const Json& j) {
     if (!field(j, "terminal_at").is_null()) out["terminal_at"] = time(field(j, "terminal_at"));
     require((state == "COMPLETED" || state == "CANCELLED" || state == "EXPIRED" || state == "FAILED") ==
             !out["terminal_at"].is_null());
+    require(out["created_at"] <= out["last_progress_at"] && out["created_at"] < out["expires_at"]);
+    if(!out["terminal_at"].is_null()) require(out["terminal_at"] >= out["last_progress_at"]);
+    out["result_deleted_at"] = nullptr;
+    if(!field(j,"result_deleted_at").is_null()) {
+        out["result_deleted_at"] = time(field(j,"result_deleted_at"));
+        require(state=="COMPLETED" && out["result_deleted_at"] >= out["terminal_at"]);
+    }
     out["last_error"] = nullptr;
     if (!field(j, "last_error").is_null()) {
         auto e = string(j, "last_error");
@@ -110,6 +118,7 @@ ClientResult<TransferReply> decodeTransfer(TransferOperation op, const HttpRespo
                                                            { "DEPTH_LIMIT_EXCEEDED", 409 },
                                                            { "QUOTA_EXCEEDED", 403 },
                                                            { "NOT_A_FILE", 409 },
+                                                           { "NODE_LIMIT_REACHED", 409 },
                                                            { "UPLOAD_KEY_CONFLICT", 409 },
                                                            { "UPLOAD_OFFSET_MISMATCH", 409 },
                                                            { "UPLOAD_LENGTH_MISMATCH", 409 },
@@ -182,6 +191,12 @@ ClientResult<TransferReply> decodeTransfer(TransferOperation op, const HttpRespo
                 data["instance_id"] = id<InstanceId>(field(j, "instance_id")).toString();
                 for (auto key : { "content_budget_bytes", "retained_bytes", "reserved_bytes" })
                     data[key] = std::to_string(decimal(string(j, key)));
+                for(auto key:{"pending_gc_bytes","pending_gc_objects","deleting_bytes","deleting_objects","used_nodes","reserved_nodes","node_limit"})
+                    data[key]=std::to_string(decimal(string(j,key)));
+                const auto used=decimal(string(j,"used_nodes")), reserved=decimal(string(j,"reserved_nodes"));
+                require(decimal(string(j,"node_limit"))==kInstanceNodeLimit && used<=kInstanceNodeLimit && reserved<=kInstanceNodeLimit-used);
+                require(decimal(string(j,"deleting_bytes"))<=decimal(string(j,"pending_gc_bytes")) && decimal(string(j,"pending_gc_bytes"))<=decimal(string(j,"retained_bytes")));
+                require(decimal(string(j,"deleting_objects"))<=decimal(string(j,"pending_gc_objects")));
                 auto prefix = "\"storage-" + data["instance_id"].get<std::string>() + "-";
                 require(meta.etag && meta.etag->compare(0, prefix.size(), prefix) == 0 && meta.etag->back() == '"');
                 decimal(std::string_view(*meta.etag).substr(prefix.size(), meta.etag->size() - prefix.size() - 1), 1);

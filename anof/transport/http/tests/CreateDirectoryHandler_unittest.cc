@@ -111,6 +111,7 @@ public:
         if (throwTaskObserver) throw std::runtime_error("injected task observer failure");
     }};
     UnexpectedTransferDispatcher uploadDispatcher;
+    UnexpectedDriveDispatcher driveDispatcher;
     HttpApi api;
     HttpServer server{&loop, InetAddress(0, true), "directory-test"};
     bool stopping = false;
@@ -120,7 +121,7 @@ public:
               [this, stream = handler.stream()](auto context, const auto& request, const auto& writer) {
                   writers.push_back(writer);
                   return stream(context, request, writer);
-              }, identityDispatcher, uploadDispatcher, {{}, [this](auto record) {
+              }, identityDispatcher, uploadDispatcher, driveDispatcher, {{}, [this](auto record) {
                   exchanges.push_back(std::move(record));
                   if (throwHttpObserver) throw std::runtime_error("injected HTTP observer failure");
               }}, options) {

@@ -80,7 +80,7 @@ mkdir -m 700 /absolute/path/to/instance
 
 [InitOptions.cc](InitOptions.cc) 验证参数，[Init.cc](Init.cc) 调用初始化，[TerminalPassword.cc](TerminalPassword.cc) 管理终端和秘密输入，随后调用同步离线初始化装配。新建密码策略为 Argon2id v19、64 MiB、2 次迭代、parallelism=1；启动维护、业务打开、Bootstrap 和密码验证共用接纳上限。该策略未作物理机性能校准。runtime 已实现独立有界密码 worker 和来源／登录名限流；login 命令通过同一 HTTP 接口认证。
 
-初始化接口要求 schema/format 3，原子引导管理员、公共及私有空间、根和额度；随后发布格式标记并清理 pending。不会签发 Session 或邀请码。成功输出 `ANOF_INITIALIZED`，退出码 0，服务需另行执行 serve。参数/密码输入错误为 2；已存在、锁竞争、初始化/收尾失败为 3，并输出固定 stage/code，不回显秘密或配置。
+初始化接口及 SQLite 适配统一使用 schema/format 4，并原子创建节点账本。初始化流程要求原子引导管理员、公共及私有空间、根和额度；随后发布格式标记并清理 pending。不会签发 Session 或邀请码。成功输出 `ANOF_INITIALIZED`，退出码 0，服务需另行执行 serve。注册、mkdir 和上传用例在原事务中维护全局节点账本；Drive/GC恢复及保留期维护已纳入serve的启动/停止生命周期；文件管理HTTP和远程CLI均已接入。参数/密码输入错误为 2；已存在、锁竞争、初始化/收尾失败为 3，并输出固定 stage/code，不回显秘密或配置。
 
 引导已提交但尚未完成文件发布时使用：
 
@@ -172,3 +172,34 @@ transfer_id、state及node_id，不将后台处理视为已发布。续传失败
 [传输进程测试](../../tests/integration/TransferClientProcess_unittest.cc) 通过真实可执行文件验证部分上传的跨进程恢复、
 下载未确认尾部截断及Range恢复、服务重启、空文件、源变更和发布记录恢复。文件安全和故障语义另见
 [客户端说明](../../anof/client/README.md)。
+
+
+## 文件管理命令
+
+[DriveCommands](DriveCommands.h)复用profile锁、取消和受检输出，通过独立客户端访问HTTP，不读取服务端数据库。
+以下命令均在公共`--config-dir ... --profile ... [--json]`之后；所有ID均为服务端UUID。
+
+| 命令 | 行为 |
+| --- | --- |
+| `rename NODE_ID --name NAME --if-match TAG` | 重命名 |
+| `mv NODE_ID --parent ID [--name NAME] --if-match TAG` | 同空间移动，可同时改名 |
+| `cp NODE_ID --space ID --parent ID --name NAME --if-match TAG` | 单文件复制，仍扣逻辑额度 |
+| `rm NODE_ID --if-match TAG` | 原子移入回收站，输出Trash ID/ETag，仍计费 |
+| `search --space ID --query TEXT [--limit N --cursor TEXT]` | 一页字面搜索，不自动分页 |
+| `trash list --space ID [--root-node ID --limit N --cursor TEXT]` | 一页回收站条目 |
+| `trash show TRASH_ID` | 条目、历史父目录和ETag |
+| `trash restore TRASH_ID [--parent ID] [--name NAME] --if-match TAG` | 省略字段使用原值；额度仍计费 |
+| `trash purge TRASH_ID --if-match TAG --confirm-permanent` | 确认永久逻辑删除；物理GC可能尚未完成 |
+
+TAG需作为一个shell参数传入，例如`--if-match '"node-<UUID>-1"'`或`--if-match '"trash-<UUID>-1"'`。
+不自动读取或刷新ETag；412要求调用者显式读取后决定。purge缺少确认标志在网络前退出2，无额外交互确认，
+rm不提供force/recursive或永久删除快捷旁路。可用trash list的root过滤手动核对未知入站结果，
+404不能证明某次未知restore/purge已经成功。所有写命令最多发送一次。
+
+文件管理成功JSON的meta和错误JSON的error包含operation、已知source_id及remote_outcome；普通输出亦显示。
+只读传输/协议失败退出4，业务拒绝3，写结果未知6，确认成功后的输出失败5；不打印远端message或Bearer。
+未知结果需显式stat/ls/search/trash查询再判断，不能自动重试或把当前状态当作本次操作的收据。
+
+storage show显示物理P/R及GC子集、全局节点计量；pending GC不是立即可用空间，也不能重复计费。
+Upload JSON显示result_deleted_at；upload resume发现历史结果永久删除时退出3并明确不重传，
+即使本地已记录COMPLETED也重新查询。upload show/complete仍正常输出历史状态，不保证结果目前可下载。

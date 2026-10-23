@@ -104,7 +104,7 @@ void seed(SqliteConnection& connection) {
     BOOST_REQUIRE(connection.execute("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0, 'admin', 'Administrator', '" + std::string(kHash) + "', 1, 1, 0, 0)"));
     BOOST_REQUIRE(connection.execute("INSERT INTO spaces VALUES (" + quoted(kSpace) + ", 1, NULL, " + quoted(kRoot) + ")"));
     BOOST_REQUIRE(insertNode(connection, kRoot, "", false, false, nullptr));
-    BOOST_REQUIRE(connection.execute("INSERT INTO blobs(id,size,sha256) VALUES (" + quoted(kBlob) + ", 0, zeroblob(32))"));
+    BOOST_REQUIRE(connection.execute("INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision) VALUES (" + quoted(kBlob) + ", 0, zeroblob(32),0,0,0,1)"));
     BOOST_REQUIRE(connection.commit());
 }
 
@@ -210,7 +210,7 @@ BOOST_AUTO_TEST_CASE(value_decoding_rejects_corrupt_persistent_values) {
 
 BOOST_AUTO_TEST_CASE(schema_rejects_unknown_definition_and_missing_objects) {
     const std::pair<const char*, ErrorCode> changes[] = {
-        { "UPDATE schema_info SET version=4", ErrorCode::IntegrityError },
+        { "UPDATE schema_info SET version=5", ErrorCode::IntegrityError },
         { "UPDATE schema_info SET version=1", ErrorCode::IntegrityError },
         { "UPDATE schema_info SET definition='changed'", ErrorCode::IntegrityError },
         { "DELETE FROM schema_info", ErrorCode::IntegrityError },
@@ -286,16 +286,22 @@ BOOST_AUTO_TEST_CASE(active_names_share_namespace_and_preserve_bytes) {
     BOOST_TEST(connection->diagnostic().extendedCode == SQLITE_CONSTRAINT_UNIQUE);
     BOOST_REQUIRE(insertNode(*connection, kOther, "Child"));
     BOOST_REQUIRE(connection->execute("DELETE FROM nodes WHERE parent_id IS NOT NULL"));
-    BOOST_REQUIRE(insertNode(*connection, kChild, "child", false, true));
+    errorIs(insertNode(*connection, kChild, "child", false, true), ErrorCode::IntegrityError);
+    BOOST_REQUIRE(connection->beginWrite());
+    BOOST_REQUIRE(insertNode(*connection, kChild, "child"));
+    BOOST_REQUIRE(connection->execute("INSERT INTO trash_entries VALUES(" + quoted(kChild) + "," + quoted(kSpace) + "," + quoted(kChild) + "," + quoted(kRoot) + ",'child',0," + quoted(kUser) + ",0,2592000000000,1,1,0," + quoted(kUser) + ")"));
+    BOOST_REQUIRE(connection->execute("UPDATE nodes SET trashed=1,trash_entry_id=id,parent_id=NULL WHERE id=" + quoted(kChild)));
+    BOOST_REQUIRE(connection->commit());
     BOOST_REQUIRE(insertNode(*connection, kOther, "child"));
-    BOOST_REQUIRE(connection->execute("DELETE FROM nodes WHERE parent_id IS NOT NULL"));
+    BOOST_REQUIRE(connection->beginWrite());
+    BOOST_REQUIRE(connection->execute("DELETE FROM nodes WHERE name<>''; DELETE FROM trash_entries"));
+    BOOST_REQUIRE(connection->commit());
     for (const auto& name : { std::string(""), std::string(".."), std::string("a/b"), std::string("a\\b"), std::string("a\0b", 3), std::string(256, 'a') }) {
         errorIs(insertNode(*connection, kChild, name), ErrorCode::IntegrityError);
     }
     BOOST_REQUIRE(insertNode(*connection, kChild, std::string(255, 'a')));
-    // 未标记后代可隶属回收站祖先；可见性由后续仓储沿祖先链检查。
-    BOOST_REQUIRE(connection->execute("UPDATE nodes SET trashed=1 WHERE id=" + quoted(kChild)));
-    BOOST_REQUIRE(insertNode(*connection, kOther, "descendant", false, false, kChild));
+    // 当前schema拒绝没有条目归属的入站标记。
+    errorIs(connection->execute("UPDATE nodes SET trashed=1 WHERE id=" + quoted(kChild)), ErrorCode::IntegrityError);
 }
 
 BOOST_AUTO_TEST_CASE(schema_types_quota_and_blob_constraints_reject_invalid_data) {
@@ -383,7 +389,7 @@ BOOST_AUTO_TEST_CASE(schema2_identity_values_reject_invalid_encodings_and_ranges
     Database database;
     auto connection = database.current();
     seed(*connection);
-    BOOST_TEST(scalar(*connection, "SELECT version FROM schema_info") == 3);
+    BOOST_TEST(scalar(*connection, "SELECT version FROM schema_info") == 4);
     BOOST_TEST(scalar(*connection, "SELECT count(*) FROM instance_settings") == 0);
     // 未引导库仅供 schema 层测试；没有管理员空间完整性的生产通过结论。
     for (const char* change : {

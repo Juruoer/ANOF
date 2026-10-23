@@ -31,6 +31,7 @@ public:
     std::vector<HttpTraceRecord> committed;
     std::vector<HttpTraceRecord> finished;
     UnexpectedTransferDispatcher uploadDispatcher;
+    UnexpectedDriveDispatcher driveDispatcher;
     HttpApi api;
     HttpServer server;
     explicit Fixture(std::size_t limit = 128)
@@ -42,7 +43,7 @@ public:
                   callbacks.body = [](auto part) { return part.size(); };
                   callbacks.cancel = [this] { ++cancelled; };
                   return callbacks;
-              }, identityDispatcher, uploadDispatcher, {[this](auto record) { committed.push_back(std::move(record)); },
+              }, identityDispatcher, uploadDispatcher, driveDispatcher, {[this](auto record) { committed.push_back(std::move(record)); },
                   [this](auto record) { finished.push_back(std::move(record)); }}, {limit, 15, 30}),
           server(&loop, InetAddress(0, true), "anof-http-test") {
         api.configure(server);
@@ -172,9 +173,9 @@ BOOST_AUTO_TEST_CASE(protocolErrorsAreObservedWithoutJsonEnvelope) {
 BOOST_AUTO_TEST_CASE(configurationIsValidatedAndInstalledOnce) {
     Fixture fixture;
     BOOST_CHECK_THROW(fixture.api.configure(fixture.server), std::logic_error);
-    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, {}, [](auto, const auto&, const auto&) { return HttpStreamCallbacks{}; }, fixture.identityDispatcher, fixture.uploadDispatcher), std::invalid_argument);
-    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, [] { return true; }, {}, fixture.identityDispatcher, fixture.uploadDispatcher), std::invalid_argument);
-    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, [] { return true; }, [](auto, const auto&, const auto&) { return HttpStreamCallbacks{}; }, fixture.identityDispatcher, fixture.uploadDispatcher, {}, {129, 15, 30}), std::invalid_argument);
+    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, {}, [](auto, const auto&, const auto&) { return HttpStreamCallbacks{}; }, fixture.identityDispatcher, fixture.uploadDispatcher, fixture.driveDispatcher), std::invalid_argument);
+    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, [] { return true; }, {}, fixture.identityDispatcher, fixture.uploadDispatcher, fixture.driveDispatcher), std::invalid_argument);
+    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, [] { return true; }, [](auto, const auto&, const auto&) { return HttpStreamCallbacks{}; }, fixture.identityDispatcher, fixture.uploadDispatcher, fixture.driveDispatcher, {}, {129, 15, 30}), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(keepAliveIdsArePerExchange) {

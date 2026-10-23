@@ -1,4 +1,5 @@
 #pragma once
+#include <anof/application/ports/DriveMetadataStore.h>
 #include <anof/application/identity/IdentityService.h>
 #include <anof/infrastructure/config/TomlInstanceConfiguration.h>
 #include <anof/infrastructure/crypto/SodiumRequestIdentity.h>
@@ -100,7 +101,7 @@ struct Hasher final : PasswordHasher {
         return inner->verify(input, encoded);
     }
 };
-// 只对发生身份写入的事务注入“已提交但确认丢失”，清理事务保持真实结果。
+// 只对发生身份或文件管理审计写入的事务注入“已提交但确认丢失”，清理事务保持真实结果。
 struct AuditProbe final : IdentityAuditRepository {
     IdentityAuditRepository& inner;
     bool wrote = false;
@@ -110,32 +111,52 @@ struct AuditProbe final : IdentityAuditRepository {
         return inner.append(event);
     }
 };
-struct UncertainTransaction final : TransferTransaction {
+struct DriveAuditProbe final : DriveAuditRepository {
+    DriveAuditRepository& inner;
+    bool wrote = false;
+    explicit DriveAuditProbe(DriveAuditRepository& value) : inner(value) {}
+    Result<void> append(const DriveEvent& event) override {
+        wrote = true;
+        return inner.append(event);
+    }
+};
+struct UncertainTransaction final : DriveTransaction {
     std::unique_ptr<MetadataTransaction> inner;
     AuditProbe audit;
-    explicit UncertainTransaction(std::unique_ptr<MetadataTransaction> value) : inner(std::move(value)), audit(inner->identityAudit()) {}
+    DriveAuditProbe driveAuditProbe;
+    explicit UncertainTransaction(std::unique_ptr<MetadataTransaction> value) : inner(std::move(value)), audit(inner->identityAudit()),
+        driveAuditProbe(dynamic_cast<DriveTransaction&>(*inner).driveAudit()) {}
+    NodeAccountingRepository& nodeAccounting() override { return inner->nodeAccounting(); }
+    TreeRepository& tree() override { return dynamic_cast<DriveTransaction&>(*inner).tree(); }
+    TrashRepository& trash() override { return dynamic_cast<DriveTransaction&>(*inner).trash(); }
+    DriveAuditRepository& driveAudit() override { return driveAuditProbe; }
     AuthorizationReader& authorization() override { return inner->authorization(); }
     UserRepository& users() override { return inner->users(); }
     SessionRepository& sessions() override { return inner->sessions(); }
     InviteRepository& invites() override { return inner->invites(); }
     SpaceRepository& spaces() override { return inner->spaces(); }
     FileNodeRepository& nodes() override { return dynamic_cast<TransferTransaction&>(*inner).nodes(); }
-    ReservationQuotaRepository& quotas() override { return dynamic_cast<TransferTransaction&>(*inner).quotas(); }
-    UploadRepository& uploads() override { return dynamic_cast<TransferTransaction&>(*inner).uploads(); }
-    BlobRepository& blobs() override { return dynamic_cast<TransferTransaction&>(*inner).blobs(); }
-    StorageRepository& storage() override { return dynamic_cast<TransferTransaction&>(*inner).storage(); }
+    DriveQuotaRepository& quotas() override { return dynamic_cast<DriveTransaction&>(*inner).quotas(); }
+    DriveUploadRepository& uploads() override { return dynamic_cast<DriveTransaction&>(*inner).uploads(); }
+    LifecycleBlobRepository& blobs() override { return dynamic_cast<DriveTransaction&>(*inner).blobs(); }
+    DriveStorageRepository& storage() override { return dynamic_cast<DriveTransaction&>(*inner).storage(); }
     TransferAuditRepository& transferAudit() override { return dynamic_cast<TransferTransaction&>(*inner).transferAudit(); }
     SettingsRepository& settings() override { return inner->settings(); }
     AuditRepository& directoryAudit() override { return inner->directoryAudit(); }
     IdentityAuditRepository& identityAudit() override { return audit; }
     Result<void> commit() override {
         auto result = inner->commit();
-        return result && audit.wrote ? Result<void>{ ErrorCode::CommitOutcomeUnknown } : result;
+        return result && (audit.wrote || driveAuditProbe.wrote) ? Result<void>{ ErrorCode::CommitOutcomeUnknown } : result;
     }
 };
-struct UncertainStore final : TransferMetadataStore {
+struct UncertainStore final : DriveMetadataStore {
     std::unique_ptr<MetadataStore> inner;
     explicit UncertainStore(std::unique_ptr<MetadataStore> value) : inner(std::move(value)) {}
+    Result<std::unique_ptr<DriveReadSnapshot>> beginDriveRead() override { return dynamic_cast<DriveMetadataStore&>(*inner).beginDriveRead(); }
+    Result<std::unique_ptr<DriveTransaction>> beginDriveWrite() override {
+        auto tx = dynamic_cast<DriveMetadataStore&>(*inner).beginDriveWrite(); if (!tx) return tx.error();
+        return std::unique_ptr<DriveTransaction>(new UncertainTransaction(std::move(tx).value()));
+    }
     Result<std::unique_ptr<TransferReadSnapshot>> beginTransferRead() override {
         return dynamic_cast<TransferMetadataStore&>(*inner).beginTransferRead();
     }

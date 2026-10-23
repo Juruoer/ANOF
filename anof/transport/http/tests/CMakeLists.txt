@@ -47,6 +47,9 @@ target_compile_options(anof_http_create_directory_unittest PRIVATE -Wall -Wextra
 
 # 每个公开头独立编译，避免调用方依赖偶然的 include 顺序。
 set(http_public_headers
+    DriveRequest.h
+    DriveResponse.h
+    DriveHandlers.h
     DownloadResponse.h
     DownloadStream.h
     TransferRequest.h
@@ -81,3 +84,10 @@ target_compile_options(anof_http_download_protocol_unittest PRIVATE -Wall -Wextr
 anof_add_unit_test(anof_http_download_handlers_unittest DownloadHandlers_unittest.cc)
 target_link_libraries(anof_http_download_handlers_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
 target_compile_options(anof_http_download_handlers_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+anof_add_unit_test(anof_http_drive_protocol_unittest DriveProtocol_unittest.cc)
+target_link_libraries(anof_http_drive_protocol_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_drive_protocol_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+anof_add_unit_test(anof_http_drive_handlers_unittest DriveHandlers_unittest.cc)
+target_link_libraries(anof_http_drive_handlers_unittest PRIVATE anof_http nlohmann_json::nlohmann_json)
+target_compile_options(anof_http_drive_handlers_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)

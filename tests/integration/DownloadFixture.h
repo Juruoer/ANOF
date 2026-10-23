@@ -1,7 +1,7 @@
 #pragma once
 #include <tests/integration/HttpInstanceFixture.h>
 namespace {
-RequestContext context(const std::string& token) {
+inline RequestContext context(const std::string& token) {
     auto codec = crypto::makeSodiumSessionTokenCodec();
     BOOST_REQUIRE(codec);
     auto digest = codec.value()->digestBearer(token);

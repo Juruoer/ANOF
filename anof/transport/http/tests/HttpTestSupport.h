@@ -128,6 +128,17 @@ public:
         BOOST_ERROR("Unexpected upload submission: SetStorageBudgetCommand"); return SubmitError::InternalError;
     }
 };
+class UnexpectedDriveDispatcher final : public DriveDispatcher {
+public:
+    TaskSubmission submit(RequestContext, UpdateNodeCommand, Completion<NodeDetails>) override { BOOST_ERROR("Unexpected drive submission: UpdateNodeCommand"); return SubmitError::InternalError; }
+    TaskSubmission submit(RequestContext, CopyFileCommand, Completion<NodeDetails>) override { BOOST_ERROR("Unexpected drive submission: CopyFileCommand"); return SubmitError::InternalError; }
+    TaskSubmission submit(RequestContext, TrashNodeCommand, Completion<TrashView>) override { BOOST_ERROR("Unexpected drive submission: TrashNodeCommand"); return SubmitError::InternalError; }
+    TaskSubmission submit(RequestContext, RestoreTrashCommand, Completion<NodeDetails>) override { BOOST_ERROR("Unexpected drive submission: RestoreTrashCommand"); return SubmitError::InternalError; }
+    TaskSubmission submit(RequestContext, PurgeTrashCommand, Completion<void>) override { BOOST_ERROR("Unexpected drive submission: PurgeTrashCommand"); return SubmitError::InternalError; }
+    TaskSubmission submit(RequestContext, GetTrashCommand, Completion<TrashView>) override { BOOST_ERROR("Unexpected drive submission: GetTrashCommand"); return SubmitError::InternalError; }
+    TaskSubmission submit(RequestContext, SearchNodesCommand, Completion<Page<NodeDetails, SearchCursor>>) override { BOOST_ERROR("Unexpected drive submission: SearchNodesCommand"); return SubmitError::InternalError; }
+    TaskSubmission submit(RequestContext, ListTrashCommand, Completion<Page<TrashView, TrashCursor>>) override { BOOST_ERROR("Unexpected drive submission: ListTrashCommand"); return SubmitError::InternalError; }
+};
 struct Client {
     int fd;
     std::string bytes;

@@ -709,7 +709,7 @@ BOOST_AUTO_TEST_CASE(identity_audit_encodes_every_variant_without_secret_columns
     auto invite = id<InviteId>(3);
     auto space = id<SpaceId>(4);
     auto root = id<NodeId>(5);
-    BOOST_REQUIRE(f.connection->execute("INSERT INTO spaces VALUES('"+space.toString()+"',1,NULL,'"+root.toString()+"'); INSERT INTO nodes VALUES('"+root.toString()+"','"+space.toString()+"',NULL,'',0,'"+admin.toString()+"',NULL,1,0,0,0)"));
+    BOOST_REQUIRE(f.connection->execute("INSERT INTO spaces VALUES('" + space.toString() + "',1,NULL,'" + root.toString() + "'); INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES('" + root.toString() + "','" + space.toString() + "',NULL,'',0,'" + admin.toString() + "',NULL,1,0,0,0)"));
     const IdentityAction actions[] = {InstanceInitialized{ admin, id<InstanceId>(10) }, InviteCreated{ admin, invite }, InviteRevoked{ admin, invite }, UserRegistered{ member, invite }, SessionCreated{ member }, SessionRevoked{ member }, PasswordChanged{ member }, UserEnabled{ admin, member }, UserDisabled{ admin, member }, DisplayNameChanged{ member }, QuotaChanged{ admin, SpaceQuota{ space } }, QuotaChanged{ admin, PublicContributionQuota{ space, member } } };
     for(const auto& action:actions) BOOST_REQUIRE(t.audit.append({id<RequestId>(20), time(0), action }));
     BOOST_REQUIRE(t.context.commit());

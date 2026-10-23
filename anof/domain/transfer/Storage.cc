@@ -36,4 +36,9 @@ Result<StorageSnapshot> publishStorage(StorageSnapshot s, ByteCount amount) {
     s.reserved = ByteCount::from(s.reserved.value() - amount.value()).value();
     return amount.value() == 0 ? Result<StorageSnapshot>(s) : advance(s);
 }
+Result<StorageSnapshot> releaseRetainedStorage(StorageSnapshot s, ByteCount amount) {
+    if (!s.retained.add(s.reserved.value()) || amount.value() > s.retained.value()) return ErrorCode::IntegrityError;
+    s.retained = ByteCount::from(s.retained.value() - amount.value()).value();
+    return amount.value() == 0 ? Result<StorageSnapshot>(s) : advance(s);
+}
 }  // namespace anof

@@ -13,7 +13,7 @@ target_link_libraries(anof_terminal_support PUBLIC anof_domain PRIVATE Threads::
 target_compile_options(anof_terminal_support PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 
 add_library(anof_client_commands STATIC ClientCommands.cc
-    TransferCommands.cc ClientOutput.cc)
+    TransferCommands.cc DriveCommands.cc ClientOutput.cc)
 target_link_libraries(anof_client_commands PUBLIC anof_client PRIVATE anof_terminal_support CLI11::CLI11 nlohmann_json::nlohmann_json)
 target_compile_options(anof_client_commands PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 

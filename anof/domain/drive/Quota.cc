@@ -54,4 +54,12 @@ Result<QuotaState> commitQuotaReservation(const QuotaState& state, QuotaDelta de
     released.value().used = {bytes.value(), nodes.value()};
     return released;
 }
+Result<QuotaState> releaseUsedQuota(const QuotaState& s, QuotaDelta delta) {
+    if (!s.used.bytes.add(s.reserved.bytes.value()) || !s.used.nodes.add(s.reserved.nodes.value()) ||
+        delta.bytes.value() > s.used.bytes.value() || delta.nodes.value() > s.used.nodes.value())
+        return ErrorCode::IntegrityError;
+    return QuotaState{s.limit,
+        {ByteCount::from(s.used.bytes.value() - delta.bytes.value()).value(),
+         NodeCount::from(s.used.nodes.value() - delta.nodes.value()).value()}, s.reserved};
+}
 }  // namespace anof

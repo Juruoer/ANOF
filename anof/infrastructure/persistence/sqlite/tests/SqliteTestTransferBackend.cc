@@ -43,6 +43,8 @@ Result<void> SqliteTestTransferBackend::reset(const anof::testing::TransferSeed&
         auto inserted = seedTransferUpload(context, upload);
         if (!inserted) return inserted.error();
     }
+    auto ledger = c.value()->execute("UPDATE node_accounting SET reserved_nodes=(SELECT count(*) FROM uploads WHERE state<5)");
+    if (!ledger) return ledger.error();
     return context.commit();
 }
 Result<std::unique_ptr<TransferMetadataStore>> SqliteTestTransferBackend::connect() {

@@ -11,7 +11,7 @@ SecureBuffer object(std::initializer_list<std::pair<std::string_view, std::strin
 }
 ClientError localAfterSuccess(ClientError error, const ResponseMeta& meta) { error.remote = RemoteOutcome::ConfirmedSuccess; error.httpStatus = meta.httpStatus; error.requestId = meta.requestId; return error; }
 }
-template<class T> ClientResult<Reply<T>> ApiClient::call(Operation op, Method method, std::string path, SecureBuffer body, unsigned limit, std::optional<AccountTag> condition) {
+template<class T> ClientResult<Reply<T>> ApiClient::call(Operation op, Method method, std::string path, SecureBuffer body, unsigned limit, std::optional<ConditionTag> condition) {
     if (!profile_.usable()) return failure(ErrorKind::LocalState, "PROFILE_RELOAD_REQUIRED");
     const bool anonymous = op == Operation::Login || op == Operation::Register;
     const auto& p = profile_.profile();
@@ -97,12 +97,12 @@ std::string quotaPath(const QuotaTarget& target) {
 }
 bool sameTarget(const QuotaTarget& a, const QuotaTarget& b) { return a.spaceId == b.spaceId && a.userId == b.userId; }
 }
-ClientResult<Reply<User>> ApiClient::rename(const DisplayName& name, const AccountTag& condition) {
+ClientResult<Reply<User>> ApiClient::rename(const DisplayName& name, const ConditionTag& condition) {
     auto reply = call<User>(Operation::Rename, Method::Patch, "/users/me", object({{"display_name",name.value()}}), 200, condition);
     if (reply && (reply.value().data.id != profile_.profile().credential->userId || reply.value().data.displayName.value() != name.value())) return failure(ErrorKind::OutcomeUnknown);
     return reply;
 }
-ClientResult<Reply<Done>> ApiClient::changePassword(const PasswordInput& current, const PasswordInput& next, const AccountTag& condition) {
+ClientResult<Reply<Done>> ApiClient::changePassword(const PasswordInput& current, const PasswordInput& next, const ConditionTag& condition) {
     auto reply = call<Done>(Operation::ChangePassword, Method::Post, "/users/me/password", object({{"current_password",current.view()},{"new_password",next.view()}}), 200, condition);
     // 只有确认成功才清除本 profile；拒绝及未知结果保留凭据，不自动重试。
     if (!reply) return reply.error();
@@ -121,7 +121,7 @@ ClientResult<Reply<AdminUser>> ApiClient::getUser(UserId id) {
     if (reply && reply.value().data.user.id != id) return failure(ErrorKind::Protocol);
     return reply;
 }
-ClientResult<Reply<AdminUser>> ApiClient::setUserEnabled(UserId id, bool enabled, const AccountTag& condition) {
+ClientResult<Reply<AdminUser>> ApiClient::setUserEnabled(UserId id, bool enabled, const ConditionTag& condition) {
     SecureBuffer body(kRequestLimit); append(body, enabled ? "{\"enabled\":true}" : "{\"enabled\":false}");
     auto reply = call<AdminUser>(Operation::SetUserEnabled, Method::Patch, "/admin/users/" + id.toString(), std::move(body), 200, condition);
     if (reply && (reply.value().data.user.id != id || reply.value().data.user.enabled != enabled)) return failure(ErrorKind::OutcomeUnknown);
@@ -132,7 +132,7 @@ ClientResult<Reply<ManagedQuota>> ApiClient::getQuota(QuotaTarget target) {
     if (reply && !sameTarget(reply.value().data.target,target)) return failure(ErrorKind::Protocol);
     return reply;
 }
-ClientResult<Reply<ManagedQuota>> ApiClient::setQuotaLimit(QuotaTarget target, Amount limit, const AccountTag& condition) {
+ClientResult<Reply<ManagedQuota>> ApiClient::setQuotaLimit(QuotaTarget target, Amount limit, const ConditionTag& condition) {
     SecureBuffer body(kRequestLimit);
     append(body, "{\"limit\":{\"bytes\":\"" + std::to_string(limit.bytes.value()) + "\",\"nodes\":\"" + std::to_string(limit.nodes.value()) + "\"}}");
     auto reply = call<ManagedQuota>(Operation::SetQuotaLimit, Method::Put, quotaPath(target), std::move(body), 200, condition);

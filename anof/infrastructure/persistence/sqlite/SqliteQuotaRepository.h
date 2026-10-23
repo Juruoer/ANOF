@@ -1,11 +1,11 @@
 #pragma once
-
+#include <anof/application/ports/DriveMetadataStore.h>
 #include <anof/application/ports/TransferMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteTransactionContext.h>
 
 namespace anof::infrastructure::sqlite {
 
-class SqliteQuotaRepository final : public ReservationQuotaRepository {
+class SqliteQuotaRepository final : public DriveQuotaRepository {
 public:
     explicit SqliteQuotaRepository(SqliteTransactionContext& context) : context_(context) {}
     Result<QuotaSnapshot> get(const QuotaScope&) override;
@@ -15,6 +15,8 @@ public:
     Result<void> reserve(const QuotaScope&, QuotaDelta) override;
     Result<void> commitReservation(const QuotaScope&, QuotaDelta) override;
     Result<void> releaseReservation(const QuotaScope&, QuotaDelta) override;
+
+    Result<void> releaseUsed(const QuotaScope&, QuotaDelta) override;
 
 private:
     Result<void> reservation(const QuotaScope&, QuotaDelta, int);

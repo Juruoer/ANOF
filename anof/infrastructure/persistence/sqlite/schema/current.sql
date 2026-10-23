@@ -1,4 +1,4 @@
--- 当前 schema 3；用于新实例建库，无开发版本升级链。
+-- 当前 schema 4；用于新实例建库，无开发版本升级链。
 CREATE TABLE schema_info (
     singleton INTEGER NOT NULL PRIMARY KEY CHECK (typeof(singleton)='integer' AND singleton=1),
     version INTEGER NOT NULL CHECK (typeof(version)='integer' AND version>0),
@@ -116,7 +116,13 @@ CREATE TABLE blobs (
     size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0 AND size <= 1099511627776),
     sha256 BLOB NOT NULL CHECK (typeof(sha256) = 'blob' AND length(sha256) = 32),
     storage_key TEXT GENERATED ALWAYS AS ('objects/' || substr(id,1,2) || '/' || id) VIRTUAL,
-    state INTEGER NOT NULL DEFAULT 0 CHECK(state=0)
+    state INTEGER NOT NULL CHECK(typeof(state)='integer' AND state IN (0,1)),
+    created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer'),
+    updated_at INTEGER NOT NULL CHECK(typeof(updated_at)='integer' AND updated_at>=created_at),
+    revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=1),
+    unreferenced_at INTEGER CHECK(unreferenced_at IS NULL OR (typeof(unreferenced_at)='integer' AND unreferenced_at>=created_at AND unreferenced_at<=updated_at AND unreferenced_at<=9223371950454775807)),
+    delete_started_at INTEGER CHECK(delete_started_at IS NULL OR (typeof(delete_started_at)='integer' AND delete_started_at>=unreferenced_at+86400000000 AND delete_started_at<=updated_at)),
+    CHECK((state=0 AND delete_started_at IS NULL) OR (state=1 AND unreferenced_at IS NOT NULL AND delete_started_at IS NOT NULL))
 );
 
 CREATE TABLE nodes (
@@ -173,11 +179,13 @@ CREATE TABLE nodes (
         AND replace(blob_id, '-', '') NOT GLOB '*[^0-9a-f]*'
         AND blob_id <> '00000000-0000-0000-0000-000000000000')),
     revision INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision >= 1),
+    trash_entry_id TEXT REFERENCES trash_entries(id) DEFERRABLE INITIALLY DEFERRED CHECK(trash_entry_id IS NULL OR anof_uuid(trash_entry_id)),
     trashed INTEGER NOT NULL CHECK (typeof(trashed) = 'integer' AND trashed IN (0, 1)),
     created_at INTEGER NOT NULL CHECK (typeof(created_at) = 'integer'),
     updated_at INTEGER NOT NULL CHECK (typeof(updated_at) = 'integer'),
     UNIQUE (space_id, id),
-    FOREIGN KEY (space_id, parent_id) REFERENCES nodes(space_id, id),
+    FOREIGN KEY (space_id, parent_id) REFERENCES nodes(space_id, id) DEFERRABLE INITIALLY DEFERRED,
+    CHECK ((trashed=0 AND trash_entry_id IS NULL) OR (trashed=1 AND trash_entry_id IS NOT NULL)),
     CHECK (parent_id IS NULL OR parent_id <> id),
     CHECK ((kind = 0 AND blob_id IS NULL) OR (kind = 1 AND blob_id IS NOT NULL)),
     CHECK ((name = '' AND parent_id IS NULL AND kind = 0 AND trashed = 0) OR
@@ -190,7 +198,7 @@ CREATE UNIQUE INDEX nodes_active_root ON nodes(space_id) WHERE trashed = 0 AND p
 CREATE INDEX nodes_blob ON nodes(blob_id);
 CREATE INDEX nodes_children ON nodes(space_id, parent_id, name COLLATE BINARY, id) WHERE trashed=0;
 
--- 根必须与空间声明一致；回收站祖先可有未标记后代，完整活动性由仓储遍历。
+-- 根必须与空间声明一致；完整回收站成员关系在事务提交时验证。
 CREATE TRIGGER nodes_shape_insert BEFORE INSERT ON nodes BEGIN
     SELECT RAISE(ABORT, 'invalid root') WHERE
         (NEW.id = (SELECT root_node_id FROM spaces WHERE id = NEW.space_id)
@@ -201,7 +209,7 @@ CREATE TRIGGER nodes_shape_insert BEFORE INSERT ON nodes BEGIN
         AND EXISTS (SELECT 1 FROM nodes WHERE id = NEW.parent_id AND space_id = NEW.space_id AND kind <> 0);
 END;
 
--- 根必须与空间声明一致；回收站祖先可有未标记后代，完整活动性由仓储遍历。
+-- 根必须与空间声明一致；完整回收站成员关系在事务提交时验证。
 CREATE TRIGGER nodes_shape_update BEFORE UPDATE ON nodes BEGIN
     SELECT RAISE(ABORT, 'invalid root') WHERE
         (NEW.id = (SELECT root_node_id FROM spaces WHERE id = NEW.space_id)
@@ -421,8 +429,21 @@ CREATE TABLE identity_audit_events (
     )
 );
 
-CREATE TRIGGER blobs_immutable BEFORE UPDATE ON blobs BEGIN SELECT RAISE(ABORT,'immutable blob'); END;
-CREATE TRIGGER blobs_no_delete BEFORE DELETE ON blobs BEGIN SELECT RAISE(ABORT,'no blob gc'); END;
+CREATE INDEX blobs_gc ON blobs(state,unreferenced_at,id);
+CREATE TRIGGER blobs_immutable BEFORE UPDATE ON blobs
+WHEN NEW.id<>OLD.id OR NEW.size<>OLD.size OR NEW.sha256<>OLD.sha256 OR NEW.created_at<>OLD.created_at
+ OR NEW.revision<>OLD.revision+1 OR NEW.updated_at<OLD.updated_at OR NEW.state<OLD.state
+ OR (OLD.unreferenced_at IS NOT NULL AND NEW.unreferenced_at IS NOT NULL AND NEW.unreferenced_at<>OLD.unreferenced_at)
+BEGIN SELECT RAISE(ABORT,'blob invariant'); END;
+CREATE TRIGGER blobs_no_referenced_delete BEFORE DELETE ON blobs
+WHEN OLD.state<>1 OR EXISTS(SELECT 1 FROM nodes WHERE blob_id=OLD.id)
+ OR EXISTS(SELECT 1 FROM uploads WHERE pending_blob_id=OLD.id AND (state IN (3,4) OR cleanup_pending=1))
+BEGIN SELECT RAISE(ABORT,'blob still held'); END;
+CREATE TRIGGER nodes_blob_insert BEFORE INSERT ON nodes WHEN NEW.blob_id IS NOT NULL AND
+ NOT EXISTS(SELECT 1 FROM blobs WHERE id=NEW.blob_id AND state=0)
+BEGIN SELECT RAISE(ABORT,'blob unavailable'); END;
+CREATE TRIGGER nodes_blob_update BEFORE UPDATE OF blob_id ON nodes WHEN NEW.blob_id IS NOT OLD.blob_id
+BEGIN SELECT RAISE(ABORT,'node content immutable'); END;
 CREATE TABLE storage_accounting (
  singleton INTEGER PRIMARY KEY CHECK(singleton=1),
  content_budget_bytes INTEGER NOT NULL CHECK(typeof(content_budget_bytes)='integer' AND content_budget_bytes>=0),
@@ -455,6 +476,7 @@ CREATE TABLE uploads (
  last_error INTEGER CHECK(last_error IS NULL OR (typeof(last_error)='integer' AND last_error BETWEEN 0 AND 11)),
  cancel_requested INTEGER NOT NULL CHECK(cancel_requested IN (0,1)),
  cleanup_pending INTEGER NOT NULL CHECK(cleanup_pending IN (0,1)),
+ result_deleted_at INTEGER CHECK(result_deleted_at IS NULL OR (typeof(result_deleted_at)='integer' AND state=5 AND result_deleted_at>=terminal_at)),
  UNIQUE(user_id,client_upload_id),
  CHECK((state>=5)=(terminal_at IS NOT NULL)),
  CHECK((state=5)=(result_node_id IS NOT NULL)),
@@ -465,6 +487,7 @@ CREATE TABLE uploads (
  CHECK((staging_location=0 AND state NOT IN (4,5)) OR pending_blob_id IS NOT NULL),
  CHECK(state!=5 OR (staging_location=1 AND cancel_requested=0 AND last_error IS NULL))
 );
+CREATE INDEX uploads_result ON uploads(result_node_id,state);
 CREATE INDEX uploads_user_seek ON uploads(user_id,created_at,id);
 CREATE INDEX uploads_seek ON uploads(created_at,id);
 CREATE INDEX uploads_candidate ON uploads(pending_blob_id,state);
@@ -472,6 +495,8 @@ CREATE TRIGGER upload_original_immutable BEFORE UPDATE ON uploads
 WHEN NEW.id!=OLD.id OR NEW.user_id!=OLD.user_id OR NEW.client_upload_id!=OLD.client_upload_id OR
  NEW.space_id!=OLD.space_id OR NEW.original_parent_id!=OLD.original_parent_id OR NEW.original_name!=OLD.original_name OR
  NEW.length!=OLD.length OR NEW.expected_sha256 IS NOT OLD.expected_sha256 OR NEW.created_at!=OLD.created_at OR
+ (OLD.state=5 AND (NEW.state<>5 OR NEW.result_node_id IS NOT OLD.result_node_id OR NEW.pending_blob_id IS NOT OLD.pending_blob_id OR NEW.actual_sha256 IS NOT OLD.actual_sha256 OR NEW.terminal_at IS NOT OLD.terminal_at)) OR
+ (OLD.result_deleted_at IS NOT NULL AND NEW.result_deleted_at IS NOT OLD.result_deleted_at) OR
  NEW.generation!=OLD.generation+1 OR NEW.durable_offset<OLD.durable_offset OR NEW.cancel_requested<OLD.cancel_requested
 BEGIN SELECT RAISE(ABORT,'upload invariant'); END;
 CREATE TABLE transfer_audit_events (
@@ -483,4 +508,48 @@ CREATE TABLE transfer_audit_events (
  occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer'),
  failure INTEGER CHECK(failure IS NULL OR failure BETWEEN 0 AND 11),
  CHECK((kind=6 AND actor_id IS NOT NULL AND upload_id IS NULL AND failure IS NULL) OR (kind!=6 AND upload_id IS NOT NULL))
+);
+
+CREATE TABLE trash_entries (
+ id TEXT PRIMARY KEY CHECK(anof_uuid(id)),
+ space_id TEXT NOT NULL REFERENCES spaces(id),
+ root_node_id TEXT NOT NULL UNIQUE REFERENCES nodes(id) DEFERRABLE INITIALLY DEFERRED,
+ original_parent_id TEXT NOT NULL CHECK(anof_uuid(original_parent_id)),
+ original_name TEXT NOT NULL CHECK(anof_node_name(original_name)),
+ kind INTEGER NOT NULL CHECK(kind IN (0,1)),
+ deleted_by TEXT NOT NULL REFERENCES users(id),
+ deleted_at INTEGER NOT NULL CHECK(typeof(deleted_at)='integer'),
+ expires_at INTEGER NOT NULL CHECK(typeof(expires_at)='integer' AND deleted_at<=9223369444854775807 AND expires_at=deleted_at+2592000000000),
+ revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=1),
+ node_count INTEGER NOT NULL CHECK(typeof(node_count)='integer' AND node_count BETWEEN 1 AND 1000),
+ logical_bytes INTEGER NOT NULL CHECK(typeof(logical_bytes)='integer' AND logical_bytes>=0),
+ sole_creator_id TEXT REFERENCES users(id)
+);
+CREATE INDEX trash_space ON trash_entries(space_id,deleted_at,id);
+CREATE INDEX trash_owner ON trash_entries(sole_creator_id,space_id,deleted_at,id);
+CREATE INDEX trash_expiry ON trash_entries(expires_at,id);
+CREATE INDEX nodes_parent ON nodes(parent_id,id);
+CREATE INDEX nodes_trash ON nodes(trash_entry_id,id);
+CREATE INDEX nodes_search ON nodes(space_id,name COLLATE BINARY,id) WHERE trash_entry_id IS NULL AND trashed=0;
+CREATE TRIGGER trash_immutable BEFORE UPDATE ON trash_entries BEGIN SELECT RAISE(ABORT,'immutable trash'); END;
+CREATE TABLE node_accounting (
+ singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+ used_nodes INTEGER NOT NULL CHECK(typeof(used_nodes)='integer' AND used_nodes BETWEEN 0 AND 100000),
+ reserved_nodes INTEGER NOT NULL CHECK(typeof(reserved_nodes)='integer' AND reserved_nodes BETWEEN 0 AND 100000-used_nodes),
+ revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=1)
+);
+CREATE TABLE drive_audit_events (
+ sequence INTEGER PRIMARY KEY,
+ request_id TEXT NOT NULL CHECK(anof_uuid(request_id)),
+ observed_at INTEGER NOT NULL CHECK(typeof(observed_at)='integer'),
+ actor_id TEXT REFERENCES users(id),
+ maintenance INTEGER NOT NULL CHECK(maintenance IN (0,1)),
+ kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 7),
+ first_id TEXT NOT NULL CHECK(anof_uuid(first_id)),
+ second_id TEXT CHECK(second_id IS NULL OR anof_uuid(second_id)),
+ third_id TEXT CHECK(third_id IS NULL OR anof_uuid(third_id)),
+ CHECK((maintenance=1 AND actor_id IS NULL AND kind IN (5,6,7)) OR (maintenance=0 AND actor_id IS NOT NULL)),
+ CHECK((kind IN (0,6,7) AND second_id IS NULL AND third_id IS NULL) OR
+ (kind=1 AND second_id IS NOT NULL AND third_id IS NOT NULL) OR
+ (kind IN (2,3,4,5) AND second_id IS NOT NULL AND third_id IS NULL))
 );

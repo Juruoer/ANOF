@@ -1,3 +1,4 @@
+#include <anof/application/ports/DriveMetadataStore.h>
 #define BOOST_TEST_MODULE AnofSqliteReadSnapshot
 #include <boost/test/unit_test.hpp>
 #include <anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.h>
@@ -48,6 +49,7 @@ struct Fixture {
             BOOST_REQUIRE(tx->nodes().insertRoot({ id<NodeId>(n), id<SpaceId>(n), id<UserId>(1), now }));
             BOOST_REQUIRE(tx->quotas().insert(SpaceQuota{ id<SpaceId>(n) }, { { amount(100, 10), amount(0, 1), amount(0, 0) }, Revision{} }));
         }
+        BOOST_REQUIRE(dynamic_cast<DriveTransaction*>(tx.get())->nodeAccounting().chargeUsed(NodeCount::from(2).value()));
         BOOST_REQUIRE(tx->quotas().insert(PublicContributionQuota{ id<SpaceId>(2), id<UserId>(1) }, { { amount(100, 10), amount(0, 1), amount(0, 0) }, Revision{} }));
         BOOST_REQUIRE(tx->settings().insertBootstrap({ id<InstanceId>(1), id<OperationId>(1), now, UserLimit::from(10).value(), amount(100, 10), amount(100, 10), Revision{} }));
         BOOST_REQUIRE(tx->identityAudit().append({ id<RequestId>(1), now, InstanceInitialized{ id<UserId>(1), id<InstanceId>(1) } }));
@@ -199,6 +201,7 @@ BOOST_AUTO_TEST_CASE(private_lookup_isolates_owners_and_includes_disabled_users)
     BOOST_REQUIRE(tx->users().insert(user(3)));
     BOOST_REQUIRE(tx->spaces().insert({ id<SpaceId>(3), SpaceKind::Private, id<UserId>(2), id<NodeId>(3) }));
     BOOST_REQUIRE(tx->nodes().insertRoot({ id<NodeId>(3), id<SpaceId>(3), id<UserId>(2), now }));
+    BOOST_REQUIRE(dynamic_cast<DriveTransaction*>(tx.get())->nodeAccounting().chargeUsed(NodeCount::from(1).value()));
     BOOST_REQUIRE(tx->users().setEnabled(id<UserId>(2), Revision{}, false, now));
     auto verify = [](SpaceReader& spaces) {
         auto admin = spaces.findPrivate(id<UserId>(1));
@@ -310,6 +313,7 @@ BOOST_AUTO_TEST_CASE(transaction_readers_see_own_writes_and_observers_see_only_c
         BOOST_REQUIRE(tx->users().insert(user(2)));
         BOOST_REQUIRE(tx->spaces().insert({ id<SpaceId>(3), SpaceKind::Private, id<UserId>(2), id<NodeId>(3) }));
         BOOST_REQUIRE(tx->nodes().insertRoot({ id<NodeId>(3), id<SpaceId>(3), id<UserId>(2), now }));
+        BOOST_REQUIRE(dynamic_cast<DriveTransaction*>(tx.get())->nodeAccounting().chargeUsed(NodeCount::from(1).value()));
         auto ownPage = tx->users().list(PageSize::from(2).value(), {});
         auto ownSpace = tx->spaces().findPrivate(id<UserId>(2));
         BOOST_REQUIRE(ownPage && ownSpace && ownSpace.value());
@@ -443,6 +447,7 @@ BOOST_AUTO_TEST_CASE(root_creation_and_quota_seed_are_atomic_and_bill_once) {
     BOOST_REQUIRE(tx->users().insert(user(2)));
     BOOST_REQUIRE(tx->spaces().insert({ id<SpaceId>(3), SpaceKind::Private, id<UserId>(2), id<NodeId>(3) }));
     BOOST_REQUIRE(tx->nodes().insertRoot({ id<NodeId>(3), id<SpaceId>(3), id<UserId>(2), now }));
+    BOOST_REQUIRE(dynamic_cast<DriveTransaction*>(tx.get())->nodeAccounting().chargeUsed(NodeCount::from(1).value()));
     BOOST_REQUIRE(tx->quotas().insert(SpaceQuota{ id<SpaceId>(3) }, { { amount(100, 10), amount(0, 1), amount(0, 0) }, Revision{} }));
     BOOST_REQUIRE(tx->quotas().insert(PublicContributionQuota{ id<SpaceId>(2), id<UserId>(2) }, { { amount(100, 10), amount(0, 0), amount(0, 0) }, Revision{} }));
     BOOST_REQUIRE(tx->commit());
@@ -477,8 +482,9 @@ BOOST_AUTO_TEST_CASE(node_seek_pagination_has_binary_order_and_file_metadata) {
         BOOST_REQUIRE(tx->commit());
     }
     auto raw = f.raw();
-    BOOST_REQUIRE(raw->execute("INSERT INTO blobs(id,size,sha256) VALUES('00000000-0000-4000-8000-000000000009',1099511627776,zeroblob(32)); "
-        "INSERT INTO nodes VALUES('00000000-0000-4000-8000-000000000009','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001','file',1,'00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000009',1,0,123,123)"));
+    BOOST_REQUIRE(raw->execute(
+        "INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision) VALUES('00000000-0000-4000-8000-000000000009',1099511627776,zeroblob(32),0,0,0,1); "
+        "INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES('00000000-0000-4000-8000-000000000009','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001','file',1,'00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000009',1,0,123,123)"));
     auto snapshot = f.read();
     std::vector<std::string> names;
     std::optional<ChildPosition> after;
@@ -510,7 +516,17 @@ BOOST_AUTO_TEST_CASE(hidden_ancestors_and_bad_parent_never_return_children) {
         BOOST_REQUIRE(tx->nodes().insertDirectory({ id<NodeId>(4), id<SpaceId>(1), id<NodeId>(3), "child", id<UserId>(1), now }));
         BOOST_REQUIRE(tx->commit());
     }
-    BOOST_REQUIRE(f.raw()->execute("UPDATE nodes SET trashed=1 WHERE name='hidden'"));
+    {
+        auto tx = f.write();
+        auto* drive = dynamic_cast<DriveTransaction*>(tx.get());
+        BOOST_REQUIRE(drive);
+        auto tree = drive->tree().activeSubtree(id<NodeId>(3), {}).value();
+        auto summary = summarizeTree(tree).value();
+        TrashEntry e{ id<TrashId>(1), id<SpaceId>(1), id<NodeId>(3), id<NodeId>(1), "hidden", NodeKind::Directory, id<UserId>(1), now, trashExpiry(now).value(), {}, summary.total.nodes, summary.total.bytes, id<UserId>(1) };
+        BOOST_REQUIRE(drive->trash().insert(e));
+        BOOST_REQUIRE(drive->tree().detach(tree, { id<NodeId>(3), {} }, e));
+        BOOST_REQUIRE(tx->commit());
+    }
     {
         auto snapshot = f.read();
         BOOST_CHECK(!snapshot->nodes().find(id<NodeId>(4)).value());
@@ -672,8 +688,9 @@ BOOST_AUTO_TEST_CASE(production_open_rejects_missing_required_rows_and_unbilled_
 BOOST_AUTO_TEST_CASE(file_blob_corruption_fails_closed_in_find_and_page) {
     Fixture f;
     auto raw = f.raw();
-    BOOST_REQUIRE(raw->execute("PRAGMA foreign_keys=OFF; "
-        "INSERT INTO nodes VALUES('00000000-0000-4000-8000-000000000009','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001','broken',1,'00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000009',1,0,123,123)"));
+    BOOST_REQUIRE(raw->execute(
+        "PRAGMA foreign_keys=OFF; DROP TRIGGER nodes_blob_insert; "
+        "INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES('00000000-0000-4000-8000-000000000009','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001','broken',1,'00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000009',1,0,123,123)"));
     {
         auto snapshot = f.read();
         errorIs(snapshot->nodes().find(id<NodeId>(9)), ErrorCode::IntegrityError);

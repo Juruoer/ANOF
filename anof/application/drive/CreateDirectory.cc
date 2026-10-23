@@ -36,6 +36,8 @@ Result<CreateDirectoryResult> CreateDirectory::execute(const RequestContext& con
         auto charged = transaction->quotas().chargeUsed(scope, charge);
         if (!charged) return charged.error();
     }
+    auto counted = transaction->nodeAccounting().chargeUsed(charge.nodes);
+    if (!counted) return counted.error();
     auto directory = transaction->nodes().insertDirectory({ nodeId.value(), space.id, command.parentId,
                                                            command.name, principal.value().userId, createdAt });
     if (!directory) return directory.error();

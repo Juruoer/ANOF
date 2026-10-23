@@ -1,4 +1,5 @@
 #include <anof/application/maintenance/Initialization.h>
+#include <array>
 
 namespace anof {
 Result<void> validateInitialQuotas(const InitialQuotas& quotas) {
@@ -11,5 +12,11 @@ Result<void> validateBootstrapSeed(const BootstrapSeed& seed) {
     if (seed.publicSpaceId == seed.privateSpaceId || seed.publicRootId == seed.privateRootId ||
         seed.encodedPassword.view().empty()) return ErrorCode::InvalidArgument;
     return validateInitialQuotas(seed.quotas);
+}
+Result<NodeAccounting> initialNodeAccounting(const BootstrapSeed& seed) {
+    auto valid = validateBootstrapSeed(seed);
+    if (!valid) return valid.error();
+    const std::array<NodeId, 2> roots{seed.publicRootId, seed.privateRootId};
+    return NodeAccounting{NodeCount::from(static_cast<std::int64_t>(roots.size())).value(), {}, Revision{}};
 }
 }  // namespace anof

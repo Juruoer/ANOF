@@ -233,7 +233,7 @@ BOOST_AUTO_TEST_CASE(publication_moves_reservations_and_exposes_immutable_blob_m
     }
     {
         auto tx = f.write();
-        BOOST_REQUIRE(tx->blobs().insert(blob));
+        BOOST_REQUIRE(tx->blobs().insert({ blob, BlobState::Available, now, now, {}, {}, {} }));
         BOOST_REQUIRE(tx->storage().publishReservation(bytes(16)));
         for (const auto& scope : { space, contribution }) BOOST_REQUIRE(tx->quotas().commitReservation(scope, amount(16, 1)));
         auto node = take(tx->nodes().insertFile({ { id<NodeId>(2), id<SpaceId>(), id<NodeId>(), "file", id<UserId>(), now }, blob.id }));
@@ -301,7 +301,7 @@ BOOST_AUTO_TEST_CASE(audit_failure_rolls_back_reservation_and_file_publication) 
     BOOST_REQUIRE(tx->storage().reserve(bytes(16)));
     BOOST_REQUIRE(tx->quotas().reserve(SpaceQuota{ id<SpaceId>() }, amount(16, 1)));
     Blob blob{ id<BlobId>(), FileLength::from(16).value(), Sha256({}) };
-    BOOST_REQUIRE(tx->blobs().insert(blob));
+    BOOST_REQUIRE(tx->blobs().insert({ blob, BlobState::Available, now, now, {}, {}, {} }));
     BOOST_REQUIRE(tx->nodes().insertFile({ { id<NodeId>(2), id<SpaceId>(), id<NodeId>(), "file", id<UserId>(), now }, blob.id }));
     BOOST_REQUIRE(tx->nodes().advanceRevision(id<NodeId>(), Revision{}, now));
     BOOST_REQUIRE(tx->quotas().commitReservation(SpaceQuota{ id<SpaceId>() }, amount(16, 1)));

@@ -2,7 +2,7 @@
 
 SQLite 内部代码负责连接、语句、当前 schema、持久化值和仓储适配。SQL、SQLite 句柄及错误码只在本目录及局部测试使用，不进入业务端口、HTTP 或 CLI。
 
-当前 schema 3、身份与目录仓储、读快照及写事务均已接通，可构建 `anof_infrastructure`；没有开发版本升级链。业务 Store 与启动维护共用数据库引导校验；事务化 Bootstrap、文件初始化及 M2 启动维护已接通，数据库打开本身仍不能代替持锁、配置与格式检查。
+当前 schema 4、身份与目录仓储、读快照及写事务均已接通，可构建 `anof_infrastructure`；没有开发版本升级链。业务 Store 与启动维护共用数据库引导校验；事务化 Bootstrap、文件初始化及 M2 启动维护已接通，数据库打开本身仍不能代替持锁、配置与格式检查。
 
 ## 建库与结构验证
 
@@ -15,7 +15,7 @@ SQLite 内部代码负责连接、语句、当前 schema、持久化值和仓储
 | `verifySqliteSchema(connection)` | 同一读事务内核验设置、实际对象定义、版本记录、外键和完整性，返回前结束读事务 |
 | `openSqliteDatabase(path, options)` | 不带 CREATE 打开已有库，不改变持久日志模式，完成 schema 校验后返回内部连接 |
 
-[当前 DDL](schema/current.sql) 是完整建库定义，CMake 嵌入 [SqliteSchemaSql.h.in](SqliteSchemaSql.h.in)，运行时无需源码文件。`schema_info` 固定 singleton=1，存版本 3、完整定义和建库 UTC 微秒时间；没有 M1 兼容建库、自动迁移或重置路径。
+[当前 DDL](schema/current.sql) 是完整建库定义，CMake 嵌入 [SqliteSchemaSql.h.in](SqliteSchemaSql.h.in)，运行时无需源码文件。`schema_info` 固定 singleton=1，存版本 4、完整定义和建库 UTC 微秒时间；没有 M1 兼容建库、自动迁移或重置路径。
 
 建库 DDL 和版本记录在一个 BEGIN IMMEDIATE 事务内提交。重复调用同连接建库接口只核验已有当前库；路径建库接口始终要求文件不存在。未知库不清空；独占创建后遇到权限、DDL 或提交失败保留文件现场，不自动删除。初始化适配器负责安全祖先目录、实例 lease 和文件发布同步；低层路径接口不代替这些检查。
 
@@ -23,7 +23,7 @@ SQLite 内部代码负责连接、语句、当前 schema、持久化值和仓储
 
 PRAGMA foreign_key_check 和 integrity_check(1) 检查实际数据；后者在 SQLite 内比较唯一 ok 结果，不回显损坏行内容。返回诊断数量有界，扫描耗时随数据库规模增长。校验不代替业务授权，不校验对象文件，不证明断电耐久性。
 
-## schema 3 数据边界
+## schema 4 数据边界
 
 | 表 | 约束 |
 |---|---|
@@ -89,7 +89,7 @@ Session 全部撤销和成功审计须由调用方显式加入同一事务；无
 
 ## Store、快照与事务生命周期
 
-[openSqliteMetadataStore](SqliteMetadataStore.h) 接受路径和显式 `SqliteMetadataOptions{passwordHashLimits, connection}`。密码预算没有默认值，必须与密码验证适配器的接纳预算一致；非法预算返回 InvalidArgument。它打开已有 schema 3，验证 settings、恰一位启用管理员、恰一个公共空间、每用户私有空间／根、必需额度和合法根创建者，并按预算检查密码编码。空间根至少占用一个节点，公共根也占用管理员的一份贡献节点。未引导或不完整数据库返回 IntegrityError，既有数据不被补齐或重置。
+[openSqliteMetadataStore](SqliteMetadataStore.h) 接受路径和显式 `SqliteMetadataOptions{passwordHashLimits, connection}`。密码预算没有默认值，必须与密码验证适配器的接纳预算一致；非法预算返回 InvalidArgument。它打开已有 schema 4，验证 settings、恰一位启用管理员、恰一个公共空间、每用户私有空间／根、必需额度和合法根创建者，并按预算检查密码编码。空间根至少占用一个节点，公共根也占用管理员的一份贡献节点。未引导或不完整数据库返回 IntegrityError，既有数据不被补齐或重置。
 
 此门禁不接收实例 lease 或配置，不能验证 pending、格式标记及其实例 ID 匹配，也不是初始化或 finish 工厂。schema 校验与引导门禁分别在自己的读事务内执行；路径和启动时排他所有权由装配方保证，正常业务不允许修改 schema。返回 Store 前所有校验事务已结束。
 
@@ -151,7 +151,7 @@ SQLITE_FULL 通过限制页数触发，提交／DDL 故障使用 authorizer；�
 
 [makeSqliteInstanceBootstrap](SqliteInstanceBootstrap.h) 接受 `SqliteBootstrapOptions{passwordHashLimits, connection}`，返回 `InitResult<std::unique_ptr<InstanceBootstrap>>`。[makeSqliteInstanceMaintenance](SqliteInstanceMaintenance.h) 接受显式 `SqliteMaintenanceOptions{passwordHashLimits, connection}`，返回 `Result<std::unique_ptr<InstanceMaintenance>>`。两者构造均不操作实例，成功持有非空独占对象；不存在无参数兼容入口。密码编码读取预算须与密码验证适配器一致：8..262144 KiB、1..10 次、parallelism=1；这里仅解码，不计算密码。
 
-`createCurrent(lease, TransferBootstrapSeed)` 要求真实 Linux lease、匹配的当前 pending、完整八键配置和安全的 uploads／objects／quarantine 目录，且格式文件、主库和所有 SQLite 伴随文件均不存在。主库在已验证 `.anof` 描述符上 O_EXCL／O_NOFOLLOW 独占创建为 0600，不接管既有空文件。直接创建 schema 3，再以 BEGIN IMMEDIATE 运行一个引导事务，同时插入显式 contentBudget、P=R=0、revision=1 的 storage_accounting 行：
+`createCurrent(lease, TransferBootstrapSeed)` 要求真实 Linux lease、匹配的当前 pending、完整八键配置和安全的 uploads／objects／quarantine 目录，且格式文件、主库和所有 SQLite 伴随文件均不存在。主库在已验证 `.anof` 描述符上 O_EXCL／O_NOFOLLOW 独占创建为 0600，不接管既有空文件。直接创建 schema 4，再以 BEGIN IMMEDIATE 运行一个引导事务，同时插入显式 contentBudget、P=R=0、revision=1 的 storage_accounting 行，并以 `initialNodeAccounting` 的受检种子结果初始化 node_accounting：
 
 - settings 记录实例／操作 ID、初始化时间、人数上限和默认额度；revision=1。
 - 一位启用管理员，auth_epoch=0、password_version=1、revision=1，使用调用方提供的密码编码。
@@ -163,7 +163,7 @@ schema 创建与业务引导是两个事务。任一业务写入或审计失败�
 
 `verifyComplete(lease, identity)` 只接纳可信 pending、完整配置、当前 schema 和已提交引导，核对实例与操作 ID；格式文件可缺失或完全匹配。它要求精确初始状态和一次根计费，返回同一 InitReceipt，不重新哈希、不补行、不改密码或额度。重复验证不会追加审计。验证成功后，调用方仍须通过 [InitializationLease](../../system/README.md) 发布格式并清除 pending。所有 SQLite 连接、语句、事务在返回前结束，lease 继续由调用方持有。
 
-普通 `InstanceMaintenance::verify` 首先拒绝任何类型的 initialization.pending，然后严格读取 format 3，校验 schema 3、SQLite 完整性／外键、settings 与标记 ID、唯一启用管理员和公共空间、每用户私有空间／根、必需额度、合法根创建者和初始化审计。所有用户密码编码须符合显式预算。核验三个内容目录的权限、所有权和同设备属性，检查物理计量单例存在及受检数值。允许合法待恢复上传和超预算状态通过结构维护，由根侧恢复协调器处理文件归属及对账；不因等待恢复而删除或重置记录。允许后续合法用户、节点、额度和 revision 变化，不要求运行后的库仍为初始计数。配置由 prepareInstance 在维护前加载并复验；单独调用 verify 不代替配置检查。
+普通 `InstanceMaintenance::verify` 首先拒绝任何类型的 initialization.pending，然后严格读取 format 4，校验 schema 4、SQLite 完整性／外键、settings 与标记 ID、唯一启用管理员和公共空间、每用户私有空间／根、必需额度、合法根创建者和初始化审计。所有用户密码编码须符合显式预算。核验三个内容目录的权限、所有权和同设备属性，检查物理计量单例存在及受检数值。允许合法待恢复上传和超预算状态通过结构维护，由根侧恢复协调器处理文件归属及对账；不因等待恢复而删除或重置记录。允许后续合法用户、节点、额度和 revision 变化，不要求运行后的库仍为初始计数。配置由 prepareInstance 在维护前加载并复验；单独调用 verify 不代替配置检查。
 
 安全数据库文件工具保留主库 fd 到 SQLite 连接关闭后，避免提前 close 干扰 POSIX 锁；打开前后及关闭后复验文件身份和 WAL／SHM，拒绝 journal、符号链接和不安全权限。验证使用已有主库、WAL 模式，不创建缺失主库、不转换旧格式、不修复数据。SQLite 正常读连接可能执行 WAL 恢复／伴随文件管理，不承诺文件系统绝对只读。
 
@@ -197,14 +197,33 @@ Release 使用现有 cmake-build-release 和相同目标。
 
 ## 独立传输仓储
 
-生产和测试统一使用 [当前 schema 3](schema/current.sql)，由 [SqliteSchema](SqliteSchema.h) 创建和校验，没有候选结构分支或升级接口。真实临时数据库工厂见 [SqliteTestTransferBackend.cc](tests/SqliteTestTransferBackend.cc)。[openSqliteTransferMetadataStore](SqliteMetadataStore.h) 返回类型化 TransferMetadataStore，与基础 opener 共用当前 schema 及已引导状态校验；调用方不需要 downcast。
+生产和测试统一使用 [当前 schema 4](schema/current.sql)，由 [SqliteSchema](SqliteSchema.h) 创建和校验，没有候选结构分支或升级接口。真实临时数据库工厂见 [SqliteTestTransferBackend.cc](tests/SqliteTestTransferBackend.cc)。[openSqliteTransferMetadataStore](SqliteMetadataStore.h) 返回类型化 TransferMetadataStore，与基础 opener 共用当前 schema 及已引导状态校验；调用方不需要 downcast。
 
 `MetadataStoreImpl` 同时实现基础及传输 Store；两类快照和事务共享连接及禁止嵌套规则。传输读取暴露 Upload、Blob、Storage Reader，写事务同时提供 FileNodeRepository、ReservationQuotaRepository 和 TransferAuditRepository。仓储异常沿用事务失败与提交未知分类，不独立提交，也不执行文件操作或恢复补偿。
 
 - Upload 持久化不可变原始参数和可变目标，按状态／generation／offset 条件替换。取消不可逆，覆盖 COMMITTING；实际变化推进 generation，重复取消无变化。
 - 按 created_at／id seek 分页与扫描，每页最多读取 size+1 行。创建原子检查每用户／全局活动上限 8／64、保留上限 512／4096；不驱逐旧记录。到期扫描排除 COMMITTING，保留删除要求终态、无 cleanup_pending 且超过七天。
-- Blob 只插入不可变 AVAILABLE 描述符，存储键由 ID 派生。文件节点引用既有 Blob，复验父目录、空间与唯一名称；父 revision 由调用方显式推进。
+- Blob 插入完整 BlobRecord，内容描述不可变，生命周期支持 AVAILABLE／DELETING，存储键由 ID 派生。文件节点引用既有 Blob，复验父目录、空间与唯一名称；父 revision 由调用方显式推进。
 - 逻辑预留按范围提供 reserve／commitReservation／releaseReservation，覆盖空间及公共贡献。物理计量独立保存 budget、P、R 和 revision；发布将 R 转入 P，清理释放 R。算术受检，超预算状态仍可读取和清理，禁止新预留。
+- COMPLETED 上传保留历史结果 ID；永久删除事务通过 `markResultsDeleted` 一次写入 result_deleted_at，并受检推进 generation。历史 Upload→Node／Blob 不设置阻止正常删除的强外键；Node→Blob 仍保持强引用。
 - typed 传输审计与节点、额度及计量共用事务。文件发布和 SQLite 提交不构成跨介质原子事务；提交未知时须由调用方销毁旧 Store、通过新连接读取权威证据。
 
 `anof_sqlite_transfer_contract_unittest` 运行根共享的三个真实后端契约；`anof_sqlite_transfer_unittest` 覆盖容量、取消、保留期、快照、发布计量、审计失败回滚、独立连接竞争及提交未知。局部适配器测试不表示恢复编排或上传端到端验收完成。
+
+## 文件树、回收站与内容生命周期
+
+[openSqliteDriveMetadataStore](SqliteMetadataStore.h) 返回 DriveMetadataStore；Metadata、Transfer、Drive 三种视图共用同一实现、连接和活动事务标记。Drive 快照仅暴露 Reader，DriveTransaction 以协变访问器提供增强 Blob、Quota、Storage、Upload 仓储，以及树、回收站、节点账本和审计；没有独立数据库或降级路径。
+
+[SqliteTreeRepository](SqliteTreeRepository.h) 枚举完整活动树或回收站成员，最多返回 1001 个节点作为超限证据，写操作上限为 1000。move／detach／restore／eraseMembers 重新读取并比较完整成员、revision、拓扑及内容，检查同空间、循环、深度和名称。move 只推进源及不同直接父；入站／恢复推进全部成员及直接父。无操作不修改时间或 revision。条目删除、额度释放、节点计费、Blob 无引用标记和审计由调用方显式组合，不重复隐式扣账。
+
+[SqliteTrashRepository](SqliteTrashRepository.h) 提供内部权威读取、权限过滤分页和到期候选。私有空间只对所有者可见；普通公共成员只看到全树归自己创建的条目，管理员可看全部公共条目。分页按 deleted_at／id，支持 root 过滤；到期候选每页最多 16 条，使用原始 UTC。普通节点、路径、子列表及按节点读取 Blob 隐藏回收站；内部树读取保留成员证据。
+
+提交前检查回收站成员归属、根／父关系、可达数、节点数、字节和创建者摘要，拒绝部分入站、部分恢复或孤立条目。COMPLETED 上传的结果节点与删除证据必须一致；DELETING Blob 不得被节点或活动上传持有。延期外键允许同一事务内完成这些变更；失败或审计拒绝时整体回滚。初始化／维护核对实际节点数及仍有逻辑预留的上传数，拒绝不一致账本，不自动重建。
+
+搜索采用字面、大小写敏感的 UTF-8 匹配，按名称二进制字节及 ID seek，复验空间可见性与活动祖先；不拼接 LIKE。QueryBudget 约束至多 100000 候选、100ms 单调耗时和 10000000 VM 指令，每 1000 指令检查。作用域退出清除 SQLite progress handler；超限返回 QueryLimitExceeded，不返回部分结果或游标。预算不是硬实时保证。
+
+[Blob 生命周期](SqliteBlobRepository.h) 从实际 Node 与活动 Upload 查询持有，不使用缓存引用计数；COMPLETED 历史不持有内容。首次无引用时间稳定，24 小时宽限按原始 UTC 判断；新增 AVAILABLE 引用清除无引用标记。markDeleting 按 revision 复验引用与宽限，持久意图不可逆；候选及 DELETING 重试每页最多 16 项。eraseDeleting 再次核对状态／版本／引用，只删除行；调用方在同一事务显式 releaseRetained 和追加审计。统计包括零字节对象个数，物理 P 在磁盘安全删除确认前保留。
+
+[节点账本](SqliteNodeAccountingRepository.h) 对 used／reserved 提供受检 charge、reserve、publish 和 release，总量上限 100000；这些操作不自行写 Node 或 Upload。[DriveAudit](SqliteDriveAuditRepository.h) 保存八种类型化事件，区分用户与维护来源，不保存凭据或本地路径。事件时间采用记录下界；审计观察时间、到期和保留判断仍使用原始 UTC。
+
+[真实 Drive 测试工厂](tests/SqliteTestDriveBackend.h) 使用当前 schema、明确 BlobRecord 和完整回收站成员种子，校验节点账本与引用一致性，提供审计读取。`anof_sqlite_drive_contract_unittest` 运行共享契约；`anof_sqlite_drive_unittest` 覆盖树条件／回滚、搜索与查询预算、1000／1001 和合成 100000 边界、共享 Blob、删除证据、宽限及重开。适配器不负责权限用例编排、磁盘删除调度、读取租约或启动恢复；局部回归不构成端到端恢复或掉电耐久性证明。

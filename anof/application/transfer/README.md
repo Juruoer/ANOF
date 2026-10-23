@@ -8,7 +8,7 @@ PATCH 准备返回已授权的上传快照及结束偏移；提交要求相同 g
 
 取消、过期及失败释放逻辑预留，但保留 `cleanupPending` 与物理预留。只有文件删除和目录同步确认后，`confirmCleanup` 才原子清除责任并释放物理预留；重试不重复扣账。查询发现过期时不延长寿命。上传仅对创建者可见，管理员没有读取其他用户上传的特权。storage 查询及条件预算更新仅允许管理员；磁盘采样由 runtime 补充。
 
-[TransferRecovery](TransferRecovery.h) 提供只读 metadata 对账和每批最多100项的终态保留清理。对账核对 Blob／节点关系、P/R、空间及公共贡献额度；分页每批最多64项，目录遍历深度受128层限制。未知、缺失或不一致的数据返回错误，不归零修账。文件枚举、SHA-256、发布恢复和监听屏障属于 [UploadExecutor](../../runtime/UploadExecutor.h)。
+[TransferRecovery](TransferRecovery.h) 提供只读 metadata 对账和每批最多100项的终态保留清理。对账核对 Blob状态／实际引用、P/R、活动及回收站节点、空间及公共贡献额度和全局节点账本。普通分页最多64项，回收站每页16项/每树1000节点，目录深度受128层限制。COMPLETED无删除证据必须有活动或回收站结果；有证据必须无结果节点，可保留共享Blob或已GC。未知、缺失或不一致的数据返回错误，不归零修账。文件枚举、SHA-256、发布恢复和监听屏障属于 [UploadExecutor](../../runtime/UploadExecutor.h)。
 
 提交返回 `CommitOutcomeUnknown` 时，调用者不能推断回滚或直接截断。runtime 使用新 Store 重读权威偏移／状态；无法确认的上传保持冻结，等待显式重新启动恢复。
 
@@ -18,3 +18,6 @@ PATCH 准备返回已授权的上传快照及结束偏移；提交要求相同 g
 [DownloadService](DownloadService.h) 的prepareDownload在单个只读快照完成身份、空间、活动父路径和文件授权，校验Node内容元数据与Blob一致，返回用户及不可变内容描述。目录返回NotAFile；不可见资源返回NotFound；不打开文件、不解释HTTP条件、不保留快照。运行时在返回下载流前完成文件类型／长度检查，并持有读取资格至磁盘清理退休。
 
 上传进度和终态使用[记录内事件时间规则](../../core/Clock.h)：取原始 UTC、创建时间和已保存进度的最大值，允许相等。PATCH 回拨不会缩短既有到期时间；发布文件节点与上传终态共用发布事件时间。认证、到期判断及审计仍使用原始 UTC；该规则不提供全局时间顺序或防回拨认证期限。
+
+下载准备要求AVAILABLE内容；runtime取得共享读资格后再次调用该准备过程复验权限及关联，再打开文件。
+storage应用返回同一快照的GC派生统计及节点账本；它们不是旧storage revision的条件写保证，HTTP/客户端尚未编码这些新增字段。

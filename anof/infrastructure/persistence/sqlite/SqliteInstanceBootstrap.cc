@@ -58,6 +58,16 @@ public:
                     if (auto inserted = statement.value()->step(); !inserted)
                         return detail::maintenanceFailure(inserted.error().code, stage);
                 }
+                {
+                    auto counts = initialNodeAccounting(seed);
+                    if (!counts) return detail::maintenanceFailure(counts.error().code, stage);
+                    auto statement = SqliteStatement::prepare(*database.value()->connection, "INSERT INTO node_accounting VALUES(1,?1,?2,?3)");
+                    if (!statement) return detail::maintenanceFailure(statement.error().code, stage);
+                    const auto& n = counts.value();
+                    for (auto bound : { statement.value()->bindInt64(1, n.used.value()), statement.value()->bindInt64(2, n.reserved.value()), statement.value()->bindInt64(3, n.revision.value()) })
+                        if (!bound) return detail::maintenanceFailure(bound.error().code, stage);
+                    if (auto inserted = statement.value()->step(); !inserted) return detail::maintenanceFailure(inserted.error().code, stage);
+                }
                 if (hook_) {
                     auto result = hook_(*database.value()->connection, detail::BootstrapPoint::BeforeAudit);
                     if (!result) return detail::maintenanceFailure(result.error().code, stage);

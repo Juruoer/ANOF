@@ -48,6 +48,7 @@ struct Upload {
     std::optional<TransferFailure> lastError;
     bool cancelRequested = false;
     bool cleanupPending = false;
+    std::optional<UtcTime> resultDeletedAt = {};
 };
 struct UploadPosition { UtcTime createdAt; UploadId id; };
 struct UploadCounts { std::size_t activeUser, activeGlobal, retainedUser, retainedGlobal; };

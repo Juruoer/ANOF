@@ -289,10 +289,10 @@ BOOST_AUTO_TEST_CASE(configuration_validation_and_no_overwrite_precede_publicati
 
 BOOST_AUTO_TEST_CASE(format_mismatch_unknown_fields_and_version_never_overwrite) {
     for (const auto& marker : {
-        std::string("{\"instance_id\":\"33333333-3333-4333-8333-333333333333\",\"format_version\":3}"),
-        std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":3,\"extra\":0}"),
-        std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":2}"),
-        std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":1}") }) {
+             std::string("{\"instance_id\":\"33333333-3333-4333-8333-333333333333\",\"format_version\":4}"),
+             std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":4,\"extra\":0}"),
+             std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":2}"),
+             std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":1}") }) {
         Tree tree;
         auto init = initializer();
         auto lease = create(*init, tree);

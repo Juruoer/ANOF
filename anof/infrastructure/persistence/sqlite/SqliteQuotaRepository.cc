@@ -123,4 +123,14 @@ Result<void> SqliteQuotaRepository::reservation(const QuotaScope& scope, QuotaDe
     q.revision = next.value();
     return update(scope, q);
 }
+Result<void> SqliteQuotaRepository::releaseUsed(const QuotaScope& scope, QuotaDelta delta) {
+    auto before = get(scope);
+    if (!before) return before.error();
+    auto after = anof::releaseUsedQuota(before.value().state, delta);
+    if (!after) return context_.fail(after.error());
+    if (!delta.bytes.value() && !delta.nodes.value()) return {};
+    auto next = before.value().revision.add(1);
+    if (!next) return context_.fail(next.error());
+    return update(scope, { after.value(), next.value() });
+}
 }  // namespace anof::infrastructure::sqlite

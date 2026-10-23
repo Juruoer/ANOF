@@ -135,8 +135,8 @@ BOOST_AUTO_TEST_CASE(unknown_response_does_not_save_credentials) {
 
 BOOST_AUTO_TEST_CASE(account_tags_payloads_and_operation_specific_errors) {
     const auto tag="\"user-"+uid+"-9223372036854775807\"";
-    BOOST_REQUIRE(AccountTag::parse(tag));
-    for (const auto& bad : std::vector<std::string>{"*","W/"+tag,tag+", "+tag," "+tag,"\"user-"+uid+"-0\"","\"user-"+uid+"-01\"","\"user-"+uid+"-9223372036854775808\"",tag+"\r\nInjected: x"}) BOOST_CHECK(!AccountTag::parse(bad));
+    BOOST_REQUIRE(ConditionTag::parse(tag));
+    for (const auto& bad : std::vector<std::string>{"*","W/"+tag,tag+", "+tag," "+tag,"\"user-"+uid+"-0\"","\"user-"+uid+"-01\"","\"user-"+uid+"-9223372036854775808\"",tag+"\r\nInjected: x"}) BOOST_CHECK(!ConditionTag::parse(bad));
     auto r=response(200,userJson());r.headers["etag"]=tag;BOOST_REQUIRE(decodeResponse(Operation::Rename,r));
     r=response(200,{{"user",userJson()},{"private_space_id",sid}});r.headers["etag"]=tag;
     BOOST_REQUIRE(decodeResponse(Operation::GetUser,r));BOOST_REQUIRE(decodeResponse(Operation::SetUserEnabled,r));
@@ -147,7 +147,7 @@ BOOST_AUTO_TEST_CASE(account_tags_payloads_and_operation_specific_errors) {
     const Json quota{{"limit",amount},{"used",amount},{"reserved",amount},{"revision","7"}};
     for (bool contribution : {false,true}) {
         const auto qtag=contribution?"\"quota-contribution-"+sid+"-"+uid+"-7\"":"\"quota-space-"+sid+"-7\"";
-        BOOST_REQUIRE(AccountTag::parse(qtag));
+        BOOST_REQUIRE(ConditionTag::parse(qtag));
         r=response(200,{{"space_id",sid},{"user_id",contribution?Json(uid):Json(nullptr)},{"quota",quota}});r.headers["etag"]=qtag;
         BOOST_REQUIRE(decodeResponse(Operation::GetQuota,r));BOOST_REQUIRE(decodeResponse(Operation::SetQuotaLimit,r));
         r.headers["etag"]=tag;BOOST_CHECK(!decodeResponse(Operation::SetQuotaLimit,r));
@@ -166,7 +166,7 @@ BOOST_AUTO_TEST_CASE(password_clear_only_after_valid_success_and_never_retries) 
     Temp temp;ProfileStore store(temp.config());BOOST_REQUIRE(store.add("admin",Origin::parse("http://127.0.0.1:1",true).value()));
     auto held=store.lock("admin");BOOST_REQUIRE(held);BOOST_REQUIRE(held.value().saveCredential(credential()));
     MockTransport transport;ApiClient api(transport,held.value());
-    const auto tag=AccountTag::parse("\"user-"+uid+"-1\"").value();
+    const auto tag=ConditionTag::parse("\"user-"+uid+"-1\"").value();
     const auto password=PasswordInput::parse("fixture password").value();
     for (int status : {403,412,429,500,204}) {
         transport.reply=[&](const auto&,const HttpRequest& request)->ClientResult<HttpResponse> {

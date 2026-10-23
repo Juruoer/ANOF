@@ -1,5 +1,6 @@
 #include <apps/anof/ClientCommands.h>
 #include <apps/anof/TransferCommands.h>
+#include <apps/anof/DriveCommands.h>
 #include <apps/anof/ClientOutput.h>
 #include <apps/anof/TerminalPassword.h>
 #include <anof/client/CurlHttpTransport.h>
@@ -58,6 +59,7 @@ CLI::App* sub(CLI::App& parent, const char* name, const char* description) { aut
 }
 struct ClientCommands::State {
     std::unique_ptr<TransferCommands> transfers;
+    std::unique_ptr<DriveCommands> drives;
     bool json=false, developmentHttp=false;
     std::string config, profile, name, server, login, displayName, id, space, parent, directoryName;
     std::string condition, quotaUser, bytes, nodes;
@@ -67,6 +69,7 @@ struct ClientCommands::State {
         *inviteCreate, *inviteList, *inviteRevoke, *spaces, *children, *stat, *mkdir, *rename, *passwordChange, *userList, *userShow, *userEnable, *userDisable, *quotaShow, *quotaSet;
     explicit State(CLI::App& app) {
         transfers=std::make_unique<TransferCommands>(app);
+        drives=std::make_unique<DriveCommands>(app);
         configOption=app.add_option("--config-dir",config,"Absolute client configuration directory (client commands only)");
         profileOption=app.add_option("--profile",profile,"Explicit client profile (remote commands only)");
         jsonOption=app.add_flag("--json",json,"Machine-readable client output")->disable_flag_override();
@@ -126,7 +129,11 @@ bool ClientCommands::validOptionOrder(int argc,char** argv) const {
     }
     return true;
 }
-int ClientCommands::invalidArguments() const { return ClientOutput(state_->json).error(failure(ErrorKind::InvalidArgument)); }
+int ClientCommands::invalidArguments() const {
+    ClientOutput output(state_->json);
+    try { (void)state_->drives->validate(output); } catch (...) {}
+    return output.error(failure(ErrorKind::InvalidArgument));
+}
 int ClientCommands::help(const CLI::App& app, const CLI::CallForHelp& request) const {
     ClientOutput output(state_->json);
     try {
@@ -142,6 +149,7 @@ int ClientCommands::run() {
     try {
         ClientSignals signals;
         auto invalid=[&] { return output.error(failure(ErrorKind::InvalidArgument)); };
+        if(!s.drives->validate(output))return invalid();
         if (*s.profiles ? s.profileOption->count()!=0 : !s.profileOption->count() || !ProfileStore::validName(s.profile)) return invalid();
         if (*s.profiles && !*s.profileList && !ProfileStore::validName(s.name)) return invalid();
         const unsigned pageLimit=number(s.limit,200), uses=number(s.maxUses,10000), seconds=number(s.lifetime,2592000);
@@ -153,7 +161,7 @@ int ClientCommands::run() {
         if (*s.inviteRevoke && !InviteId::parse(s.id)) return invalid();
         if (*s.mkdir && (!SpaceId::parse(s.space)||!NodeId::parse(s.parent)||!validateDirectoryName(s.directoryName))) return invalid();
         const bool accountWrite=*s.rename||*s.passwordChange||*s.userEnable||*s.userDisable||*s.quotaSet;
-        auto tag=AccountTag::parse(s.condition);
+        auto tag=ConditionTag::parse(s.condition);
         if (accountWrite && !tag) return invalid();
         if ((*s.userShow||*s.userEnable||*s.userDisable) && !UserId::parse(s.id)) return invalid();
         if ((*s.quotaShow||*s.quotaSet) && (!SpaceId::parse(s.space) || ((s.quotaShowUser->count()||s.quotaSetUser->count()) && !UserId::parse(s.quotaUser)))) return invalid();
@@ -179,6 +187,7 @@ int ClientCommands::run() {
         auto held=store.lock(s.profile); if (!held) return output.error(held.error());
         if (cancelled.load(std::memory_order_relaxed)) return output.error(failure(ErrorKind::Interrupted));
         CurlHttpTransport transport;
+        if(auto result=s.drives->run(held.value(),transport,&cancelled,output))return *result;
         if(auto result=s.transfers->run(path.value(),held.value(),transport,&cancelled,output)) return *result;
         ApiClient api(transport,held.value(),&cancelled);
         auto emit=[&](auto result, LocalState local=LocalState::Unchanged) -> int {

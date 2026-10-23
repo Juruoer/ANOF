@@ -6,6 +6,7 @@
 #include <anof/application/ports/InviteTokenCodec.h>
 #include <anof/application/ports/TransferMetadataStore.h>
 #include <anof/application/ports/TransferIdGenerator.h>
+#include <anof/application/ports/DriveIdGenerator.h>
 
 #include <cstddef>
 #include <functional>
@@ -32,6 +33,7 @@ struct MetadataWorkerResources {
     std::unique_ptr<TransferIdGenerator> transferIds{};
     // 未知提交后关闭旧连接，再通过工厂打开独立连接复核；不自动重试写入。
     std::function<Result<std::unique_ptr<TransferMetadataStore>>()> reopenTransfer{};
+    std::unique_ptr<DriveIdGenerator> driveIds{};
 };
 
 struct MetadataExecutorOptions {

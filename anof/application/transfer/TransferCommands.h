@@ -1,4 +1,5 @@
 #pragma once
+#include <anof/domain/drive/NodeAccounting.h>
 #include <anof/application/RequestContext.h>
 #include <anof/core/Page.h>
 #include <anof/domain/transfer/Upload.h>
@@ -40,6 +41,7 @@ struct UploadView {
     UtcTime expiresAt;
     std::optional<UtcTime> terminalAt;
     std::optional<TransferFailure> lastError;
+    std::optional<UtcTime> resultDeletedAt = {};
 };
 enum class UploadCreateDisposition { Created, Existing, Creating };
 struct UploadCreated { UploadView upload; UploadCreateDisposition disposition; };
@@ -51,6 +53,8 @@ struct StorageView {
     StorageSnapshot accounting;
     // null=UNAVAILABLE，三个采样字段一起有/无；预算事务与磁盘采样非同一快照。
     std::optional<DiskSample> disk;
+    GcStatistics gc{};
+    NodeAccounting nodes{};
 };
 struct DownloadDescriptor { NodeId nodeId; std::string name; Blob blob; };
 }  // namespace anof

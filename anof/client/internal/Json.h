@@ -6,6 +6,8 @@
 
 namespace anof::client::internal {
 using Json = nlohmann::json;
+Node parseNode(const Json&);
+bool jsonContentType(std::string);
 inline void wipe(std::string& text) noexcept { volatile char* p = text.data(); for (std::size_t i = 0; i < text.size(); ++i) p[i] = 0; }
 inline void wipe(Json& value) noexcept {
     if (value.is_string()) wipe(value.get_ref<std::string&>());

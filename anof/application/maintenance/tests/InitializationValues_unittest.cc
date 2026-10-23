@@ -53,10 +53,16 @@ BOOST_AUTO_TEST_CASE(bootstrap_rejects_colliding_roots_and_moved_secret) {
         NodeId::parse(first).value(), NodeId::parse(second).value(), {root, root, root},
         UserLimit::from(10).value(), RequestId::parse(first).value(), UtcTime{}};
     BOOST_REQUIRE(validateBootstrapSeed(seed));
+    auto initial = initialNodeAccounting(seed);
+    BOOST_REQUIRE(initial);
+    BOOST_CHECK_EQUAL(initial.value().used.value(), 2);
+    BOOST_CHECK_EQUAL(initial.value().reserved.value(), 0);
+    BOOST_CHECK_EQUAL(initial.value().revision.value(), 1);
     seed.privateSpaceId = seed.publicSpaceId;
     BOOST_CHECK(!validateBootstrapSeed(seed));
     seed.privateSpaceId = SpaceId::parse(second).value();
     seed.privateRootId = seed.publicRootId;
+    BOOST_CHECK(!initialNodeAccounting(seed));
     BOOST_CHECK(!validateBootstrapSeed(seed));
     seed.privateRootId = NodeId::parse(second).value();
     auto owned = std::move(seed.encodedPassword);

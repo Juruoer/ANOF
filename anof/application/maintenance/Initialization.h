@@ -4,6 +4,7 @@
 #include <anof/domain/identity/User.h>
 #include <anof/domain/instance/InstanceSettings.h>
 #include <variant>
+#include <anof/domain/drive/NodeAccounting.h>
 
 namespace anof {
 enum class InitError {
@@ -50,8 +51,8 @@ private:
 struct InitializationIdentity {
     InstanceId instanceId;
     OperationId operationId;
-    static constexpr std::int64_t schemaVersion = 3;
-    static constexpr std::int64_t formatVersion = 3;
+    static constexpr std::int64_t schemaVersion = 4;
+    static constexpr std::int64_t formatVersion = 4;
 };
 struct InitReceipt {
     InitializationIdentity identity;
@@ -89,5 +90,6 @@ struct BootstrapSeed {
 };
 
 Result<void> validateInitialQuotas(const InitialQuotas& quotas);
+Result<NodeAccounting> initialNodeAccounting(const BootstrapSeed&);
 Result<void> validateBootstrapSeed(const BootstrapSeed& seed);
 }  // namespace anof

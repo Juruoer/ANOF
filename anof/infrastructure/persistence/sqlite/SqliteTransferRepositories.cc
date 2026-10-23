@@ -1,5 +1,6 @@
 #include <anof/infrastructure/persistence/sqlite/SqliteBlobRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteIdentitySql.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteNodeRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStorageRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteTransferAuditRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
@@ -11,7 +12,7 @@ Result<Blob> blob(SqliteStatement& s) {
     auto digest = s.blob(2);
     auto key = s.text(3);
     auto state = s.integer(4);
-    if (!id || !size || !digest || !key || !state || digest.value().size() != 32 || state.value() != 0) return ErrorCode::IntegrityError;
+    if (!id || !size || !digest || !key || !state || digest.value().size() != 32 || (state.value() != 0 && state.value() != 1)) return ErrorCode::IntegrityError;
     std::array<std::uint8_t, 32> bytes{};
     std::copy(digest.value().begin(), digest.value().end(), bytes.begin());
     Blob b{ id.value(), size.value(), Sha256(bytes) };
@@ -42,6 +43,11 @@ Result<std::optional<Blob>> SqliteBlobRepository::find(BlobId id) {
     return std::optional<Blob>{ b.value() };
 }
 Result<std::optional<Blob>> SqliteBlobRepository::findByNode(NodeId id) {
+    SqliteNodeRepository nodes(context_);
+    auto visible = nodes.find(id);
+    if (!visible) return visible.error();
+    if (!visible.value()) return std::optional<Blob>{};
+
     auto q = detail::query(context_, "SELECT blob_id FROM nodes WHERE id=?1 AND kind=1", { id.toString() });
     if (!q) return q.error();
     auto r = q.value()->step();
@@ -86,10 +92,6 @@ Result<Page<Blob, BlobId>> SqliteBlobRepository::list(PageSize size, std::option
         }
         page.items.push_back(b.value());
     }
-}
-Result<void> SqliteBlobRepository::insert(const Blob& b) {
-    return detail::one(context_, detail::write(context_, "INSERT INTO blobs(id,size,sha256,state) VALUES(?1,?2,?3,0)",
-                                               { b.id.toString(), b.size.value(), detail::BlobParameter{ b.sha256.bytes().data(), b.sha256.bytes().size() } }));
 }
 Result<StorageSnapshot> SqliteStorageRepository::get() {
     auto q = detail::query(context_, "SELECT content_budget_bytes,retained_bytes,reserved_bytes,revision FROM storage_accounting WHERE singleton=1");
@@ -140,5 +142,12 @@ Result<void> SqliteTransferAuditRepository::append(const TransferEvent& e) {
         (e.kind == TransferEventKind::StorageLimit ? (!e.actor || e.upload || e.failure) : !e.upload)) return context_.fail(ErrorCode::InvalidArgument);
     return detail::one(context_, detail::write(context_, "INSERT INTO transfer_audit_events(kind,request_id,actor_id,upload_id,occurred_at,failure) VALUES(?1,?2,?3,?4,?5,?6)",
                                                { std::int64_t(kind), e.requestId.toString(), e.actor ? detail::Parameter(e.actor->toString()) : detail::Parameter(nullptr), e.upload ? detail::Parameter(e.upload->toString()) : detail::Parameter(nullptr), e.occurredAt.time_since_epoch().count(), e.failure ? detail::Parameter(std::int64_t(*e.failure)) : detail::Parameter(nullptr) }));
+}
+Result<void> SqliteStorageRepository::releaseRetained(ByteCount amount) {
+    auto before = get();
+    if (!before) return before.error();
+    auto after = releaseRetainedStorage(before.value(), amount);
+    if (!after) return context_.fail(after.error());
+    return saveStorage(context_, before.value(), after.value());
 }
 }  // namespace anof::infrastructure::sqlite

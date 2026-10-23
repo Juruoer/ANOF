@@ -183,14 +183,15 @@ BOOST_AUTO_TEST_CASE(finish_rejects_changed_identity_configuration_and_versions_
     f.write("initialization.pending", pending);
     auto config = f.read("config.toml"); f.write("config.toml", "development_http = true\n");
     failure(f.verify(), InitError::InvalidInput, InitStage::Verify); f.write("config.toml", config);
-    for (int version : { 1, 2, 4 }) {
+    for (int version : { 1, 2, 3, 5 }) {
         BOOST_REQUIRE(f.raw()->execute("UPDATE schema_info SET version=" + std::to_string(version)));
         failure(f.verify(), InitError::UnsupportedFormat, InitStage::Verify);
     }
-    BOOST_REQUIRE(f.raw()->execute("UPDATE schema_info SET version=3")); BOOST_REQUIRE(f.verify());
+    BOOST_REQUIRE(f.raw()->execute("UPDATE schema_info SET version=4"));
+    BOOST_REQUIRE(f.verify());
 }
 BOOST_AUTO_TEST_CASE(missing_rows_wrong_audit_and_unbilled_roots_are_not_repaired) {
-    for (const char* sql : { "DELETE FROM space_quotas", "DELETE FROM public_contribution_quotas", "DELETE FROM identity_audit_events",
+    for (const char* sql : { "DELETE FROM node_accounting", "UPDATE node_accounting SET used_nodes=1", "DELETE FROM space_quotas", "DELETE FROM public_contribution_quotas", "DELETE FROM identity_audit_events",
             "UPDATE identity_audit_events SET occurred_at=999", "UPDATE space_quotas SET used_nodes=0", "UPDATE public_contribution_quotas SET used_nodes=0",
             "UPDATE space_quotas SET used_nodes=2" }) {
         Fixture f; BOOST_REQUIRE(f.create()); BOOST_REQUIRE(f.raw()->execute(sql));
@@ -276,7 +277,7 @@ BOOST_AUTO_TEST_CASE(explicit_budget_current_format_and_typed_production_store) 
         Fixture f;
         f.contentBudget = ByteCount::from(budget).value();
         BOOST_REQUIRE(f.create());
-        BOOST_CHECK_EQUAL(f.scalar("SELECT version FROM schema_info"), 3);
+        BOOST_CHECK_EQUAL(f.scalar("SELECT version FROM schema_info"), 4);
         BOOST_CHECK_EQUAL(f.scalar("SELECT content_budget_bytes FROM storage_accounting"), budget);
         BOOST_CHECK_EQUAL(f.scalar("SELECT retained_bytes+reserved_bytes FROM storage_accounting"), 0);
         BOOST_CHECK_EQUAL(f.scalar("SELECT revision FROM storage_accounting"), 1);
@@ -290,8 +291,8 @@ BOOST_AUTO_TEST_CASE(explicit_budget_current_format_and_typed_production_store) 
             BOOST_CHECK_EQUAL(status.st_dev, base.st_dev);
         }
         f.finish();
-        BOOST_CHECK(f.read("instance.json").find("\"format_version\":3") != std::string::npos);
-        auto store = openSqliteTransferMetadataStore(f.path("metadata.sqlite3"), {bootstrapBudget, {0}});
+        BOOST_CHECK(f.read("instance.json").find("\"format_version\":4") != std::string::npos);
+        auto store = openSqliteDriveMetadataStore(f.path("metadata.sqlite3"), { bootstrapBudget, { 0 } });
         BOOST_REQUIRE(store);
         auto snapshot = store.value()->beginTransferRead();
         BOOST_REQUIRE(snapshot);
@@ -309,7 +310,7 @@ BOOST_AUTO_TEST_CASE(old_versions_and_missing_prerequisites_never_reset_instance
     BOOST_REQUIRE(f.create());
     auto pending = f.read("initialization.pending");
     auto old = pending;
-    old.replace(old.find("\"target_schema\":3"), 17, "\"target_schema\":2");
+    old.replace(old.find("\"target_schema\":4"), 17, "\"target_schema\":2");
     f.write("initialization.pending", old);
     failure(f.verify(), InitError::UnsupportedFormat, InitStage::Verify);
     BOOST_CHECK_EQUAL(f.scalar("SELECT count(*) FROM users"), 1);
@@ -319,7 +320,7 @@ BOOST_AUTO_TEST_CASE(old_versions_and_missing_prerequisites_never_reset_instance
     failure(f.verify(), InitError::UnsupportedFormat, InitStage::Verify);
     BOOST_CHECK(!openSqliteTransferMetadataStore(f.path("metadata.sqlite3"), {bootstrapBudget, {}}));
     BOOST_CHECK_EQUAL(f.scalar("SELECT version FROM schema_info"), 2);
-    BOOST_REQUIRE(f.raw()->execute("UPDATE schema_info SET version=3"));
+    BOOST_REQUIRE(f.raw()->execute("UPDATE schema_info SET version=4"));
     std::filesystem::rename(f.path("uploads"), f.path("evidence"));
     BOOST_CHECK(!f.verify());
     BOOST_CHECK(!f.lease->publishFormat());
@@ -334,9 +335,9 @@ BOOST_AUTO_TEST_CASE(maintenance_accepts_recoverable_uploads_and_over_budget_acc
     Fixture f;
     BOOST_REQUIRE(f.create());
     f.finish();
-    auto store = openSqliteTransferMetadataStore(f.path("metadata.sqlite3"), {bootstrapBudget, {0}});
+    auto store = openSqliteDriveMetadataStore(f.path("metadata.sqlite3"), { bootstrapBudget, { 0 } });
     BOOST_REQUIRE(store);
-    auto tx = store.value()->beginTransferWrite();
+    auto tx = store.value()->beginDriveWrite();
     BOOST_REQUIRE(tx);
     UploadTarget target{f.seed.privateRootId, "pending"};
     Upload u{bootstrapId<UploadId>(8), f.seed.adminUserId, bootstrapId<OperationId>(9),
@@ -344,6 +345,7 @@ BOOST_AUTO_TEST_CASE(maintenance_accepts_recoverable_uploads_and_over_budget_acc
         {}, {}, {}, StagingLocation::Temporary, {}, f.seed.createdAt, f.seed.createdAt,
         uploadExpiry(f.seed.createdAt, f.seed.createdAt).value(), {}, {}};
     BOOST_REQUIRE(tx.value()->uploads().insert(u));
+    BOOST_REQUIRE(tx.value()->nodeAccounting().reserve(NodeCount::from(1).value()));
     BOOST_REQUIRE(tx.value()->quotas().reserve(SpaceQuota{f.seed.privateSpaceId}, {ByteCount::from(16).value(), NodeCount::from(1).value()}));
     BOOST_REQUIRE(tx.value()->storage().reserve(ByteCount::from(16).value()));
     BOOST_REQUIRE(tx.value()->commit());

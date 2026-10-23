@@ -1,4 +1,5 @@
 #include <anof/domain/drive/DirectoryPolicy.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteBlobRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteIdentitySql.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteNodeRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSpaceRepository.h>
@@ -48,7 +49,7 @@ Result<StoredNode> decodeNode(const SqliteStatement& statement) {
 }
 
 constexpr const char* detailsQuery =
-    "SELECT n.id,n.space_id,n.parent_id,n.name,n.created_by,n.revision,n.created_at,n.updated_at,n.kind,n.trashed,n.blob_id,b.size,b.sha256 "
+    "SELECT n.id,n.space_id,n.parent_id,n.name,n.created_by,n.revision,n.created_at,n.updated_at,n.kind,n.trashed,n.blob_id,b.size,b.sha256,b.state "
     "FROM nodes n LEFT JOIN blobs b ON b.id=n.blob_id ";
 
 Result<NodeDetails> decodeDetails(const SqliteStatement& statement) {
@@ -59,7 +60,8 @@ Result<NodeDetails> decodeDetails(const SqliteStatement& statement) {
     if (node.value().file) {
         auto size = readQuantity<ByteCount>(statement, 11);
         auto digest = statement.blob(12);
-        if (!size || !digest || digest.value().size() != 32) return ErrorCode::IntegrityError;
+        auto state = statement.integer(13);
+        if (!size || !digest || digest.value().size() != 32 || !state || state.value() != 0) return ErrorCode::IntegrityError;
         FileContentMetadata content{ size.value(), {} };
         std::copy(digest.value().begin(), digest.value().end(), content.sha256.begin());
         result.content = content;
@@ -266,7 +268,7 @@ Result<DirectorySnapshot> SqliteNodeRepository::insertDirectory(const NewDirecto
 Result<Revision> SqliteNodeRepository::advanceRevision(NodeId id, Revision expected, UtcTime now) {
     auto ready = context_.requireOpen();
     if (!ready) return ready.error();
-    auto prepared = SqliteStatement::prepare(context_.connection(), "SELECT revision,created_at,updated_at FROM nodes WHERE id=?1");
+    auto prepared = SqliteStatement::prepare(context_.connection(), "SELECT revision,created_at,updated_at FROM nodes WHERE id=?1 AND trashed=0");
     if (!prepared) return context_.fail(prepared.error());
     auto bound = prepared.value()->bindText(1, id.toString());
     if (!bound) return context_.fail(bound.error());
@@ -321,6 +323,18 @@ Result<NodeDetails> SqliteNodeRepository::insertFile(const NewFile& file) {
     auto duplicate = nameExists(context_.connection(), directory);
     if (!duplicate) return context_.fail(duplicate.error());
     if (duplicate.value()) return context_.fail(ErrorCode::NameConflict);
+    SqliteBlobRepository blobs(context_);
+    auto blob = blobs.record(file.blobId);
+    if (!blob) return blob.error();
+    if (!blob.value() || blob.value()->state != BlobState::Available) return context_.fail(ErrorCode::Conflict);
+    if (directory.createdAt < blob.value()->createdAt) return context_.fail(ErrorCode::IntegrityError);
+    if (blob.value()->unreferencedAt) {
+        auto next = blob.value()->revision.add(1);
+        if (!next) return context_.fail(next.error());
+        auto at = nondecreasingEventTime(directory.createdAt, blob.value()->createdAt, blob.value()->updatedAt);
+        auto cleared = detail::one(context_, detail::write(context_, "UPDATE blobs SET unreferenced_at=NULL,revision=?1,updated_at=?2 WHERE id=?3 AND revision=?4 AND state=0", { next.value().value(), at.time_since_epoch().count(), file.blobId.toString(), blob.value()->revision.value() }));
+        if (!cleared) return cleared.error();
+    }
     auto written = detail::one(context_, detail::write(context_,
                                                        "INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES(?1,?2,?3,?4,1,?5,?6,1,0,?7,?7)",
                                                        { directory.id.toString(), directory.spaceId.toString(), directory.parentId.toString(), directory.name, directory.createdBy.toString(), file.blobId.toString(), directory.createdAt.time_since_epoch().count() }));

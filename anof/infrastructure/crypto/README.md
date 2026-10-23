@@ -143,3 +143,5 @@ Release 使用同名目标及 `cmake-build-release` 目录，两者均需开启 
 ## TransferIdGenerator
 
 [SodiumTransferIdGenerator](SodiumTransferIdGenerator.h) 的工厂 `makeSodiumTransferIdGenerator()` 初始化 libsodium，返回独占 `TransferIdGenerator`。UploadId 和 BlobId 各使用新鲜的安全随机 UUID v4，复用内部 UUID 位布局；不查询数据库或处理碰撞。有限 ID 样本与格式检查包含在 `anof_transfer_files_unittest` 中，不证明绝对无碰撞。
+
+`makeSodiumDriveIdGenerator` 声明于 [SodiumTransferIdGenerator.h](SodiumTransferIdGenerator.h)，复用安全随机 UUID 实现，返回独立的 DriveIdGenerator 接口生成 TrashId；工厂显式初始化 libsodium，没有固定种子或降级随机源。

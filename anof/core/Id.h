@@ -67,6 +67,7 @@ using UserId = Id<struct UserIdTag>;
 using SpaceId = Id<struct SpaceIdTag>;
 using NodeId = Id<struct NodeIdTag>;
 using UploadId = Id<struct UploadIdTag>;
+using TrashId = Id<struct TrashIdTag>;
 using BlobId = Id<struct BlobIdTag>;
 // 当前 request ID 由可信入口生成 UUID；不接受 JSON 中指定的 actor 或 request ID。
 using RequestId = Id<struct RequestIdTag>;

@@ -1,4 +1,7 @@
 add_library(anof_http STATIC
+    DriveRequest.cc
+    DriveResponse.cc
+    DriveHandlers.cc
     DownloadResponse.cc
     DownloadStream.cc
     TransferRequest.cc

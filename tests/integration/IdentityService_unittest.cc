@@ -29,6 +29,7 @@ struct UnknownTransaction final : MetadataTransaction {
     SettingsRepository& settings() override { return inner->settings(); }
     AuditRepository& directoryAudit() override { return inner->directoryAudit(); }
     IdentityAuditRepository& identityAudit() override { return inner->identityAudit(); }
+    NodeAccountingRepository& nodeAccounting() override { return inner->nodeAccounting(); }
     Result<void> commit() override {
         auto result = inner->commit();
         return result ? Result<void>{ErrorCode::CommitOutcomeUnknown} : result;

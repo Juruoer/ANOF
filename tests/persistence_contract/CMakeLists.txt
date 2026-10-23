@@ -9,3 +9,9 @@ add_library(anof_transfer_contract_cases OBJECT TransferContract_unittest.cc)
 target_link_libraries(anof_transfer_contract_cases PUBLIC anof_application Boost::unit_test_framework)
 target_compile_definitions(anof_transfer_contract_cases PUBLIC BOOST_TEST_DYN_LINK)
 target_compile_options(anof_transfer_contract_cases PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+# 第四步真实Drive后端接入前只编译，不注册为通过的CTest。
+add_library(anof_drive_contract_cases OBJECT DriveContract_unittest.cc)
+target_link_libraries(anof_drive_contract_cases PUBLIC anof_application Boost::unit_test_framework)
+target_compile_definitions(anof_drive_contract_cases PUBLIC BOOST_TEST_DYN_LINK)
+target_compile_options(anof_drive_contract_cases PRIVATE -Wall -Wextra -Wconversion -Wshadow)

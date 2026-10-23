@@ -1,17 +1,19 @@
-#include <anof/application/ports/TransferMetadataStore.h>
+#include <anof/application/ports/DriveMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteAuthorizationReader.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteBlobRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteInviteRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataReadSnapshot.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteNodeAccountingRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteNodeRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteQuotaRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSessionRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSettingsRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSpaceRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStorageRepository.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteTrashRepository.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteTreeRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteUploadRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteUserRepository.h>
-
 namespace anof::infrastructure::sqlite {
 namespace {
 // 组合复用查询；对外动态类型只实现 Reader，不能向下转型为 Repository。
@@ -118,10 +120,45 @@ public:
     explicit StorageView(SqliteTransactionContext& c) : impl_(c) {}
     Result<StorageSnapshot> get() override { return impl_.get(); }
 };
-class Snapshot final : public TransferReadSnapshot {
+class TreeView final : public TreeReader {
+    SqliteTreeRepository impl_;
+
+public:
+    explicit TreeView(SqliteTransactionContext& c) : impl_(c) {}
+    Result<TreeSnapshot> activeSubtree(NodeId id, QueryBudget b) override { return impl_.activeSubtree(id, b); }
+    Result<TreeSnapshot> trashSubtree(TrashId id, QueryBudget b) override { return impl_.trashSubtree(id, b); }
+    Result<Page<NodeDetails, ChildPosition>> search(const Principal& p, const SearchQuery& q) override { return impl_.search(p, q); }
+};
+class TrashView final : public TrashReader {
+    SqliteTrashRepository impl_;
+
+public:
+    explicit TrashView(SqliteTransactionContext& c) : impl_(c) {}
+    Result<std::optional<TrashEntry>> find(TrashId id) override { return impl_.find(id); }
+    Result<Page<TrashEntry, TrashPosition>> list(const TrashQuery& q) override { return impl_.list(q); }
+    Result<Page<TrashEntry, TrashExpiryPosition>> expired(UtcTime n, PageSize s, std::optional<TrashExpiryPosition> p) override { return impl_.expired(n, s, p); }
+};
+class NodeAccountingView final : public NodeAccountingReader {
+    SqliteNodeAccountingRepository impl_;
+
+public:
+    explicit NodeAccountingView(SqliteTransactionContext& c) : impl_(c) {}
+    Result<NodeAccounting> get() override { return impl_.get(); }
+};
+class BlobLifecycleView final : public BlobLifecycleReader {
+    SqliteBlobRepository impl_;
+
+public:
+    explicit BlobLifecycleView(SqliteTransactionContext& c) : impl_(c) {}
+    Result<std::optional<BlobRecord>> record(BlobId id) override { return impl_.record(id); }
+    Result<Page<BlobRecord, BlobGcPosition>> gcCandidates(UtcTime n, PageSize s, std::optional<BlobGcPosition> p) override { return impl_.gcCandidates(n, s, p); }
+    Result<Page<BlobRecord, BlobId>> deleting(PageSize s, std::optional<BlobId> p) override { return impl_.deleting(s, p); }
+    Result<GcStatistics> gcStatistics() override { return impl_.gcStatistics(); }
+};
+class Snapshot final : public DriveReadSnapshot {
 public:
     Snapshot(SqliteConnection& connection, bool& active, PasswordHashLimits limits)
-        : context_(connection, active), authorization_(context_), users_(context_, limits), sessions_(context_), invites_(context_), spaces_(context_), nodes_(context_), quotas_(context_), settings_(context_), uploads_(context_), blobs_(context_), storage_(context_) {}
+        : context_(connection, active), authorization_(context_), users_(context_, limits), sessions_(context_), invites_(context_), spaces_(context_), nodes_(context_), quotas_(context_), settings_(context_), uploads_(context_), blobs_(context_), storage_(context_), tree_(context_), trash_(context_), lifecycle_(context_), nodeAccounting_(context_) {}
     Result<void> begin() { return context_.beginRead(); }
     AuthorizationReader& authorization() override { return authorization_; }
     UserReader& users() override { return users_; }
@@ -134,6 +171,11 @@ public:
     UploadReader& uploads() override { return uploads_; }
     BlobReader& blobs() override { return blobs_; }
     StorageReader& storage() override { return storage_; }
+
+    TreeReader& tree() override { return tree_; }
+    TrashReader& trash() override { return trash_; }
+    BlobLifecycleReader& blobLifecycle() override { return lifecycle_; }
+    NodeAccountingReader& nodeAccounting() override { return nodeAccounting_; }
 
 private:
     SqliteTransactionContext context_;
@@ -148,14 +190,23 @@ private:
     UploadView uploads_;
     BlobView blobs_;
     StorageView storage_;
+    TreeView tree_;
+    TrashView trash_;
+    BlobLifecycleView lifecycle_;
+    NodeAccountingView nodeAccounting_;
 };
 }  // namespace
 
-Result<std::unique_ptr<TransferReadSnapshot>> makeSqliteTransferReadSnapshot(SqliteConnection& connection, bool& active, PasswordHashLimits limits) {
+Result<std::unique_ptr<DriveReadSnapshot>> makeSqliteDriveReadSnapshot(SqliteConnection& connection, bool& active, PasswordHashLimits limits) {
     auto snapshot = std::make_unique<Snapshot>(connection, active, limits);
     auto begun = snapshot->begin();
     if (!begun) return begun.error();
-    return std::unique_ptr<TransferReadSnapshot>(std::move(snapshot));
+    return std::unique_ptr<DriveReadSnapshot>(std::move(snapshot));
+}
+Result<std::unique_ptr<TransferReadSnapshot>> makeSqliteTransferReadSnapshot(SqliteConnection& c, bool& active, PasswordHashLimits limits) {
+    auto s = makeSqliteDriveReadSnapshot(c, active, limits);
+    if (!s) return s.error();
+    return std::unique_ptr<TransferReadSnapshot>(std::move(s).value());
 }
 Result<std::unique_ptr<MetadataReadSnapshot>> makeSqliteReadSnapshot(SqliteConnection& c, bool& active, PasswordHashLimits limits) {
     auto snapshot = makeSqliteTransferReadSnapshot(c, active, limits);

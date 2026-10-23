@@ -1,5 +1,5 @@
 #pragma once
-#include <anof/application/ports/TransferMetadataStore.h>
+#include <anof/application/ports/DriveMetadataStore.h>
 
 #include <atomic>
 namespace anof::test {
@@ -8,24 +8,28 @@ struct CommitFault {
     bool afterCommit = true;
     std::atomic<unsigned> calls{ 0 };
 };
-class TransferFaultStore final : public TransferMetadataStore {
-    struct Transaction final : TransferTransaction {
-        std::unique_ptr<TransferTransaction> tx;
+class TransferFaultStore final : public DriveMetadataStore {
+    struct Transaction final : DriveTransaction {
+        std::unique_ptr<DriveTransaction> tx;
         CommitFault& fault;
-        Transaction(std::unique_ptr<TransferTransaction> t, CommitFault& f) : tx(std::move(t)), fault(f) {}
-        AuthorizationReader& authorization() override { return tx->authorization(); }
+        Transaction(std::unique_ptr<DriveTransaction> t, CommitFault& f) : tx(std::move(t)), fault(f) {}
+        TreeRepository& tree() override { return tx->tree(); }
+        TrashRepository& trash() override { return tx->trash(); }
+        DriveAuditRepository& driveAudit() override { return tx->driveAudit(); }
+        NodeAccountingRepository& nodeAccounting() override { return tx->nodeAccounting(); }
+    AuthorizationReader& authorization() override { return tx->authorization(); }
         UserRepository& users() override { return tx->users(); }
         SessionRepository& sessions() override { return tx->sessions(); }
         InviteRepository& invites() override { return tx->invites(); }
         SpaceRepository& spaces() override { return tx->spaces(); }
         FileNodeRepository& nodes() override { return tx->nodes(); }
-        ReservationQuotaRepository& quotas() override { return tx->quotas(); }
+        DriveQuotaRepository& quotas() override { return tx->quotas(); }
         SettingsRepository& settings() override { return tx->settings(); }
         AuditRepository& directoryAudit() override { return tx->directoryAudit(); }
         IdentityAuditRepository& identityAudit() override { return tx->identityAudit(); }
-        UploadRepository& uploads() override { return tx->uploads(); }
-        BlobRepository& blobs() override { return tx->blobs(); }
-        StorageRepository& storage() override { return tx->storage(); }
+        DriveUploadRepository& uploads() override { return tx->uploads(); }
+        LifecycleBlobRepository& blobs() override { return tx->blobs(); }
+        DriveStorageRepository& storage() override { return tx->storage(); }
         TransferAuditRepository& transferAudit() override { return tx->transferAudit(); }
         Result<void> commit() override {
             if (!fault.armed.exchange(false)) return tx->commit();
@@ -44,10 +48,20 @@ public:
     TransferFaultStore(std::unique_ptr<TransferMetadataStore> store, CommitFault& fault)
         : store_(std::move(store)), fault_(fault) {}
     Result<std::unique_ptr<TransferReadSnapshot>> beginTransferRead() override { return store_->beginTransferRead(); }
+    Result<std::unique_ptr<DriveReadSnapshot>> beginDriveRead() override {
+        auto* drive = dynamic_cast<DriveMetadataStore*>(store_.get());
+        if (!drive) return ErrorCode::InternalError;
+        return drive->beginDriveRead();
+    }
+    Result<std::unique_ptr<DriveTransaction>> beginDriveWrite() override {
+        auto* drive = dynamic_cast<DriveMetadataStore*>(store_.get());
+        if (!drive) return ErrorCode::InternalError;
+        auto tx = drive->beginDriveWrite(); if (!tx) return tx.error();
+        return std::unique_ptr<DriveTransaction>(new Transaction(std::move(tx).value(), fault_));
+    }
     Result<std::unique_ptr<TransferTransaction>> beginTransferWrite() override {
-        auto tx = store_->beginTransferWrite();
-        if (!tx) return tx.error();
-        return std::unique_ptr<TransferTransaction>(new Transaction(std::move(tx).value(), fault_));
+        auto tx = beginDriveWrite(); if (!tx) return tx.error();
+        return std::unique_ptr<TransferTransaction>(std::move(tx).value());
     }
     Result<std::unique_ptr<MetadataReadSnapshot>> beginRead() override {
         auto read = beginTransferRead();

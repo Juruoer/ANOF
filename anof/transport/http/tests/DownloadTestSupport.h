@@ -86,10 +86,11 @@ public:
     std::size_t finished=0;
     std::vector<std::shared_ptr<ReadGate>> gates;
     std::weak_ptr<internal::DownloadState> state;
+    UnexpectedDriveDispatcher drives;
     HttpApi api;
     HttpServer server{&loop,InetAddress(0,true),"download-test"};
     explicit DownloadFixture(HttpApiOptions options={},bool component=false) : api(codec,identity,[this]{return ready;},
-        [](auto,const auto&,const auto&) -> HttpStreamCallbacks {BOOST_ERROR("Unexpected mkdir");return {};},identities,dispatcher,
+        [](auto,const auto&,const auto&) -> HttpStreamCallbacks {BOOST_ERROR("Unexpected mkdir");return {};},identities,dispatcher,drives,
         {{},[this](auto){++finished;}},options) {
         if(!component) api.configure(server);
         else {

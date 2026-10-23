@@ -6,7 +6,7 @@
 #include <new>
 namespace anof::infrastructure::crypto {
 namespace {
-class Generator final : public TransferIdGenerator {
+class Generator final : public TransferIdGenerator, public DriveIdGenerator {
     template <class T>
     Result<T> next() {
         std::array<unsigned char, 16> bytes{};
@@ -15,6 +15,7 @@ class Generator final : public TransferIdGenerator {
     }
 
 public:
+    Result<TrashId> trashId() override { return next<TrashId>(); }
     Result<UploadId> uploadId() override { return next<UploadId>(); }
     Result<BlobId> blobId() override { return next<BlobId>(); }
 };
@@ -24,6 +25,15 @@ Result<std::unique_ptr<TransferIdGenerator>> makeSodiumTransferIdGenerator() {
     if (!initialized) return initialized.error();
     try {
         return std::unique_ptr<TransferIdGenerator>(new Generator);
+    } catch (const std::bad_alloc&) {
+        return ErrorCode::InternalError;
+    }
+}
+Result<std::unique_ptr<DriveIdGenerator>> makeSodiumDriveIdGenerator() {
+    auto ready = detail::initializeSodium();
+    if (!ready) return ready.error();
+    try {
+        return std::unique_ptr<DriveIdGenerator>(new Generator);
     } catch (const std::bad_alloc&) {
         return ErrorCode::InternalError;
     }

@@ -84,9 +84,9 @@ ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_(instance_lock|
 
 | 文件 | 当前表示与上限 |
 |---|---|
-| initialization.pending | 最多 4096 字节；精确五字段：version=1、operation_id、instance_id、target_schema=3、target_format=3 |
+| initialization.pending | 最多 4096 字节；精确五字段：version=1、operation_id、instance_id、target_schema=4、target_format=4 |
 | config.toml | 最多 65536 字节；完整八个配置键，见[配置参考](../config/README.md) |
-| instance.json | 最多 4096 字节；仅 instance_id、format_version=3 |
+| instance.json | 最多 4096 字节；仅 instance_id、format_version=4 |
 
 JSON 严格拒绝 BOM、重复／未知字段、嵌套值、非整数版本及尾随 JSON；ID 为小写规范非 nil UUID。格式不合法为 IntegrityError，不支持的整数版本为 UnsupportedFormat。新文件均为 0600、单链接普通文件，描述符带 CLOEXEC；只读检查沿用既有工具允许 0400 或 0600。
 

@@ -17,6 +17,7 @@ target_compile_features(anof_sqlite_foundation PUBLIC cxx_std_17)
 target_compile_options(anof_sqlite_foundation PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 
 add_library(anof_sqlite_identity STATIC
+    SqliteDriveIntegrity.cc
     SqliteTransactionContext.cc
     SqliteIdentitySql.cc
     SqliteAuthorizationReader.cc
@@ -40,6 +41,11 @@ add_library(anof_infrastructure STATIC
     SqliteInstanceFiles.h
     SqliteBootstrapInternal.h
     SqliteInstanceFiles.cc
+    SqliteTreeRepository.cc
+    SqliteTrashRepository.cc
+    SqliteNodeAccountingRepository.cc
+    SqliteDriveAuditRepository.cc
+    SqliteBlobLifecycle.cc
     SqliteUploadRepository.cc
     SqliteTransferRepositories.cc
     SqliteMetadataStore.cc

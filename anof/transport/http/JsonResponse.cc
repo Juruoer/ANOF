@@ -46,6 +46,12 @@ ErrorDescription describe(ProtocolError error) {
     case ProtocolError::StorageBudgetExceeded: return {409, "Conflict", "STORAGE_BUDGET_EXCEEDED", "Conflict"};
     case ProtocolError::UploadTerminated: return {410, "Gone", "UPLOAD_TERMINATED", "Gone"};
     case ProtocolError::UploadLimitReached: return {429, "Too Many Requests", "UPLOAD_LIMIT_REACHED", "Too Many Requests"};
+    case ProtocolError::CrossSpaceMove: return {409, "Conflict", "CROSS_SPACE_MOVE", "Conflict"};
+    case ProtocolError::DirectoryCycle: return {409, "Conflict", "DIRECTORY_CYCLE", "Conflict"};
+    case ProtocolError::TreeLimitExceeded: return {409, "Conflict", "TREE_LIMIT_EXCEEDED", "Conflict"};
+    case ProtocolError::NodeLimitReached: return {409, "Conflict", "NODE_LIMIT_REACHED", "Conflict"};
+    case ProtocolError::RestoreTargetUnavailable: return {409, "Conflict", "RESTORE_TARGET_UNAVAILABLE", "Conflict"};
+    case ProtocolError::QueryLimitExceeded: return {503, "Service Unavailable", "QUERY_LIMIT_EXCEEDED", "Service Unavailable"};
     case ProtocolError::NotAFile: return {409, "Conflict", "NOT_A_FILE", "Conflict"};
     case ProtocolError::LengthRequired: return {411, "Length Required", "LENGTH_REQUIRED", "Content-Length required"};
     case ProtocolError::TransferStorageFull: return {503, "Service Unavailable", "STORAGE_FULL", "Storage full"};
@@ -87,6 +93,12 @@ ProtocolError protocolError(ErrorCode code) {
     case ErrorCode::StorageBudgetExceeded: return ProtocolError::StorageBudgetExceeded;
     case ErrorCode::UploadTerminated: return ProtocolError::UploadTerminated;
     case ErrorCode::UploadLimitReached: return ProtocolError::UploadLimitReached;
+    case ErrorCode::CrossSpaceMove: return ProtocolError::CrossSpaceMove;
+    case ErrorCode::DirectoryCycle: return ProtocolError::DirectoryCycle;
+    case ErrorCode::TreeLimitExceeded: return ProtocolError::TreeLimitExceeded;
+    case ErrorCode::NodeLimitReached: return ProtocolError::NodeLimitReached;
+    case ErrorCode::RestoreTargetUnavailable: return ProtocolError::RestoreTargetUnavailable;
+    case ErrorCode::QueryLimitExceeded: return ProtocolError::QueryLimitExceeded;
     case ErrorCode::NotAFile: return ProtocolError::NotAFile;
     case ErrorCode::LoginConflict: return ProtocolError::LoginConflict;
     case ErrorCode::InviteUnavailable: return ProtocolError::InviteUnavailable;

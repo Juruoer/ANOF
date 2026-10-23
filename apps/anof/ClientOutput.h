@@ -1,5 +1,6 @@
 #pragma once
 #include <anof/client/ApiClient.h>
+#include <anof/client/DriveProtocol.h>
 #include <nlohmann/json.hpp>
 namespace anof::app {
 // 仅允许由受检 DTO 构造输出；不接受原始远端 JSON。
@@ -10,6 +11,7 @@ nlohmann::json clientData(const client::SavedLogin&);
 nlohmann::json clientData(const client::Invite&);
 nlohmann::json clientData(const client::Space&);
 nlohmann::json clientData(const client::Node&);
+nlohmann::json clientData(const client::Trash&);
 nlohmann::json clientData(const client::ProfileSummary&);
 nlohmann::json clientData(client::Done);
 template<class T> nlohmann::json clientData(const std::vector<T>& values) {
@@ -26,6 +28,8 @@ public:
     int help(std::string_view text) const;
     int success(const nlohmann::json&, std::optional<client::ResponseMeta> meta = {}, std::string_view invite = {}) const;
     std::optional<std::string> transferId;
+    std::optional<std::string> operation, sourceId;
+    std::string notice, recovery;
     bool passwordChange = false;
     client::RemoteOutcome remote = client::RemoteOutcome::NotSent;
     client::LocalState local = client::LocalState::Unchanged;

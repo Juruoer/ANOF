@@ -76,4 +76,6 @@ ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_(sqlite_.*|tran
 
 ## 传输适配边界
 
-生产建库、打开与初始化统一使用 schema／format 3；仅接纳当前格式，不升级或重置旧实例。传输仓储、文件节点、逻辑预留、物理计量与审计共用事务，类型化生产工厂直接返回 TransferMetadataStore。初始化接纳显式内容预算，持久化磁盘安全配置并创建三个内容目录。建库入口、共享事务和测试说明见 [SQLite 参考](persistence/sqlite/README.md)。本模块不提供上传用例、恢复编排、HTTP 流控或磁盘 worker。
+生产建库、打开与初始化统一使用 schema／format 4；仅接纳当前格式，不升级或重置旧实例。传输仓储、文件节点、逻辑预留、物理计量与审计共用事务，类型化生产工厂提供 Metadata／Transfer／Drive 视图，共用同一连接和事务约束。初始化接纳显式内容预算，持久化磁盘安全配置并创建三个内容目录。建库入口、共享事务和测试说明见 [SQLite 参考](persistence/sqlite/README.md)。本模块不提供上传用例、恢复编排、HTTP 流控或磁盘 worker。
+
+文件树、回收站、Blob 生命周期及节点总量账本由 SQLite typed 仓储提供，支持条件更新、分页、查询预算和同事务审计；业务调用方负责把创建／删除与逻辑、节点及物理计量原语正确组合。`makeSodiumDriveIdGenerator` 在既有安全随机 ID 适配器中生成 TrashId。对象删除支持缺失重试、目录同步和身份复验，效果不确定时保留 UnknownEffect；GC 调度与读取／删除资格由调用方管理。

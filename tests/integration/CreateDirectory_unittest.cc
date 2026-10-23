@@ -63,6 +63,7 @@ public:
     InviteRepository& invites() override { return inner_->invites(); }
     SettingsRepository& settings() override { return inner_->settings(); }
     IdentityAuditRepository& identityAudit() override { return inner_->identityAudit(); }
+    NodeAccountingRepository& nodeAccounting() override { return inner_->nodeAccounting(); }
 
     SpaceRepository& spaces() override { return *this; }
     NodeRepository& nodes() override { return *this; }

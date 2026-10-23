@@ -17,7 +17,8 @@ public:
 };
 class BlobRepository : public BlobReader {
 public:
-    // 唯一ID插入 AVAILABLE；不允许覆盖描述或任意删除。
-    virtual Result<void> insert(const Blob&) = 0;
+    // 唯一ID插入有引用的AVAILABLE记录，真实事件时间不可省略；同事务创建Node并转换计量。
+    // 不允许覆盖描述、无引用初始记录或任意删除。
+    virtual Result<void> insert(const BlobRecord&) = 0;
 };
 }  // namespace anof

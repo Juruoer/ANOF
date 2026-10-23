@@ -56,7 +56,7 @@ struct Process {
         return text.str();
     }
     Process(std::vector<std::string> args,bool terminal=false,bool closedOutput=false) {
-        static const std::set<std::string> verbs{"init","serve","profile","login","register","logout","me","spaces","ls","stat","mkdir","invite","account","user","quota","upload","download","storage","add","list","show","create","revoke","rename","password","disable","enable","set","resume","complete","cancel"};
+        static const std::set<std::string> verbs{"init","serve","profile","login","register","logout","me","spaces","ls","stat","mkdir","invite","account","user","quota","upload","download","storage","add","list","show","create","revoke","rename","password","disable","enable","set","resume","complete","cancel","mv","cp","rm","search","trash","restore","purge"};
         for(const auto& arg:args) if(verbs.count(arg)) diagnosticCommand+=(diagnosticCommand.empty()?"":" ")+arg;
         args.insert(args.begin(),ANOF_EXECUTABLE); std::vector<char*> argv; for(auto& arg:args) argv.push_back(arg.data()); argv.push_back(nullptr);
         int stdoutPipe[2],stderrPipe[2];

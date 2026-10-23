@@ -1,6 +1,7 @@
 #pragma once
 
 #include <anof/application/ports/AuthorizationReader.h>
+#include <anof/application/ports/NodeAccountingRepository.h>
 #include <anof/application/ports/UserRepository.h>
 #include <anof/application/ports/SessionRepository.h>
 #include <anof/application/ports/InviteRepository.h>
@@ -29,6 +30,7 @@ public:
     virtual SettingsRepository& settings() = 0;
     virtual AuditRepository& directoryAudit() = 0;
     virtual IdentityAuditRepository& identityAudit() = 0;
+    virtual NodeAccountingRepository& nodeAccounting() = 0;
     virtual Result<void> commit() = 0;
 };
 }  // namespace anof

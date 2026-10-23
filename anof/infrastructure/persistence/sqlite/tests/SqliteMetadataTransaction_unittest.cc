@@ -103,8 +103,8 @@ private:
     static void addSpace(SqliteConnection& connection, const char* space, const char* root, bool isPublic) {
         BOOST_REQUIRE(connection.execute("INSERT INTO spaces VALUES (" + quoted(space) + ", " +
             (isPublic ? "1, NULL, " : "0, " + quoted(kUser) + ", ") + quoted(root) + ")"));
-        BOOST_REQUIRE(connection.execute("INSERT INTO nodes VALUES (" + quoted(root) + ", " + quoted(space) +
-            ", NULL, '', 0, " + quoted(kUser) + ", NULL, 1, 0, 0, 0)"));
+        BOOST_REQUIRE(connection.execute("INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES (" + quoted(root) + ", " + quoted(space) +
+                                         ", NULL, '', 0, " + quoted(kUser) + ", NULL, 1, 0, 0, 0)"));
     }
     std::filesystem::path directory_;
 };
@@ -265,7 +265,7 @@ BOOST_AUTO_TEST_CASE(read_repositories_use_the_same_connection_and_destructor_ro
         expectIdentity(transaction, kMember, UserRole::Member);
         // 同连接内的新空间立即可读，独立连接不可见；同时覆盖析构回滚真实写入。
         BOOST_REQUIRE(connection->execute("INSERT INTO spaces VALUES (" + quoted(kMissing) + ", 0, " + quoted(kMember) + ", " + quoted(kMissing) + ")"));
-        BOOST_REQUIRE(connection->execute("INSERT INTO nodes VALUES (" + quoted(kMissing) + ", " + quoted(kMissing) + ", NULL, '', 0, " + quoted(kMember) + ", NULL, 1, 0, 0, 0)"));
+        BOOST_REQUIRE(connection->execute("INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES (" + quoted(kMissing) + ", " + quoted(kMissing) + ", NULL, '', 0, " + quoted(kMember) + ", NULL, 1, 0, 0, 0)"));
         auto space = transaction.spaces().find(SpaceId::parse(kMissing).value());
         BOOST_REQUIRE(space && space.value());
         BOOST_TEST(scalar(*observer, "SELECT count(*) FROM spaces") == 2);

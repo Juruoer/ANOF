@@ -60,13 +60,14 @@ public:
     bool ready = true;
     std::vector<HttpTraceRecord> finished;
     UnexpectedTransferDispatcher uploadDispatcher;
+    UnexpectedDriveDispatcher driveDispatcher;
     HttpApi api;
     HttpServer server{&loop, InetAddress(0, true), "http-read-test"};
     bool stopped = false;
     explicit Fixture(HttpApiOptions options = {})
         : api(codec, identity, [this] { return ready; }, [](auto, const auto&, const auto&) -> HttpStreamCallbacks {
             BOOST_ERROR("Read routed to mkdir"); return {};
-        }, dispatcher, uploadDispatcher, {{}, [this](auto record) { finished.push_back(std::move(record)); }}, options) {
+        }, dispatcher, uploadDispatcher, driveDispatcher, {{}, [this](auto record) { finished.push_back(std::move(record)); }}, options) {
         api.configure(server); server.start();
     }
     void until(const std::function<bool()>& done,
@@ -231,8 +232,14 @@ BOOST_AUTO_TEST_CASE(readMethodsRemainExplicitAndDoNotEnableConditionalGet) {
     Fixture fixture;
     for (const auto& path : paths) for (const auto& method : {"HEAD", "OPTIONS", "POST", "DELETE"}) {
         const auto wire = fixture.exchange(request(path, auth, method));
+        if (path == nodePath && std::string_view(method) == "DELETE") {
+            // 文件管理已注册 DELETE；缺条件在提交前拒绝，仍不得调用读取 dispatcher。
+            status(wire, "428 Precondition Required");
+            continue;
+        }
         status(wire, "405 Method Not Allowed");
-        BOOST_CHECK(wire.find(path == paths[0] ? "allow: GET, PATCH\r\n" : "allow: GET\r\n") != std::string::npos);
+        const auto allow = path == nodePath ? "allow: GET, DELETE, PATCH\r\n" : path == paths[0] ? "allow: GET, PATCH\r\n" : "allow: GET\r\n";
+        BOOST_CHECK(wire.find(allow) != std::string::npos);
         BOOST_CHECK(wire.find("access-control-") == std::string::npos);
     }
     BOOST_CHECK(fixture.dispatcher.jobs.empty());

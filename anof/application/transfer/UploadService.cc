@@ -1,4 +1,5 @@
 #include <anof/application/transfer/UploadService.h>
+#include <anof/application/ports/DriveMetadataStore.h>
 #include <anof/domain/drive/DirectoryPolicy.h>
 #include <cstdio>
 #include <cstdlib>
@@ -49,18 +50,6 @@ Result<std::vector<QuotaScope>> scopes(SpaceReader& spaces, const Upload& u) {
         out.push_back(PublicContributionQuota{ u.original.spaceId, u.userId });
     return out;
 }
-Result<void> target(MetadataReadSnapshot& read, const Principal& actor, SpaceId spaceId,
-                    const UploadTarget& destination) {
-    auto space = read.spaces().find(spaceId);
-    if (!space) return space.error();
-    if (!space.value()) return ErrorCode::NotFound;
-    auto permission = requireCreatePermission(actor, *space.value());
-    if (!permission) return permission.error();
-    if (!validateDirectoryName(destination.name)) return ErrorCode::InvalidName;
-    auto path = read.nodes().findActiveDirectoryPath(spaceId, destination.parentId);
-    if (!path) return path.error();
-    return validateDirectoryParent(*space.value(), destination.parentId, path.value());
-}
 // 写事务接口与快照不互相转换，保持同一事务的显式仓储引用。
 Result<void> target(TransferTransaction& tx, const Principal& actor, SpaceId spaceId, const UploadTarget& destination) {
     auto space = tx.spaces().find(spaceId);
@@ -69,6 +58,11 @@ Result<void> target(TransferTransaction& tx, const Principal& actor, SpaceId spa
     auto permission = requireCreatePermission(actor, *space.value());
     if (!permission) return permission.error();
     if (!validateDirectoryName(destination.name)) return ErrorCode::InvalidName;
+    // 预期目标失效用optional分类，避免仓储路径错误使事务失效后无法持久化READY错误。
+    auto parent = tx.nodes().find(destination.parentId);
+    if (!parent) return parent.error();
+    if (!parent.value() || parent.value()->metadata.spaceId != spaceId) return ErrorCode::NotFound;
+    if (!std::holds_alternative<DirectoryContent>(parent.value()->content)) return ErrorCode::ParentNotDirectory;
     auto path = tx.nodes().findActiveDirectoryPath(spaceId, destination.parentId);
     if (!path) return path.error();
     return validateDirectoryParent(*space.value(), destination.parentId, path.value());
@@ -130,7 +124,7 @@ UploadView wire(InstanceId instance, const Upload& u) {
              u.actualSha256, u.state,
              u.resultNodeId, u.createdAt,
              u.lastProgressAt, u.expiresAt,
-             u.terminalAt, u.lastError };
+             u.terminalAt, u.lastError, u.resultDeletedAt };
 }
 Result<InstanceId> instance(SettingsReader& settings) {
     auto value = settings.get();
@@ -208,6 +202,8 @@ Result<UploadCreation> UploadService::create(const RequestContext& ctx, const Cr
         auto r = tx.quotas().reserve(scope, reservation(u));
         if (!r) return r.error();
     }
+    auto counted = tx.nodeAccounting().reserve(reservation(u).nodes);
+    if (!counted) return counted.error();
     auto reserved = tx.storage().reserve(reservation(u).bytes);
     if (!reserved) return reserved.error();
     auto inserted = tx.uploads().insert(u);
@@ -253,6 +249,8 @@ Result<Upload> UploadService::refresh(const RequestContext& ctx, UploadId id) {
         auto released = tx.quotas().releaseReservation(scope, reservation(u));
         if (!released) return released.error();
     }
+    auto counted = tx.nodeAccounting().releaseReservation(reservation(u).nodes);
+    if (!counted) return counted.error();
     auto event = audit(tx, u, u.cancelRequested ? TransferEventKind::Cancel : TransferEventKind::Expire, ctx.requestId,
                        clock_.now());
     if (!event) return event.error();
@@ -333,7 +331,10 @@ Result<UploadPatch> UploadService::preparePatch(const RequestContext& ctx, const
     auto allowed = active(u.value(), clock_.now());
     if (!allowed) return allowed.error();
     if (u.value().state != UploadState::Open) return ErrorCode::UploadStateConflict;
-    auto valid = target(r, actor.value(), u.value().original.spaceId, u.value().target);
+    auto space = r.spaces().find(u.value().original.spaceId);
+    if (!space) return space.error();
+    if (!space.value()) return ErrorCode::NotFound;
+    auto valid = requireCreatePermission(actor.value(), *space.value());
     if (!valid) return valid.error();
     if (command.offset != u.value().durableOffset) return ErrorCode::UploadOffsetMismatch;
     if (command.length.value() < 1 || command.length.value() > kMaxPatchBytes) return ErrorCode::InvalidArgument;
@@ -354,7 +355,10 @@ Result<Upload> UploadService::commitPatch(const RequestContext& ctx, const Uploa
         return ErrorCode::Conflict;
     auto allowed = active(old.value(), clock_.now());
     if (!allowed) return allowed.error();
-    auto valid = target(tx, actor.value(), old.value().original.spaceId, old.value().target);
+    auto space = tx.spaces().find(old.value().original.spaceId);
+    if (!space) return space.error();
+    if (!space.value()) return ErrorCode::NotFound;
+    auto valid = requireCreatePermission(actor.value(), *space.value());
     if (!valid) return valid.error();
     if (patch.end.value() <= old.value().durableOffset.value() ||
         patch.end.value() > old.value().original.length.value())
@@ -430,6 +434,8 @@ Result<Upload> UploadService::recordVerification(UploadId id, UploadGeneration g
             auto r = tx.quotas().releaseReservation(scope, reservation(u));
             if (!r) return r.error();
         }
+        auto counted = tx.nodeAccounting().releaseReservation(reservation(u).nodes);
+        if (!counted) return counted.error();
         auto event = audit(tx, u, TransferEventKind::Fail, request, clock_.now());
         if (!event) return event.error();
     } else
@@ -488,7 +494,8 @@ Result<Upload> UploadService::commitPublish(UploadId id, UploadGeneration genera
     auto valid = target(tx, actor.value(), u.original.spaceId, u.target);
     if (!valid) return valid.error();
     const auto publishedAt = nondecreasingEventTime(clock_.now(), u.createdAt, u.lastProgressAt);
-    auto inserted = tx.blobs().insert({ *u.pendingBlobId, u.original.length, *u.actualSha256 });
+    auto inserted = tx.blobs().insert({ { *u.pendingBlobId, u.original.length, *u.actualSha256 },
+        BlobState::Available, publishedAt, publishedAt, Revision{}, {}, {} });
     if (!inserted) return inserted.error();
     auto file = tx.nodes().insertFile(
         { { node.value(), u.original.spaceId, u.target.parentId, u.target.name, u.userId, publishedAt },
@@ -505,6 +512,8 @@ Result<Upload> UploadService::commitPublish(UploadId id, UploadGeneration genera
         auto r = tx.quotas().commitReservation(scope, reservation(u));
         if (!r) return r.error();
     }
+    auto counted = tx.nodeAccounting().commitReservation(reservation(u).nodes);
+    if (!counted) return counted.error();
     auto accounting = tx.storage().publishReservation(reservation(u).bytes);
     if (!accounting) return accounting.error();
     u.state = UploadState::Completed;
@@ -565,6 +574,8 @@ Result<Upload> UploadService::cancel(const RequestContext& ctx, UploadId id) {
         auto r = tx.quotas().releaseReservation(scope, reservation(u));
         if (!r) return r.error();
     }
+    auto counted = tx.nodeAccounting().releaseReservation(reservation(u).nodes);
+    if (!counted) return counted.error();
     auto event = audit(tx, u, TransferEventKind::Cancel, ctx.requestId, clock_.now());
     if (!event) return event.error();
     return save(tx, old.value(), u, &ctx, &clock_);
@@ -591,6 +602,8 @@ Result<Upload> UploadService::terminate(UploadId id, UploadGeneration generation
         auto r = tx.quotas().releaseReservation(scope, reservation(u));
         if (!r) return r.error();
     }
+    auto counted = tx.nodeAccounting().releaseReservation(reservation(u).nodes);
+    if (!counted) return counted.error();
     auto event = audit(tx, u,
                        state == UploadState::Expired     ? TransferEventKind::Expire
                        : state == UploadState::Cancelled ? TransferEventKind::Cancel
@@ -623,7 +636,11 @@ Result<StorageView> UploadService::storage(const RequestContext& ctx) {
     if (!id) return id.error();
     auto accounting = read.value()->storage().get();
     if (!accounting) return accounting.error();
-    return StorageView{ id.value(), accounting.value(), {} };
+    auto* drive = dynamic_cast<DriveReadSnapshot*>(read.value().get());
+    if (!drive) return ErrorCode::InternalError;
+    auto gc = drive->blobLifecycle().gcStatistics(); if (!gc) return gc.error();
+    auto nodes = drive->nodeAccounting().get(); if (!nodes) return nodes.error();
+    return StorageView{ id.value(), accounting.value(), {}, gc.value(), nodes.value() };
 }
 Result<StorageView> UploadService::setBudget(const RequestContext& ctx, const SetStorageBudgetCommand& command) {
     auto begun = store_.beginTransferWrite();
@@ -646,8 +663,12 @@ Result<StorageView> UploadService::setBudget(const RequestContext& ctx, const Se
     }
     auto final = authenticate(tx.authorization(), ctx, clock_);
     if (!final) return final.error();
+    auto* drive = dynamic_cast<DriveTransaction*>(&tx);
+    if (!drive) return ErrorCode::InternalError;
+    auto gc = drive->blobs().gcStatistics(); if (!gc) return gc.error();
+    auto nodes = drive->nodeAccounting().get(); if (!nodes) return nodes.error();
     auto committed = tx.commit();
     if (!committed) return committed.error();
-    return StorageView{ id.value(), changed.value(), {} };
+    return StorageView{ id.value(), changed.value(), {}, gc.value(), nodes.value() };
 }
 }  // namespace anof

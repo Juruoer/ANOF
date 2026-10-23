@@ -315,4 +315,24 @@ BOOST_AUTO_TEST_CASE(publication_recovery_syncs_every_required_entry_and_retries
     BOOST_CHECK(std::get<TransferFileError>(f.store->syncPublication(id<UploadId>(), id<BlobId>())) == TransferFileError::Integrity);
 }
 
+BOOST_AUTO_TEST_CASE(deletion_sync_revalidates_object_and_shard_directory_identity) {
+    for (bool shard : { false, true }) {
+        Fixture f;
+        if (shard) BOOST_REQUIRE_EQUAL(mkdir((f.root / ".anof/objects/12").c_str(), 0700), 0);
+        class ReplaceOnSync final : public detail::FileOperations {
+        public:
+            std::filesystem::path target;
+            int sync(int fd, bool data) override {
+                std::filesystem::rename(target, target.string() + "-old");
+                if (mkdir(target.c_str(), 0700)) return -1;
+                return FileOperations::sync(fd, data);
+            }
+        };
+        auto ops = std::make_shared<ReplaceOnSync>();
+        ops->target = f.root / (shard ? ".anof/objects/12" : ".anof/objects");
+        f.store = take(detail::openLocalTransferFileStore(f.root, ops));
+        BOOST_CHECK(std::get<TransferFileError>(f.store->removeAndSync(ObjectFile{ id<BlobId>() })) == TransferFileError::UnknownEffect);
+    }
+}
+
 }  // namespace anof::infrastructure::storage

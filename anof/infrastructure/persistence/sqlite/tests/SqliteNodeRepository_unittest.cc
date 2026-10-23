@@ -53,7 +53,7 @@ struct Database {
         connection = std::move(opened).value();
         BOOST_REQUIRE(connection->beginWrite());
         sql("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0, 'admin', 'Administrator', '" + std::string("$argon2id$v=19$m=8192,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") + "', 1, 1, 0, 0)");
-        sql("INSERT INTO blobs(id,size,sha256) VALUES (" + quoted(kBlob) + ", 0, zeroblob(32))");
+        sql("INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision) VALUES (" + quoted(kBlob) + ", 0, zeroblob(32),0,0,0,1)");
         sql("INSERT INTO spaces VALUES (" + quoted(kSpace) + ", 1, NULL, " + quoted(kRoot) + ")");
         sql("INSERT INTO spaces VALUES (" + quoted(kOtherSpace) + ", 0, " + quoted(kUser) + ", " + quoted(kOtherRoot) + ")");
         node(kRoot, std::nullopt, "");
@@ -80,7 +80,7 @@ struct Database {
     void node(NodeId nodeId, std::optional<NodeId> parent, std::string_view name,
               bool fileNode = false, bool trashed = false, SpaceId space = kSpace) {
         auto statement = SqliteStatement::prepare(*connection,
-            "INSERT INTO nodes VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, 0, 0)");
+                                                  "INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, 0, 0)");
         BOOST_REQUIRE(statement);
         auto& s = *statement.value();
         BOOST_REQUIRE(s.bindText(1, nodeId.toString()));
@@ -223,9 +223,16 @@ BOOST_AUTO_TEST_CASE(missing_cross_space_and_file_parents_have_precise_errors) {
 
 BOOST_AUTO_TEST_CASE(trashed_ancestor_hides_both_directory_and_file_targets) {
     Database db;
-    db.node(id<NodeId>(10), kRoot, "child", false, true);
+    db.node(id<NodeId>(10), kRoot, "child");
     db.node(id<NodeId>(11), id<NodeId>(10), "nested");
     db.node(id<NodeId>(12), id<NodeId>(11), "file", true);
+    db.start();
+    auto tree = db.transaction->tree().activeSubtree(id<NodeId>(10), {}).value();
+    auto summary = summarizeTree(tree).value();
+    TrashEntry entry{ id<TrashId>(10), kSpace, id<NodeId>(10), kRoot, "child", NodeKind::Directory, kUser, kNow, trashExpiry(kNow).value(), {}, summary.total.nodes, summary.total.bytes, kUser };
+    BOOST_REQUIRE(db.transaction->trash().insert(entry));
+    BOOST_REQUIRE(db.transaction->tree().detach(tree, { id<NodeId>(10), {} }, entry));
+    BOOST_REQUIRE(db.transaction->commit());
     for (unsigned target : { 10U, 11U, 12U }) {
         errorIs(db.start().findActiveDirectoryPath(kSpace, id<NodeId>(target)), ErrorCode::NotFound);
         errorIs(db.start().insertDirectory(db.command(13, "new", id<NodeId>(target))), ErrorCode::NotFound);
@@ -271,7 +278,7 @@ BOOST_AUTO_TEST_CASE(cycles_broken_links_and_invalid_roots_terminate_with_integr
         db.node(id<NodeId>(10), kRoot, "a");
         db.node(id<NodeId>(11), id<NodeId>(10), "b");
         // 仅测试夹具绕过约束构造损坏库，实际迁移与生产写接口不放宽。
-        db.sql("PRAGMA foreign_keys=OFF; PRAGMA ignore_check_constraints=ON; DROP TRIGGER nodes_shape_update; DROP TRIGGER nodes_identity_update; DROP INDEX nodes_active_root");
+        db.sql("PRAGMA foreign_keys=OFF; PRAGMA ignore_check_constraints=ON; DROP TRIGGER nodes_shape_update; DROP TRIGGER nodes_identity_update; DROP TRIGGER nodes_blob_update; DROP INDEX nodes_active_root");
         db.sql(change);
         db.sql("PRAGMA foreign_keys=ON; PRAGMA ignore_check_constraints=OFF");
         errorIs(db.start().findActiveDirectoryPath(kSpace, id<NodeId>(11)), ErrorCode::IntegrityError);

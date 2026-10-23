@@ -1,4 +1,5 @@
 #pragma once
+#include <anof/application/drive/DriveCommands.h>
 #include <anof/application/transfer/TransferCommands.h>
 
 #include <anof/transport/http/IdentityRequest.h>
@@ -19,5 +20,11 @@ Parsed<ListUsersCommand> parseListUsers(std::string_view query);
 Parsed<UploadCursor> decodeUploadCursor(std::string_view);
 Result<std::string> encodeCursor(const UploadCursor&);
 Parsed<ListUploadsCommand> parseListUploads(std::string_view);
+Parsed<SearchCursor> decodeSearchCursor(std::string_view);
+Parsed<TrashCursor> decodeTrashCursor(std::string_view);
+Result<std::string> encodeCursor(const SearchCursor&);
+Result<std::string> encodeCursor(const TrashCursor&);
+Parsed<SearchNodesCommand> parseSearchNodes(std::string_view);
+Parsed<ListTrashCommand> parseListTrash(std::string_view);
 Result<UtcTime> parseUtcTimestamp(std::string_view text);
 }  // namespace anof::http

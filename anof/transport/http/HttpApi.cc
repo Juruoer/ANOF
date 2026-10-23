@@ -1,4 +1,5 @@
 #include <anof/transport/http/HttpApi.h>
+#include <anof/transport/http/DriveHandlers.h>
 #include <anof/transport/http/TransferRequest.h>
 #include <anof/transport/http/TransferResponse.h>
 #include <anof/transport/http/UploadStream.h>
@@ -38,9 +39,9 @@ HttpRequestDecision bodylessDecision(Parsed<Command> parsed, IdentityDispatcher&
 }  // namespace
 
 HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity,
-                 std::function<bool()> ready, CreateDirectoryStream stream, IdentityDispatcher& identityDispatcher, TransferDispatcher& transferDispatcher,
+                 std::function<bool()> ready, CreateDirectoryStream stream, IdentityDispatcher& identityDispatcher, TransferDispatcher& transferDispatcher, DriveDispatcher& driveDispatcher,
                  HttpObservation observation, HttpApiOptions options)
-    : identityDispatcher_(identityDispatcher), transferDispatcher_(transferDispatcher), trace_(identity, std::move(observation)) {
+    : identityDispatcher_(identityDispatcher), transferDispatcher_(transferDispatcher), driveDispatcher_(driveDispatcher), trace_(identity, std::move(observation)) {
     if (!ready || !stream || options.maxInFlight == 0 || options.maxInFlight > 128 ||
         !std::isfinite(options.bodySeconds) || options.bodySeconds <= 0 || options.bodySeconds > 15 ||
         !std::isfinite(options.responseSeconds) || options.responseSeconds <= 0 || options.responseSeconds > 30 ||
@@ -93,10 +94,18 @@ HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity
         registered(router->addStreamRoute(method, "/api/v1/nodes/:node_id/content",
             [](const HttpRequest&, const Router::RouteParams&, const auto&) -> HttpStreamCallbacks { throw std::logic_error("Unbound download stream"); }, 0));
     }
+    for (const auto& route : {std::pair{HttpRequest::kPatch, "/api/v1/nodes/:node_id"},
+            {HttpRequest::kPost, "/api/v1/nodes/:node_id/copy"}, {HttpRequest::kDelete, "/api/v1/nodes/:node_id"},
+            {HttpRequest::kGet, "/api/v1/search"}, {HttpRequest::kGet, "/api/v1/trash"},
+            {HttpRequest::kGet, "/api/v1/trash/:node_id"}, {HttpRequest::kPost, "/api/v1/trash/:node_id/restore"}, {HttpRequest::kDelete, "/api/v1/trash/:node_id"}}) {
+        registered(router->addStreamRoute(route.first, route.second,
+            [](const HttpRequest&, const Router::RouteParams&, const auto&) -> HttpStreamCallbacks { throw std::logic_error("Unbound drive stream"); },
+            route.first == HttpRequest::kPatch || route.first == HttpRequest::kPost ? kMaxJsonBytes : 0));
+    }
     RouterHttpOptions routing;
     routing.methodNotAllowed = true;
     RouterHttpAdapter adapter(router, [](const auto&, auto* response) { response->setStatusCode(HttpResponse::k404NotFound); }, routing);
-    auto terminal = [adapter, trace = trace_, &codec, dispatcher = &identityDispatcher_, uploads = &transferDispatcher_, ready = std::move(ready), stream = std::move(stream), options]
+    auto terminal = [adapter, trace = trace_, &codec, dispatcher = &identityDispatcher_, uploads = &transferDispatcher_, drive = &driveDispatcher_, ready = std::move(ready), stream = std::move(stream), options]
         (const HttpRequest& request, const HttpRequestMetadata& metadata) {
         const auto id = trace.requestId(metadata.exchange);
         // onMiss 无 metadata；在本次选择中把 ID 绑定到 404，保留 Router 的 405 分支。
@@ -129,6 +138,7 @@ HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity
                     const auto credential = readBearerCredentials(head.headers(), codec);
                     if (const auto* error = std::get_if<ProtocolError>(&credential)) return reject(*error, id);
                     const RequestContext context{{std::get<SessionDigest>(credential), CredentialMode::Bearer}, id};
+                    if (auto selectedDrive = driveDecision(head, pattern, Router::findParam(selection->match.params, "node_id"), context, *drive, ready)) return std::move(*selectedDrive);
                     if (pattern == "/api/v1/nodes/:node_id/content") {
                         if (auto error = validateNoQuery(head.query())) return reject(*error, id);
                         if (auto error = validateBodylessHeaders(head.headers())) return reject(*error, id);

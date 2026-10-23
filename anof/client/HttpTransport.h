@@ -20,7 +20,7 @@ struct HttpRequest {
     std::string path;
     SecureBuffer body;
     const SecretToken* bearer = nullptr; // 仅在同步 perform 生命周期中借用。
-    std::optional<AccountTag> ifMatch = {};
+    std::optional<ConditionTag> ifMatch = {};
     bool writes() const noexcept { return method != Method::Get && method != Method::Head; }
 };
 struct HttpResponse {

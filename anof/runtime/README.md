@@ -94,7 +94,7 @@ HttpServer 使用 `DeferredListen` 构造和主 loop 同步 `tryStart()`，成�
 
 ## 7. 离线初始化与密码策略
 
-初始化入口接收 TransferInitOptions，将显式预算传到 TransferBootstrapSeed，将磁盘余量通过 InstanceConfiguration 传递。Bootstrap、配置及文件初始化适配均使用该契约，创建 schema/format 3；在线启动使用 UploadExecutor 完成内容与计量恢复。
+初始化入口接收 TransferInitOptions，将显式预算传到 TransferBootstrapSeed，将磁盘余量通过 InstanceConfiguration 传递。根侧与 SQLite 适配统一使用 schema/format 4，初始化同时创建节点账本。在线启动先由UploadExecutor核对内容归属及活动/回收站/共享引用和计量，恢复上传责任，再由MaintenanceExecutor处理已有DELETING并重新对账，随后监听。注册、建目录和上传在原业务事务维护全局节点账本。未知文件和矛盾证据仍阻止ready；新到期条目和AVAILABLE候选不要求在监听前全部清除。
 
 `anof_instance_setup` 提供 [initializeInstance / finishInitialization](InstanceInitialization.h)，只链接 application 与 infrastructure，不创建 EventLoop 或 HTTP。它构造真实文件初始化、数据库 Bootstrap、时钟、身份 ID 与密码适配器，调用 [初始化用例](../application/maintenance/InitializeInstance.h)。初始化 request ID 从独立请求身份适配器生成，不充当实体 ID。
 
@@ -117,7 +117,7 @@ AuthenticationSource 只接受可信 socket 地址，IPv4 统一为 mapped IPv6�
 
 接纳前预留外层固定槽，跨阶段只有一个任务身份；完成通过 CompletionPump 合并通知，每轮最多32项。回调与闭包释放后才归还名额。取消可以与密码验证并行，避免进入最终事务；开始最终 metadata 阶段后的取消返回 AlreadyRunning，不能推断回滚。密码仍会运行到返回，停止屏障等待真实线程退出和全部完成。回调异常被隔离，不会再次完成。
 
-InstanceServer 拥有该执行器并通过 `identityDispatcher()` 注入 HttpApi；构造参数位于目录 stream 之后、可选 observation/options 之前。生产实例注入 identityDispatcher 和 uploadDispatcher，暴露身份／账户／目录／health及上传／storage共三十一个HTTP操作。HTTP cleanup 与密码／metadata 线程退出共同约束实例停止及 lease 的最终释放。
+InstanceServer 拥有该执行器并通过 `identityDispatcher()` 注入 HttpApi；构造参数位于目录 stream 之后、可选 observation/options 之前。生产实例依次注入 identityDispatcher、transferDispatcher 和 driveDispatcher，暴露身份／账户／目录／health、上传／storage、下载及文件管理共41个HTTP操作。HTTP cleanup 与密码／metadata 线程退出共同约束实例停止及 lease 的最终释放。
 
 [身份服务集成测试](../../tests/integration/IdentityService_unittest.cc) 使用真实 SQLite／crypto，覆盖注册邀请回滚、空间隔离、分页绑定、快照版本复核、Session上限及已提交但确认未知时不返回秘密；[身份执行器测试](../../tests/integration/IdentityExecutor_unittest.cc) 覆盖真实登录／邀请／注册／读取、dummy验证、限流与容量、密码期间 metadata 可进展、取消和停止屏障、工厂失败。[限流测试](tests/AuthenticationLimiter_unittest.cc) 使用受控时间验证有界准入与来源规范化。没有性能或物理机持久性结论。
 
@@ -148,9 +148,9 @@ DiskExecutor 固定两个线程。每个线程独立创建／销毁文件 Store�
 
 校验同时最多一条，逐块读取及更新 SHA-256，不整文件载入内存；其余 VERIFYING 状态由有界扫描再次调度。磁盘通道0处理 PATCH／文件维护，通道1处理哈希检查，不能将此实现理解为吞吐性能保证。未知 PATCH 提交会重开 Store 后重读偏移，确认落库的数据不得截断；未知发布按持久意图、实际文件位置、长度和摘要复核。无法确认的上传冻结到重新启动恢复，不盲目重试写事务。
 
-`recover()` 是监听前屏障：先只读核对物理和逻辑账本，再有界枚举所有内容区域并检查归属，检查已发布对象类型和长度，最后逐条恢复活动／待清理上传。CREATING 补安全空文件，OPEN 只截断未确认尾部，短于确认前缀拒绝启动；READY 核对完整摘要并保持冻结目标；COMMITTING 根据源／目标唯一存在的位置恢复发布，已移动对象先完整校验再补目录同步。未知文件原样保留并拒绝启动，不执行自动 GC／隔离／修账。启动不重新哈希所有已发布对象，因此不等于完整内容 FSCK。
+`recover()` 是监听前屏障：先只读核对物理和逻辑账本，再有界枚举所有内容区域并检查归属，检查已发布对象类型和长度，最后逐条恢复活动／待清理上传。CREATING 补安全空文件，OPEN 只截断未确认尾部，短于确认前缀拒绝启动；READY 核对完整摘要并保持冻结目标；COMMITTING 根据源／目标唯一存在的位置恢复发布，已移动对象先完整校验再补目录同步。未知文件原样保留并拒绝启动，不自动认领、隔离或修账。DELETING允许缺文件，由后续维护恢复补同步和结算；AVAILABLE即使处于无引用宽限，缺文件也报完整性错误。启动不重新哈希所有已发布对象，因此不等于完整内容 FSCK。
 
-每60秒扫描至多64项活动上传及64项待清理上传，待清理扫描使用续页游标；终态保留清理每批最多100项。用户禁用在账户事务内记录不可逆取消标志和新 generation，IdentityExecutor 的提交后通知促使协调器读取标志。再次启用用户不会恢复上传。上传／hash／清理链退休后才停止磁盘；身份与磁盘均停止后才关闭 metadata，实例 lease 仍保持到对象析构。
+每60秒扫描至多64项活动上传及64项待清理上传，待清理扫描使用续页游标；终态保留清理每批最多100项。用户禁用在账户事务内记录不可逆取消标志和新 generation，IdentityExecutor 的提交后通知促使协调器读取标志。再次启用用户不会恢复上传。上传／hash／维护／清理链退休后才停止磁盘；身份与磁盘均停止后才关闭 metadata，实例 lease 仍保持到对象析构。
 
 [磁盘执行器测试](tests/DiskExecutor_unittest.cc) 使用确定性 gate 检查两个通道、普通队列满时的清理保留槽、取消完成及线程退出屏障；[上传集成测试](../../tests/integration/UploadExecutor_unittest.cc) 使用真实 SQLite 和小文件验证发布、恢复及提交未知，并在创建、确认偏移、校验、发布和清理等11个持久现场终止测试子进程后执行生产恢复。VERIFYING恢复是重新排队，READY保留目标并等待显式complete；测试分别核对收敛后的状态、计量及同一Node结果。现有实例／进程测试覆盖监听失败、HTTP 清理与锁释放。进程终止不等于硬件掉电，未验证1TiB性能；下载背压证据及其边界见下节。
 
@@ -163,10 +163,48 @@ DiskExecutor 固定两个线程。每个线程独立创建／销毁文件 Store�
 
 UploadExecutor的OpenDownloadCommand使用同一个有界控制队列。普通读取与PATCH共用全局4／单用户2名额；metadataOnly用于HEAD，不占流名额，但仍受128命令及disk队列限额。两种请求都在磁盘通道0打开普通单链接对象并核对长度，缺失／损坏拒绝；HEAD在文件关闭退休后返回空stream和描述，GET返回DownloadStream。
 
-`blobPinned(BlobId)`仅在owner loop查询，读取资格在disk open前建立，直到同通道close完成回投后释放；它不是GC实现。每流至多一个64KiB自有块及一个在途pull。接纳移动缓冲，拒绝不移动；返回块未通过`consumed(acceptedBytes)`全部确认之前拒绝下一pull。消费数不能超过剩余量；零字节不刷新120秒无进展计时。下载可读取合法任意范围，HTTP条件和Range解释由调用方负责。
+`blobPinned(BlobId)`仅在owner loop查询，读取资格在disk open前建立，直到同通道close完成回投后释放；它仅提供观测；GC须通过BlobAccessRegistry取得排他资格。每流至多一个64KiB自有块及一个在途pull。接纳移动缓冲，拒绝不移动；返回块未通过`consumed(acceptedBytes)`全部确认之前拒绝下一pull。消费数不能超过剩余量；零字节不刷新120秒无进展计时。下载可读取合法任意范围，HTTP条件和Range解释由调用方负责。
 
 `setCancellationCallback`在owner loop通知取消，已取消时注册可同步调用。回调应弱引用调用方状态并幂等；取消和析构只请求停止，实际文件close及迟到结果仍需退休。无进展计时、禁用和实例停止都可取消等待输出的流。已授权下载不依赖原Session继续有效；确认禁用按UserId取消既有读取，未知禁用提交先复核enabled，不能将权限失败当成禁用通知。
 
 [下载执行器集成测试](../../tests/integration/DownloadExecutor_unittest.cc) 以真实上传HTTP准备内容，再直接调用下载端口，验证范围字节／缓冲回收、消费门槛、pin退休、与PATCH共享名额、HEAD无槽位、空文件、损坏拒绝、取消、登出／禁用差异及停止／锁屏障。此测试没有下载HTTP sender，不能证明Range映射或writer背压。
 
 [下载 HTTP 集成测试](../../tests/integration/HttpDownload_unittest.cc) 覆盖真实上传后的内容、条件／Range、重启、私有空间隔离、损坏对象在条件判断前拒绝，以及正式实例的 grace／强制停止与锁屏障。另以受限输出水位的组件 listener 连接生产下载状态和真实 dispatcher，观察 write WouldBlock、恢复和账户禁用清理，核对完整 8MiB 字节及 pin 退休。组件 listener 不替代正式 HttpApi 路由验收；未实测 start／finish WouldBlock、120秒自然无进展超时、大文件性能或物理机耐久性。
+
+
+## 文件管理调度
+
+[DriveExecutor](DriveExecutor.h) 实现八类 DriveDispatcher 命令，复用 MetadataExecutor 的队列和唯一worker，
+不增加线程或等待队列。默认至多128个任务从接纳持有到回调结束；可配置为更小值，并受metadata自身容量限制。
+同步拒绝不回调，接纳后延后恰一次完成。取消只与排队阶段竞争；运行中的写事务不被取消或自动重试。
+读任务异常返回InternalError，写任务异常保守返回CommitOutcomeUnknown；回调抛异常仍归还名额。
+
+InstanceIdentity在worker创建实际Drive后端及TrashId生成器；资源不足或缺少能力显式失败，不降级为其他实现。
+InstanceServer暴露driveDispatcher，停止时关闭其准入，等待metadata worker退出、完成回调退休及其他屏障后释放lease。
+HttpApi将八个文件管理操作提交给DriveDispatcher；GC调度和Blob读/删资格由下述MaintenanceExecutor及BlobAccessRegistry负责。
+
+[执行器测试](../../tests/integration/DriveExecutor_unittest.cc) 使用真实SQLite、确定性worker gate，覆盖八类命令、
+满队列、排队取消、停止、回调异常与写异常分类。[应用测试](../../tests/integration/DriveService_unittest.cc)覆盖
+权限、计量、回收站、条件/分页、上传目标变化及提交未知。测试不证明磁盘GC或掉电恢复。
+[文件管理HTTP测试](../../tests/integration/HttpDrive_unittest.cc)覆盖真实身份/SQLite/磁盘的更新、复制、入站、恢复、永久删除、搜索和回收站分页，
+并检查异类条件的鉴权优先级、共享内容计量、上传删除证据、GC派生统计、未知提交与重启。
+
+## 保留期维护与内容删除
+
+[MaintenanceExecutor](MaintenanceExecutor.h) 复用metadata和disk，不新增线程。60秒单调tick无重叠；每轮最多
+16个到期回收站条目、16个DELETING重试及16个新GC候选，以seek游标跨tick继续。当前串行一条GC链，
+每个阶段让出loop；普通队列满延后，不累计tick。已接纳删除使用disk清理保留通道，期限复验使用原始UTC。
+
+[BlobAccessRegistry](BlobAccessRegistry.h) 仅在owner loop内维护RAII读/排他资格，不缓存全部Blob。
+下载GET/HEAD先获候选，取得读资格，再metadata复验可见性、关联及AVAILABLE，成功才open/stat；资格保持到
+owner lane关闭句柄并消费完成项。GC有排他资格后提交DELETING，接着removeAndSync（已不存在也同步目录），
+最后新事务删除Blob并扣P。入站/永久删除不取消已通过二次授权的下载；禁用仍主动取消。
+
+标记/结算未知使用新权威连接读取固定ID、内容和版本：确认DELETING才继续，确认结算行不存在才认成功，
+不重复扣P。磁盘暂时失败保留DELETING/P，后续tick或重启重试；无法确认提交则保留封锁并暂停维护。
+当前最多一个此类封锁，重启通过权威恢复处理；不开放用户“强制修复”入口。
+
+InstanceServer的ready屏障覆盖上传与DELETING恢复和最后对账。停止先关闭维护准入，已接纳阶段消费完毕；
+维护和上传/下载均退休后才停止disk，再停止metadata，实例锁仍最后释放。未开始的磁盘阶段可保留持久意图。
+[维护测试](../../tests/integration/Maintenance_unittest.cc) 使用真实SQLite/小文件、确定性闸门、提交未知及子进程
+退出，覆盖保留期/宽限边界、共享引用、已删除完成结果、批次游标、下载复验和停止责任；不证明硬件掉电耐久性。

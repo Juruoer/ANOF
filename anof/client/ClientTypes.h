@@ -77,12 +77,12 @@ struct User {
 struct AdminUser { User user; SpaceId privateSpaceId; };
 struct QuotaTarget { SpaceId spaceId; std::optional<UserId> userId; };
 // 保留完整条件标签；合法但错配的绑定由服务端在授权后处理。
-class AccountTag {
+class ConditionTag {
 public:
-    static ClientResult<AccountTag> parse(std::string_view);
+    static ClientResult<ConditionTag> parse(std::string_view);
     const std::string& value() const noexcept { return value_; }
 private:
-    explicit AccountTag(std::string value) : value_(std::move(value)) {}
+    explicit ConditionTag(std::string value) : value_(std::move(value)) {}
     std::string value_;
 };
 struct Login {

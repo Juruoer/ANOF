@@ -39,6 +39,7 @@ struct QuotaSnapshot { QuotaState state; Revision revision; };
 Result<QuotaState> reserveQuota(const QuotaState&, QuotaDelta);
 Result<QuotaState> commitQuotaReservation(const QuotaState&, QuotaDelta);
 Result<QuotaState> releaseQuotaReservation(const QuotaState&, QuotaDelta);
+Result<QuotaState> releaseUsedQuota(const QuotaState&, QuotaDelta);
 Result<QuotaState> chargeUsed(const QuotaState& state, QuotaDelta delta);
 
 }  // namespace anof

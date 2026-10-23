@@ -31,7 +31,7 @@
 
 `create` 只接纳新 .anof，持久化 pending；配置、格式发布和 pending 清理各自报告结果。发布不覆盖已有标记；匹配的已发布标记允许验证 no-op。`createCurrent` 只接受不存在的数据库；`verifyComplete` 只核实当前版本已提交的引导与身份，不补数据或重设密码。维护连接在返回前关闭。
 
-[Initialization.h](../maintenance/Initialization.h) 定义 schema/format 版本 3、类型化输入及独立 `InitResult`。数据库提交未知与文件发布未知是不同错误。`validateBootstrapSeed` 检查空间/根 ID 不冲突、密码编码未被移动清空及三组根节点额度；不代替文件状态、数据库不变量或持久化校验。维护端口自身不编排用例；[InitializeInstance / FinishInitialization](../maintenance/InitializeInstance.h) 提供对应应用编排。前者额外接收可信入口生成的 RequestId，后者只接收 root，不重新生成身份。
+[Initialization.h](../maintenance/Initialization.h) 定义 schema/format 版本 4、类型化输入及独立 `InitResult`。数据库提交未知与文件发布未知是不同错误。`validateBootstrapSeed` 检查空间/根 ID 不冲突、密码编码未被移动清空及三组根节点额度；不代替文件状态、数据库不变量或持久化校验。维护端口自身不编排用例；[InitializeInstance / FinishInitialization](../maintenance/InitializeInstance.h) 提供对应应用编排。前者额外接收可信入口生成的 RequestId，后者只接收 root，不重新生成身份。
 
 ## 验证入口
 
@@ -51,8 +51,28 @@
 
 [TransferDispatcher.h](TransferDispatcher.h) 定义创建、查询、完成、取消、PATCH、下载和预算命令，DTO 位于 [TransferCommands.h](../transfer/TransferCommands.h)。PATCH 偏移冲突有独立类型，只在授权后返回当前 offset。feed/pull 接纳后转移唯一缓冲并恰一次延后回调，拒绝时缓冲仍归调用者；finish 成功代表数据同步及元数据确认完成。流取消／析构不等于磁盘或事务结束，协调器必须保留资格直至工作退休。下载流返回前须取得 Blob 读取资格并完成文件检查。`UploadDispatcher` 单独提供上传与 storage 能力，`TransferDispatcher` 继承它并增加下载操作；不要求上传实现提供下载占位方法。[UploadExecutor](../../runtime/UploadExecutor.h) 已实现完整传输端口和监听前恢复。OpenDownloadCommand.metadataOnly用于HEAD，完成文件检查及关闭后返回空stream；GET返回可pull的流。下载块须通过consumed报告writer实际接纳字节，再读取下一块；setCancellationCallback用于传播禁用／无进展／停止取消。本地文件适配提供基础操作及 syncPublication。
 
-[TransferInitialization.h](../maintenance/TransferInitialization.h) 定义初始化与引导的必填预算包装值。初始化用例/runtime 接纳 TransferInitOptions，数据库 createCurrent 接纳 TransferBootstrapSeed；磁盘余量统一由 InstanceConfiguration.diskSafety 传递。当前初始化使用唯一 schema/format 3；预算与身份数据共享引导事务，配置保留磁盘余量，内容目录同步后才发布格式。不提供旧实例升级。
+[TransferInitialization.h](../maintenance/TransferInitialization.h) 定义初始化与引导的必填预算包装值。初始化用例/runtime 接纳 TransferInitOptions，数据库 createCurrent 接纳 TransferBootstrapSeed；磁盘余量统一由 InstanceConfiguration.diskSafety 传递。根侧初始化契约要求 schema/format 4；具体 SQLite 适配也使用版本 4，保留版本一致性检查。节点账本由 initialNodeAccounting 校验种子并计算根节点数，要求与身份、额度、预算同事务引导。不提供旧实例升级。
 
 `anof_contract_headers_check` 独立编译上述公开头文件。共享真实后端用例见 [TestTransferBackend.h](../../../tests/persistence_contract/TestTransferBackend.h) 与 [TransferContract_unittest.cc](../../../tests/persistence_contract/TransferContract_unittest.cc)：创建回滚、同事务提交、旧 generation 拒绝及清理计量原子性。`anof_transfer_contract_cases` 只编译案例；真实 SQLite 工厂已注册并通过局部验证；不将其等同于完整初始化／恢复验收。
 
 `TransferFileStore::syncPublication` 用于 rename 已成功后的恢复同步：要求源不存在、目标安全，补同步数据与全部相关目录，不改变文件位置；调用方先核实持久化意图和完整摘要。`syncData` 不能替代目录同步。
+
+
+## 文件管理与生命周期端口
+
+[DriveMetadataStore.h](DriveMetadataStore.h) 声明 Drive 读快照/事务，继承传输能力并共用事务生命周期。
+[TreeRepository.h](TreeRepository.h) 提供有界树读取、查询和条件整树修改；[TrashRepository.h](TrashRepository.h)
+提供条目及可见/过期分页；[NodeAccountingRepository.h](NodeAccountingRepository.h) 提供实例节点名额操作，
+该写能力由 MetadataTransaction 暴露，使注册、mkdir 和上传与额度/审计共用事务。
+增强 Blob/Quota/Storage/Upload 仓储能力通过 DriveTransaction 的协变访问器提供，没有默认降级实现。
+这些是纯虚契约；[SQLite 适配](../../infrastructure/persistence/sqlite/SqliteMetadataStore.h) 提供具体 Drive 后端及同连接窄视图。
+
+Blob 内容描述与 BlobRecord 生命周期分开；BlobRepository::insert 必须接收完整记录，不能省略事件时间。
+GC 的数据库标记与结算不能代替磁盘同步，调用者仍须持有跨阶段资格。Tree 操作不会自行修改额度或文件；
+业务负责同事务组合计费、Upload 删除证据与[类型化审计](DriveAuditRepository.h)。
+[DriveDispatcher.h](DriveDispatcher.h) 沿用 TaskDispatcher 的接纳、取消和恰一次完成规则，由 [DriveExecutor](../../runtime/DriveExecutor.h) 实现有界调度。
+[DriveIdGenerator.h](DriveIdGenerator.h) 只生成 TrashId，不接收用户路径或覆盖已有标识。
+
+GC标记/结算的应用组合见[MaintenanceService](../drive/MaintenanceService.h)，有界跨worker执行见
+[MaintenanceExecutor](../../runtime/MaintenanceExecutor.h)。读取和删除由[BlobAccessRegistry](../../runtime/BlobAccessRegistry.h)
+统一互斥；取得读资格后仍须metadata二次复验。端口返回DELETING不代表磁盘已同步或物理计量已经释放。

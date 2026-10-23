@@ -30,7 +30,7 @@ else {
 
 响应检查状态、JSON 类型／深度／重复键、必需字段、规范 UUID／UTC／token、64位十进制数量、ETag、分页和已知错误码映射。未知对象字段被忽略，不进入输出 DTO；远端错误消息不进入客户端诊断。me/stat 的标签和节点内容必须一致，mkdir 还检查 Location。游标仅编码一次，不自动遍历下一页。账户响应验证资源与 ETag 一致，管理查询／写入还核对返回目标。调额的 QUOTA_EXCEEDED 接受409，mkdir仍接受403。
 
-账户写方法要求 [AccountTag](ClientTypes.h)，从完整带双引号的用户／空间额度／贡献额度标签解析；拒绝弱标签、通配、列表、非规范ID／版本及控制字符。不自动 GET 或刷新版本，合法错配绑定交给服务端授权后判定。`QuotaTarget` 的可选 userId 区分空间和公共贡献；`Amount` 保持受检64位数量。If-Match 是独立请求字段，不提供任意自定义头注入。
+账户写方法要求 [ConditionTag](ClientTypes.h)，从完整带双引号的用户／空间额度／贡献额度标签解析（同一类型也支持存储、节点及回收站标签）；拒绝弱标签、通配、列表、非规范ID／版本及控制字符。不自动 GET 或刷新版本，合法错配绑定交给服务端授权后判定。`QuotaTarget` 的可选 userId 区分空间和公共贡献；`Amount` 保持受检64位数量。If-Match 是独立请求字段，不提供任意自定义头注入。
 
 改密经 `changePassword` 收到合法204后才清除当前持锁profile的凭据；不更新其他profile，不自动登录。明确拒绝、提交未知、传输失败或不合法成功响应均保留凭据，保留不代表其仍有效。清除失败返回本地错误5，保留远端 confirmed_success 及本地 unchanged/unknown；调用方显式核对或重新登录，不重发改密。
 
@@ -106,3 +106,30 @@ PATCH总期限365秒，内容GET总期限21660秒，连接5秒，实际字节120
 目标冲突、记录容量／权限／锁；[curl测试](tests/CurlHttpTransport_unittest.cc) 验证真实二进制回调、头门禁及有限期限。
 [CLI进程测试](../../tests/integration/TransferClientProcess_unittest.cc) 覆盖真实上传、下载、跨进程续传及服务重启。
 测试使用小文件及受控故障，不证明物理掉电一致性、大文件性能或长达生产期限的自然超时行为。
+
+
+## 文件管理客户端
+
+[DriveClient](DriveClient.h) 以类型化NodeId/SpaceId/TrashId和显式ConditionTag提供update、copy、remove、
+search、listTrash、showTrash、restore、purge。update合并移动/重命名，restore允许两个目标字段均省略。
+调用者持有LockedProfile并保证HttpTransport及取消标志活过同步调用；每次只发送一个请求，不预读资源、
+替换条件、重试写入或自动取下一页。路径参数始终是服务端ID，不是文件路径。查询按UTF-8字节转义，
+SearchText和名称复用领域校验；分页默认100、上限200，游标最长2048字节。
+
+[DriveProtocol](DriveProtocol.h) 返回`Reply<variant<Node, Trash, Page<Node>, Page<Trash>, Done>>`。
+Trash是公开条目的类型化表示，包含历史原父、删除/到期时间、版本、ETag、节点数及逻辑字节数。
+解析检查重复键、512KiB/深度32限制、规范ID/数量/时间、ETag与ID/版本及响应头一致性、Location、
+分页排序/重复项及请求关联；节点解析复用原有协议实现。错误只保留受检code、状态和request ID，
+不使用远端message。合法异类Node/Trash条件保留后交服务端鉴权，语法错误在网络前拒绝。
+读取坏响应退出4，写入坏响应及COMMIT_OUTCOME_UNKNOWN退出6；未知响应不自动变为成功。
+
+TransferReply中的Upload必有nullable result_deleted_at，非空仅允许COMPLETED且不早于terminal_at。
+Storage必有pending_gc_bytes/objects、deleting_bytes/objects、used_nodes、reserved_nodes和node_limit；
+校验GC子集、节点名额及64位数量，不把GC统计再加到retained中。Storage ETag不绑定派生计数。
+上传resume始终查询服务端，即使本地已缓存COMPLETED；永久删除结果返回UPLOAD_RESULT_DELETED（退出3），
+保留历史完成事实及本地记录，不要求原文件仍存在、不重新上传。show/complete仍可正常读取删除证据。
+
+[文件管理协议测试](tests/DriveClient_unittest.cc)覆盖八类请求、参数/响应绑定、条件、分页及新错误，
+验证响应损坏/异常不重试及GC/节点统计拒绝规则。[传输测试](tests/TransferClient_unittest.cc)覆盖删除结果
+和本地完成缓存的重新确认。[真实进程测试](../../tests/integration/TransferClientProcess_unittest.cc)验证
+管理/传输闭环、两用户权限和重启；这些有界小文件用例不证明大文件性能或物理掉电耐久性。

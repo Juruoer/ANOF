@@ -1,3 +1,4 @@
+#include <anof/infrastructure/persistence/sqlite/SqliteDriveIntegrity.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteTransactionContext.h>
 
 namespace anof::infrastructure::sqlite {
@@ -47,6 +48,7 @@ Error SqliteTransactionContext::fail(Error error) {
 Result<void> SqliteTransactionContext::commit() {
     if (!open_ || readOnly_) return ErrorCode::InvalidArgument;
     auto ready = requireOpen();
+    if (ready) ready = verifyDriveMembership(connection_);
     // 关闭标志先独立于底层连接，保证旧事务析构不会回滚后继事务。
     open_ = false;
     storeActive_ = false;

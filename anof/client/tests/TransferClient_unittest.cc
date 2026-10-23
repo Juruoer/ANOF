@@ -211,8 +211,9 @@ BOOST_AUTO_TEST_CASE(unknown_patch_queries_server_offset_and_never_replays_confi
                        { "result_node_id", nullptr },
                        { "created_at", timestamp },
                        { "last_progress_at", timestamp },
-                       { "expires_at", timestamp },
+                       { "expires_at", "2026-10-12T10:00:00.000000Z" },
                        { "terminal_at", nullptr },
+                       { "result_deleted_at", nullptr },
                        { "last_error", nullptr },
                        { "max_patch_bytes", 8388608 } };
             auto r = response(201, upload);
@@ -255,9 +256,22 @@ BOOST_AUTO_TEST_CASE(unknown_patch_queries_server_offset_and_never_replays_confi
     BOOST_CHECK(resumed.value().data["published"] == true);
     BOOST_CHECK_EQUAL(creates, 1);
     BOOST_CHECK_EQUAL(patches, 1);
+    upload["result_deleted_at"]="2026-10-11T10:00:01.000000Z";
+    std::filesystem::remove(source);
+    auto deleted=f.client().resume(*first.error().transferId,false);
+    BOOST_REQUIRE(!deleted);BOOST_CHECK_EQUAL(deleted.error().code,"UPLOAD_RESULT_DELETED");BOOST_CHECK_EQUAL(deleted.error().exitCode(),3);
+    BOOST_CHECK_EQUAL(creates,1);BOOST_CHECK_EQUAL(patches,1);
+    BOOST_REQUIRE(f.client().show(UploadId::parse(rid).value()));
+    auto malformed=upload;malformed.erase("result_deleted_at");auto missing=response(200,malformed);
+    BOOST_CHECK(!decodeTransfer(TransferOperation::Show,missing));
+    malformed=upload;malformed["result_deleted_at"]="2026-10-11T09:59:59.999999Z";auto backwards=response(200,malformed);
+    BOOST_CHECK(!decodeTransfer(TransferOperation::Show,backwards));
+    malformed=upload;malformed["state"]="OPEN";malformed["result_node_id"]=nullptr;malformed["terminal_at"]=nullptr;
+    auto wrongState=response(200,malformed);BOOST_CHECK(!decodeTransfer(TransferOperation::Show,wrongState));
+
 }
 BOOST_AUTO_TEST_CASE(storage_tag_and_read_only_head_failures) {
-    BOOST_REQUIRE(AccountTag::parse("\"storage-" + sid + "-1\""));
+    BOOST_REQUIRE(ConditionTag::parse("\"storage-" + sid + "-1\""));
     auto r = rawResponse(401, "");
     r.headers.erase("x-request-id");
     auto rejected = decodeTransfer(TransferOperation::ContentHead, r);

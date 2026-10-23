@@ -144,10 +144,11 @@ public:
     bool ready = true, stopped = false;
     std::size_t finished = 0;
     std::vector<std::shared_ptr<PatchGate>> gates;
+    UnexpectedDriveDispatcher drives;
     HttpApi api;
     HttpServer server{&loop, InetAddress(0, true), "upload-test"};
     explicit UploadFixture(HttpApiOptions options = {}) : api(codec, identity, [this] { return ready; },
-        [](auto, const auto&, const auto&) -> HttpStreamCallbacks { BOOST_ERROR("Unexpected mkdir"); return {}; }, identities, dispatcher,
+        [](auto, const auto&, const auto&) -> HttpStreamCallbacks { BOOST_ERROR("Unexpected mkdir"); return {}; }, identities, dispatcher, drives,
         {{}, [this](auto) { ++finished; }}, options) { api.configure(server); server.start(); }
     void until(const std::function<bool()>& done, const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
         BOOST_REQUIRE(anof::test::waitFor(loop, done, 3, file, line));

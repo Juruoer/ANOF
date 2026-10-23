@@ -99,6 +99,7 @@ Result<UserProfile> IdentityService::registerUser(RequestId request, const Regis
     const auto now = clock_.now();
     auto invite = tx->invites().consume(digest.value(), now);
     if (!invite) return invite.error();
+    if (auto counted = tx->nodeAccounting().chargeUsed(NodeCount::from(1).value()); !counted) return counted.error();
     NewUser user{{userId.value(), command.login, command.displayName, UserRole::Member, true, AuthEpoch{}, Revision{}, now, now},
         std::move(hash), PasswordVersion{}};
     if (auto inserted = tx->users().insert(user); !inserted) return inserted.error();

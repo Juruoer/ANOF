@@ -11,7 +11,11 @@
 
 namespace anof::runtime {
 Result<MetadataWorkerResources> makeInstanceMetadataResources(const std::filesystem::path& database) {
-    auto reopen = [database] { return infrastructure::sqlite::openSqliteTransferMetadataStore(database, {instancePasswordPolicy().verification, {}}); };
+    auto reopen = [database]() -> Result<std::unique_ptr<TransferMetadataStore>> {
+        auto store = infrastructure::sqlite::openSqliteDriveMetadataStore(database, {instancePasswordPolicy().verification, {}});
+        if (!store) return store.error();
+        return std::unique_ptr<TransferMetadataStore>(std::move(store).value());
+    };
     auto store = reopen();
     if (!store) return store.error();
     auto clock = infrastructure::system::makeSystemClock();
@@ -26,10 +30,12 @@ Result<MetadataWorkerResources> makeInstanceMetadataResources(const std::filesys
     if (!invites) return invites.error();
     auto transfers = infrastructure::crypto::makeSodiumTransferIdGenerator();
     if (!transfers) return transfers.error();
+    auto driveIds = infrastructure::crypto::makeSodiumDriveIdGenerator();
+    if (!driveIds) return driveIds.error();
     return MetadataWorkerResources{std::move(store).value(), std::move(clock).value(), std::move(nodes).value(),
         std::make_unique<IdentityMetadataResources>(IdentityMetadataResources{
             std::move(ids).value(), std::move(issuer).value(), std::move(invites).value()}),
-        std::move(transfers).value(), std::move(reopen)};
+        std::move(transfers).value(), std::move(reopen), std::move(driveIds).value()};
 }
 Result<PasswordWorkerResources> makeInstancePasswordResources() {
     auto hasher = infrastructure::crypto::makeSodiumPasswordHasher(instancePasswordPolicy());

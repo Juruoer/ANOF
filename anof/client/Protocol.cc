@@ -97,6 +97,7 @@ bool validError(Operation op, const std::string& code, int status) {
     if (code == "COMMIT_OUTCOME_UNKNOWN") return status == 500 && writes(op);
     if (code == "STORAGE_FULL") return status == 507 && writes(op);
     if (code == "CONCURRENT_MODIFICATION") return status == 409 && (op == Operation::Register || op == Operation::Login || op == Operation::Mkdir);
+    if (code == "NODE_LIMIT_REACHED" && (op == Operation::Register || op == Operation::Mkdir)) return status == 409;
     if (op == Operation::Register) return status == 409 && (code == "LOGIN_CONFLICT" || code == "INVITE_UNAVAILABLE" || code == "USER_LIMIT_REACHED");
     if (op == Operation::Login) return status == 409 && code == "SESSION_LIMIT_REACHED";
     if (op == Operation::CreateInvite || op == Operation::ListInvites || op == Operation::RevokeInvite) {
@@ -115,6 +116,10 @@ bool validError(Operation op, const std::string& code, int status) {
     return false;
 }
 }  // namespace
+namespace internal {
+Node parseNode(const Json& j) { return node(j); }
+bool jsonContentType(std::string value) { return jsonType(std::move(value)); }
+}
 ClientResult<Reply<Payload>> decodeResponse(Operation op, const HttpResponse& r, unsigned pageLimit) {
     try {
         require(r.body.view().size() <= kResponseLimit);
@@ -198,13 +203,15 @@ ClientResult<Reply<Payload>> decodeResponse(Operation op, const HttpResponse& r,
         return Reply<Payload>{std::move(payload), std::move(meta)};
     } catch (...) { return failure(writes(op) ? ErrorKind::OutcomeUnknown : ErrorKind::Protocol); }
 }
-ClientResult<AccountTag> AccountTag::parse(std::string_view text) {
+ClientResult<ConditionTag> ConditionTag::parse(std::string_view text) {
     try {
         require(text.size() >= 2 && text.front() == '"' && text.back() == '"' && text.size() <= 128);
         auto rest = text.substr(1, text.size()-2);
         const bool contribution = rest.substr(0,19) == "quota-contribution-";
         if (contribution) rest.remove_prefix(19);
         else if (rest.substr(0,12) == "quota-space-") rest.remove_prefix(12);
+        else if (rest.substr(0,5) == "node-") rest.remove_prefix(5);
+        else if (rest.substr(0,6) == "trash-") rest.remove_prefix(6);
         else if (rest.substr(0,8) == "storage-") rest.remove_prefix(8);
         else { require(rest.substr(0,5) == "user-"); rest.remove_prefix(5); }
         for (unsigned i=0; i<(contribution?2u:1u); ++i) {
@@ -213,7 +220,7 @@ ClientResult<AccountTag> AccountTag::parse(std::string_view text) {
             require(parsed && parsed.value().toString()==rest.substr(0,36)); rest.remove_prefix(37);
         }
         decimal(rest,1);
-        return AccountTag(std::string(text));
+        return ConditionTag(std::string(text));
     } catch (...) { return failure(ErrorKind::InvalidArgument); }
 }
 ClientResult<std::string> pageQuery(const PageRequest& page) {

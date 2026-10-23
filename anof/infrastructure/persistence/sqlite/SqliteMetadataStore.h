@@ -1,9 +1,9 @@
 #pragma once
-
+#include <anof/application/ports/DriveMetadataStore.h>
 #include <anof/application/ports/TransferMetadataStore.h>
+#include <anof/domain/identity/Secrets.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteOptions.h>
 
-#include <anof/domain/identity/Secrets.h>
 #include <filesystem>
 
 namespace anof::infrastructure::sqlite {
@@ -19,6 +19,7 @@ Result<std::unique_ptr<MetadataStore>> openSqliteMetadataStore(
     const std::filesystem::path& path, SqliteMetadataOptions options);
 
 // 与基础 opener 使用同一生产结构和已引导状态校验，不需调用方 downcast。
+Result<std::unique_ptr<DriveMetadataStore>> openSqliteDriveMetadataStore(const std::filesystem::path&, SqliteMetadataOptions);
 Result<std::unique_ptr<TransferMetadataStore>> openSqliteTransferMetadataStore(
     const std::filesystem::path& path, SqliteMetadataOptions options);
 

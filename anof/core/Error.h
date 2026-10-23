@@ -35,7 +35,13 @@ enum class ErrorCode {
     StorageFull,
     CommitOutcomeUnknown,
     IntegrityError,
-    InternalError
+    InternalError,
+    CrossSpaceMove,
+    DirectoryCycle,
+    TreeLimitExceeded,
+    NodeLimitReached,
+    RestoreTargetUnavailable,
+    QueryLimitExceeded
 };
 
 // 端口只传播稳定分类；后端诊断由适配层记录，不能泄漏到业务响应。

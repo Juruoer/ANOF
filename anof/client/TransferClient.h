@@ -26,7 +26,7 @@ public:
 
 private:
     ClientResult<TransferReply> request(TransferOperation, Method, std::string, const nlohmann::json& = nullptr,
-                                        unsigned limit = 200, std::optional<AccountTag> = {});
+                                        unsigned limit = 200, std::optional<ConditionTag> = {});
     TransferResult workflow(std::optional<std::string> id, bool download, std::string file, nlohmann::json target);
     HttpTransport& http_;
     TransferTransport& binary_;

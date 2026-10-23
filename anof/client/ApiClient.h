@@ -21,15 +21,15 @@ public:
     ClientResult<Reply<Page<Node>>> children(NodeId, PageRequest page = {});
     ClientResult<Reply<Node>> stat(NodeId);
     ClientResult<Reply<Node>> mkdir(SpaceId, NodeId parent, std::string_view name);
-    ClientResult<Reply<User>> rename(const DisplayName&, const AccountTag&);
-    ClientResult<Reply<Done>> changePassword(const PasswordInput& current, const PasswordInput& next, const AccountTag&);
+    ClientResult<Reply<User>> rename(const DisplayName&, const ConditionTag&);
+    ClientResult<Reply<Done>> changePassword(const PasswordInput& current, const PasswordInput& next, const ConditionTag&);
     ClientResult<Reply<Page<User>>> listUsers(PageRequest page = {});
     ClientResult<Reply<AdminUser>> getUser(UserId);
-    ClientResult<Reply<AdminUser>> setUserEnabled(UserId, bool, const AccountTag&);
+    ClientResult<Reply<AdminUser>> setUserEnabled(UserId, bool, const ConditionTag&);
     ClientResult<Reply<ManagedQuota>> getQuota(QuotaTarget);
-    ClientResult<Reply<ManagedQuota>> setQuotaLimit(QuotaTarget, Amount, const AccountTag&);
+    ClientResult<Reply<ManagedQuota>> setQuotaLimit(QuotaTarget, Amount, const ConditionTag&);
 private:
-    template<class T> ClientResult<Reply<T>> call(Operation, Method, std::string, SecureBuffer body = {}, unsigned limit = 200, std::optional<AccountTag> condition = {});
+    template<class T> ClientResult<Reply<T>> call(Operation, Method, std::string, SecureBuffer body = {}, unsigned limit = 200, std::optional<ConditionTag> condition = {});
     HttpTransport& transport_;
     LockedProfile& profile_;
     const std::atomic_bool* cancel_;

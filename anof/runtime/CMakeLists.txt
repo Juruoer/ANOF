@@ -1,6 +1,9 @@
 add_library(anof_runtime STATIC
     AuthenticationLimiter.cc
     IdentityExecutor.cc
+    DriveExecutor.cc
+    BlobAccessRegistry.cc
+    MaintenanceExecutor.cc
     CompletionPump.cc
     UploadExecutor.cc
     DiskExecutor.cc

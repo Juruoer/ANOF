@@ -48,6 +48,12 @@ enum class ProtocolError {
     UploadTerminated,
     UploadLimitReached,
     NotAFile,
+    CrossSpaceMove,
+    DirectoryCycle,
+    TreeLimitExceeded,
+    NodeLimitReached,
+    RestoreTargetUnavailable,
+    QueryLimitExceeded,
 };
 
 ProtocolError protocolError(ErrorCode code);

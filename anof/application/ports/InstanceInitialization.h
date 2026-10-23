@@ -29,7 +29,8 @@ public:
 class InstanceBootstrap {
 public:
     virtual ~InstanceBootstrap() = default;
-    // 仅接受不存在的主库；建立当前 schema 与原子业务引导，不支持开发版本升级。
+    // 仅接受不存在的主库；schema/format均为4。以initialNodeAccounting(seed.identity)初始化节点账本，
+    // 与根Node/额度/用户/审计同事务；create/verify检查真实行数，不补账或支持开发版本升级。
     virtual InitResult<InitReceipt> createCurrent(const InstanceLease&, const TransferBootstrapSeed&) = 0;
     // 检查已提交引导及 ID 一致性；允许 pending，不重新建用户、重设密码或补数据。
     virtual InitResult<InitReceipt> verifyComplete(const InstanceLease&, const InitializationIdentity&) = 0;

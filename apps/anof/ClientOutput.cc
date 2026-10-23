@@ -47,6 +47,7 @@ Json clientData(const ProfileSummary& v) {
     if (v.session) session={{"expires_at",v.session->expiresAt},{"user_id",v.session->userId.toString()},{"login",v.session->login.value()}};
     return {{"name",v.name},{"server",v.server},{"development_http",v.developmentHttp},{"session",std::move(session)}};
 }
+Json clientData(const Trash& t) {return {{"id",t.id.toString()},{"instance_id",t.instanceId.toString()},{"space_id",t.spaceId.toString()},{"root_node_id",t.rootNodeId.toString()},{"original_parent_id",t.originalParentId.toString()},{"name",t.name},{"kind",t.file?"file":"directory"},{"deleted_at",t.deletedAt},{"expires_at",t.expiresAt},{"revision",std::to_string(t.revision.value())},{"etag",t.etag},{"node_count",std::to_string(t.nodeCount.value())},{"logical_bytes",std::to_string(t.logicalBytes.value())}};}
 Json clientData(Done) { return nullptr; }
 ClientError ClientOutput::outputFailure() const {
     auto e = failure(ErrorKind::LocalState); e.remote=remote; e.local=local; e.transferId=transferId;
@@ -59,9 +60,15 @@ int ClientOutput::error(const ClientError& e) const noexcept {
         if (passwordChange && e.remote == RemoteOutcome::Unknown) message += "; verify the password/session state or explicitly log in again";
         if (e.profileName && ProfileStore::validName(*e.profileName)) message += " (profile: " + *e.profileName + ")";
         if(e.transferId) message += " (transfer: " + *e.transferId + ")";
+        if(e.code=="UPLOAD_RESULT_DELETED")message="Upload historically completed, but its result has been permanently deleted; no retransmission performed";
+        if(e.remote==RemoteOutcome::Unknown&&!recovery.empty())message+="; "+recovery;
         std::string text;
         if (json_) text=Json{{"ok",false},{"error",{{"code",e.code},{"message",message},{"http_status",e.httpStatus?Json(*e.httpStatus):Json(nullptr)},{"request_id",e.requestId?Json(e.requestId->toString()):Json(nullptr)},{"remote_outcome",remoteName(e.remote)},{"local_state",localName(e.local)},{"transfer_id",e.transferId?Json(*e.transferId):Json(nullptr)}}}}.dump()+"\n";
         else text=e.code+": "+message+"; remote_outcome="+remoteName(e.remote)+"; local_state="+localName(e.local)+"\n";
+        if(operation) {
+            if(json_) {auto j=Json::parse(text);j["error"]["operation"]=*operation;j["error"]["source_id"]=sourceId?Json(*sourceId):Json(nullptr);text=j.dump()+"\n";}
+            else text="operation="+*operation+"; source_id="+sourceId.value_or("none")+"; "+text;
+        }
         (void)writeAll(STDERR_FILENO,text);
     } catch (...) { (void)writeAll(STDERR_FILENO,"{\"ok\":false,\"error\":{\"code\":\"LOCAL_STATE_ERROR\",\"message\":\"Client output failed\",\"http_status\":null,\"request_id\":null,\"remote_outcome\":\"unknown\",\"local_state\":\"unknown\"}}\n"); }
     return e.exitCode();
@@ -76,8 +83,13 @@ int ClientOutput::success(const Json& data, std::optional<ResponseMeta> meta, st
         if (!invite.empty()) { append("{\"invite\":"); append(data.dump()); append(",\"token\":\""); append(invite); append("\"}"); }
         else append(data.dump());
         append(",\"meta\":");
-        append(Json{{"profile",profile_?Json(*profile_):Json(nullptr)},{"http_status",meta?Json(meta->httpStatus):Json(nullptr)},{"request_id",meta?Json(meta->requestId.toString()):Json(nullptr)},{"etag",meta&&meta->etag?Json(*meta->etag):Json(nullptr)}}.dump()); append("}\n");
+        Json metadata{{"profile",profile_?Json(*profile_):Json(nullptr)},{"http_status",meta?Json(meta->httpStatus):Json(nullptr)},{"request_id",meta?Json(meta->requestId.toString()):Json(nullptr)},{"etag",meta&&meta->etag?Json(*meta->etag):Json(nullptr)}};
+        if(operation){metadata["operation"]=*operation;metadata["source_id"]=sourceId?Json(*sourceId):Json(nullptr);metadata["remote_outcome"]=remoteName(remote);}
+        if(!notice.empty())metadata["notice"]=notice;
+        append(metadata.dump()); append("}\n");
     } else {
+        if(operation){append("operation="+*operation+"; source_id="+sourceId.value_or("none")+"; remote_outcome="+remoteName(remote)+"\n");}
+        if(!notice.empty()){append(notice);append("\n");}
         std::string ordinary; if (data.is_null()) ordinary="OK\n"; else readable(ordinary,data); append(ordinary);
         if (meta && meta->etag) { append("ETag: "); append(*meta->etag); append("\n"); }
         if (!invite.empty()) { append("Invitation token (shown once): "); append(invite); append("\n"); }

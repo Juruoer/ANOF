@@ -1,9 +1,11 @@
 #include <anof/infrastructure/persistence/sqlite/SqliteIdentitySql.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteUploadRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
+
+#include <set>
 namespace anof::infrastructure::sqlite {
 namespace {
-constexpr const char* fields = "id,user_id,client_upload_id,space_id,original_parent_id,original_name,length,expected_sha256,parent_id,name,durable_offset,state,generation,actual_sha256,pending_blob_id,staging_location,result_node_id,created_at,last_progress_at,expires_at,terminal_at,last_error,cancel_requested,cleanup_pending";
+constexpr const char* fields = "id,user_id,client_upload_id,space_id,original_parent_id,original_name,length,expected_sha256,parent_id,name,durable_offset,state,generation,actual_sha256,pending_blob_id,staging_location,result_node_id,created_at,last_progress_at,expires_at,terminal_at,last_error,cancel_requested,cleanup_pending,result_deleted_at";
 template <class T, class F>
 Result<std::optional<T>> optional(SqliteStatement& s, int col, F decode) {
     auto nil = s.isNull(col);
@@ -59,6 +61,9 @@ Result<Upload> decode(SqliteStatement& s) {
     auto cleanup = readBoolean(s, 23);
     if (!id || !user || !client || !space || !parent || !name || !length || !expected || !target || !targetName || !offset || !state || !generation || !actual || !blob || !location || !node || !created || !progress || !expires || !terminal || !cancelled || !cleanup || state.value() < 0 || state.value() > 8 || location.value() < 0 || location.value() > 1) return ErrorCode::IntegrityError;
     Upload u{ id.value(), user.value(), client.value(), { space.value(), { parent.value(), name.value() }, length.value(), expected.value() }, { target.value(), targetName.value() }, offset.value(), static_cast<UploadState>(state.value()), generation.value(), actual.value(), blob.value(), static_cast<StagingLocation>(location.value()), node.value(), created.value(), progress.value(), expires.value(), terminal.value(), error, cancelled.value(), cleanup.value() };
+    auto deleted = optional<UtcTime>(s, 24, readTime);
+    if (!deleted) return deleted.error();
+    u.resultDeletedAt = deleted.value();
     auto valid = validateUpload(u);
     if (!valid) return valid.error();
     return u;
@@ -97,7 +102,7 @@ Result<void> writeUpload(SqliteTransactionContext& c, const Upload& u, bool inse
     std::string sql;
     if (insert) {
         sql = "INSERT INTO uploads(" + std::string(fields) + ") VALUES(";
-        for (int i = 1; i <= 24; ++i) sql += (i == 1 ? "" : ",") + std::string("?") + std::to_string(i);
+        for (int i = 1; i <= 25; ++i) sql += (i == 1 ? "" : ",") + std::string("?") + std::to_string(i);
         sql += ")";
     } else {
         sql = "UPDATE uploads SET ";
@@ -111,18 +116,18 @@ Result<void> writeUpload(SqliteTransactionContext& c, const Upload& u, bool inse
             sql += names.substr(pos, end - pos) + "=?" + std::to_string(i++);
             pos = end + 1;
         }
-        sql += " WHERE id=?1 AND state=?25 AND generation=?26 AND durable_offset=?27";
+        sql += " WHERE id=?1 AND state=?26 AND generation=?27 AND durable_offset=?28";
     }
     auto q = detail::query(c, sql);
     if (!q) return q.error();
     auto& s = *q.value();
     auto text = [&](int n, const std::string& v) { return s.bindText(n, v); };
     auto nullable = [&](int n, const auto& v) -> Result<void> { return v ? text(n, v->toString()) : s.bindNull(n); };
-    const Result<void> bindings[] = { text(1, u.id.toString()), text(2, u.userId.toString()), text(3, u.clientUploadId.toString()), text(4, u.original.spaceId.toString()), text(5, u.original.target.parentId.toString()), text(6, u.original.target.name), s.bindInt64(7, u.original.length.value()), nullable(8, u.original.expectedSha256), text(9, u.target.parentId.toString()), text(10, u.target.name), s.bindInt64(11, u.durableOffset.value()), s.bindInt64(12, static_cast<int>(u.state)), s.bindInt64(13, u.generation.value()), nullable(14, u.actualSha256), nullable(15, u.pendingBlobId), s.bindInt64(16, static_cast<int>(u.location)), nullable(17, u.resultNodeId), s.bindInt64(18, u.createdAt.time_since_epoch().count()), s.bindInt64(19, u.lastProgressAt.time_since_epoch().count()), s.bindInt64(20, u.expiresAt.time_since_epoch().count()), u.terminalAt ? s.bindInt64(21, u.terminalAt->time_since_epoch().count()) : s.bindNull(21), u.lastError ? s.bindInt64(22, static_cast<int>(*u.lastError)) : s.bindNull(22), s.bindInt64(23, u.cancelRequested), s.bindInt64(24, u.cleanupPending) };
+    const Result<void> bindings[] = { text(1, u.id.toString()), text(2, u.userId.toString()), text(3, u.clientUploadId.toString()), text(4, u.original.spaceId.toString()), text(5, u.original.target.parentId.toString()), text(6, u.original.target.name), s.bindInt64(7, u.original.length.value()), nullable(8, u.original.expectedSha256), text(9, u.target.parentId.toString()), text(10, u.target.name), s.bindInt64(11, u.durableOffset.value()), s.bindInt64(12, static_cast<int>(u.state)), s.bindInt64(13, u.generation.value()), nullable(14, u.actualSha256), nullable(15, u.pendingBlobId), s.bindInt64(16, static_cast<int>(u.location)), nullable(17, u.resultNodeId), s.bindInt64(18, u.createdAt.time_since_epoch().count()), s.bindInt64(19, u.lastProgressAt.time_since_epoch().count()), s.bindInt64(20, u.expiresAt.time_since_epoch().count()), u.terminalAt ? s.bindInt64(21, u.terminalAt->time_since_epoch().count()) : s.bindNull(21), u.lastError ? s.bindInt64(22, static_cast<int>(*u.lastError)) : s.bindNull(22), s.bindInt64(23, u.cancelRequested), s.bindInt64(24, u.cleanupPending), u.resultDeletedAt ? s.bindInt64(25, u.resultDeletedAt->time_since_epoch().count()) : s.bindNull(25) };
     for (const auto& bound : bindings)
         if (!bound) return c.fail(bound.error());
     if (!insert) {
-        for (const auto& bound : { s.bindInt64(25, static_cast<int>(match.state)), s.bindInt64(26, match.generation.value()), s.bindInt64(27, match.offset.value()) })
+        for (const auto& bound : { s.bindInt64(26, static_cast<int>(match.state)), s.bindInt64(27, match.generation.value()), s.bindInt64(28, match.offset.value()) })
             if (!bound) return c.fail(bound.error());
     }
     auto row = s.step();
@@ -241,5 +246,45 @@ Result<void> SqliteUploadRepository::eraseTerminal(UploadId id, UploadGeneration
     if (!u.value()) return context_.fail(ErrorCode::NotFound);
     if (u.value()->generation != expected || !mayForgetUpload(*u.value(), now)) return context_.fail(ErrorCode::Conflict);
     return detail::one(context_, detail::write(context_, "DELETE FROM uploads WHERE id=?1 AND generation=?2", { id.toString(), expected.value() }));
+}
+Result<NodeCount> SqliteUploadRepository::markResultsDeleted(const std::vector<NodeId>& ids, UtcTime now) {
+    if (ids.size() > kTreeOperationLimit) return context_.fail(ErrorCode::InvalidArgument);
+    std::set<NodeId> unique(ids.begin(), ids.end());
+    std::int64_t count = 0;
+    for (auto id : unique) {
+        auto q = detail::query(context_, "SELECT " + std::string(fields) + " FROM uploads WHERE result_node_id=?1 AND state=5 AND result_deleted_at IS NULL", { id.toString() });
+        if (!q) return q.error();
+        std::vector<Upload> changes;
+        for (;;) {
+            auto row = q.value()->step();
+            if (!row) return context_.fail(row.error());
+            if (!row.value()) break;
+            auto u = decode(*q.value());
+            if (!u) return context_.fail(u.error());
+            changes.push_back(u.value());
+        }
+        q.value().reset();
+        auto node = detail::query(context_, "SELECT updated_at FROM nodes WHERE id=?1", { id.toString() });
+        if (!node) return node.error();
+        auto row = node.value()->step();
+        if (!row) return context_.fail(row.error());
+        auto at = now;
+        if (row.value()) {
+            auto t = readTime(*node.value(), 0);
+            if (!t) return context_.fail(t.error());
+            at = std::max(at, t.value());
+        }
+        for (auto u : changes) {
+            auto match = UploadMatch{ u.state, u.generation, u.durableOffset };
+            auto next = u.generation.add(1);
+            if (!next) return context_.fail(next.error());
+            u.generation = next.value();
+            u.resultDeletedAt = nondecreasingEventTime(at, u.createdAt, *u.terminalAt);
+            auto written = replace(u.id, match, u);
+            if (!written) return written.error();
+            ++count;
+        }
+    }
+    return NodeCount::from(count);
 }
 }  // namespace anof::infrastructure::sqlite

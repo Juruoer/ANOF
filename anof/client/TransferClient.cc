@@ -33,7 +33,7 @@ void interrupted(const std::atomic_bool* c) {
 }  // namespace
 ClientResult<TransferReply> TransferClient::request(TransferOperation op, Method method, std::string path,
                                                     const nlohmann::json& body, unsigned limit,
-                                                    std::optional<AccountTag> tag) {
+                                                    std::optional<ConditionTag> tag) {
     if (!profile_.usable()) return failure(ErrorKind::LocalState);
     const auto& p = profile_.profile();
     if (!p.credential) return failure(ErrorKind::AuthenticationRequired);
@@ -73,7 +73,7 @@ ClientResult<TransferReply> TransferClient::storage() {
     return request(TransferOperation::Storage, Method::Get, "/api/v1/admin/storage");
 }
 ClientResult<TransferReply> TransferClient::setStorage(ByteCount budget, std::string tag) {
-    auto parsed = AccountTag::parse(tag);
+    auto parsed = ConditionTag::parse(tag);
     if (!parsed || tag.substr(0, 9) != "\"storage-") return failure(ErrorKind::InvalidArgument);
     return request(TransferOperation::SetStorage, Method::Put, "/api/v1/admin/storage",
                    { { "content_budget_bytes", std::to_string(budget.value()) } }, 200, parsed.value());
@@ -252,6 +252,10 @@ TransferResult TransferClient::workflow(std::optional<std::string> existing, boo
             r["phase"] = upload["state"];
             r["result_node_id"] = upload["result_node_id"];
             save();
+            if(upload["state"]=="COMPLETED" && !upload.at("result_deleted_at").is_null()) {
+                remote=RemoteOutcome::ConfirmedSuccess;
+                fail(ErrorKind::Application,"UPLOAD_RESULT_DELETED");
+            }
             if (upload["state"] == "FAILED" || upload["state"] == "CANCELLED" || upload["state"] == "EXPIRED" ||
                 upload["state"] == "READY")
                 fail(ErrorKind::Application, "UPLOAD_REQUIRES_ACTION");

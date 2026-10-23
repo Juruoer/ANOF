@@ -44,6 +44,9 @@ Result<Json> uploadJson(const UploadView& u) {
     if (!state || !created || !progress || !expires || !validateDirectoryName(u.target.name) || u.offset.value() > u.length.value() ||
         terminal != u.terminalAt.has_value() || (u.state == UploadState::Completed) != u.resultNodeId.has_value() ||
         ((u.state == UploadState::Ready || u.state == UploadState::Committing || u.state == UploadState::Completed) && !u.actualSha256)) return ErrorCode::InternalError;
+    if (u.resultDeletedAt && (u.state != UploadState::Completed || !u.terminalAt || *u.resultDeletedAt < *u.terminalAt)) return ErrorCode::InternalError;
+    Json deleted = nullptr;
+    if (u.resultDeletedAt) { auto value = formatUtcTimestamp(*u.resultDeletedAt); if (!value) return value.error(); deleted = value.value(); }
     Json time = nullptr, error = nullptr;
     if (u.terminalAt) { auto v = formatUtcTimestamp(*u.terminalAt); if (!v) return v.error(); time = v.value(); }
     if (u.lastError) { auto v = failureName(*u.lastError); if (!v) return ErrorCode::InternalError; error = v; }
@@ -52,7 +55,7 @@ Result<Json> uploadJson(const UploadView& u) {
         {"length", std::to_string(u.length.value())}, {"offset", std::to_string(u.offset.value())},
         {"expected_sha256", u.expectedSha256 ? Json(u.expectedSha256->toString()) : Json(nullptr)},
         {"actual_sha256", u.actualSha256 ? Json(u.actualSha256->toString()) : Json(nullptr)}, {"state", state},
-        {"result_node_id", u.resultNodeId ? Json(u.resultNodeId->toString()) : Json(nullptr)}, {"created_at", created.value()},
+        {"result_deleted_at", deleted}, {"result_node_id", u.resultNodeId ? Json(u.resultNodeId->toString()) : Json(nullptr)}, {"created_at", created.value()},
         {"last_progress_at", progress.value()}, {"expires_at", expires.value()}, {"terminal_at", time}, {"last_error", error}, {"max_patch_bytes", kMaxPatchBytes}};
 }
 Result<JsonResponse> response(const UploadView& u, RequestId id, int status, const char* reason) {
@@ -107,6 +110,8 @@ Result<JsonResponse> uploadsResponse(const Page<UploadView, UploadCursor>& page,
     return internal::jsonResponse(200, "OK", id, {{"items", items}, {"next_cursor", next}}, kMaxIdentityResponseBytes);
 }
 Result<JsonResponse> storageResponse(const StorageView& s, RequestId id) {
+    if (!validateNodeAccounting(s.nodes) || s.gc.deletingBytes.value() > s.gc.pendingBytes.value() ||
+        s.gc.pendingBytes.value() > s.accounting.retained.value() || s.gc.deletingObjects.value() > s.gc.pendingObjects.value()) return ErrorCode::InternalError;
     Json free = nullptr, margin = nullptr, sampled = nullptr;
     if (s.disk) {
         auto time = formatUtcTimestamp(s.disk->sampledAt); if (!time) return time.error();
@@ -114,6 +119,9 @@ Result<JsonResponse> storageResponse(const StorageView& s, RequestId id) {
     }
     auto result = internal::jsonResponse(200, "OK", id, {{"instance_id", s.instanceId.toString()}, {"content_budget_bytes", std::to_string(s.accounting.budget.value())},
         {"retained_bytes", std::to_string(s.accounting.retained.value())}, {"reserved_bytes", std::to_string(s.accounting.reserved.value())},
+        {"pending_gc_bytes", std::to_string(s.gc.pendingBytes.value())}, {"pending_gc_objects", std::to_string(s.gc.pendingObjects.value())},
+        {"deleting_bytes", std::to_string(s.gc.deletingBytes.value())}, {"deleting_objects", std::to_string(s.gc.deletingObjects.value())},
+        {"used_nodes", std::to_string(s.nodes.used.value())}, {"reserved_nodes", std::to_string(s.nodes.reserved.value())}, {"node_limit", std::to_string(kInstanceNodeLimit)},
         {"disk_status", s.disk ? "AVAILABLE" : "UNAVAILABLE"}, {"free_bytes", free}, {"safety_margin_bytes", margin}, {"sampled_at", sampled}});
     result.headers.addHeader("ETag", "\"storage-" + s.instanceId.toString() + "-" + std::to_string(s.accounting.revision.value()) + "\"");
     return result;

@@ -1,5 +1,6 @@
 #include <anof/application/transfer/DownloadService.h>
 #include <anof/domain/drive/DirectoryPolicy.h>
+#include <anof/application/ports/DriveMetadataStore.h>
 namespace anof {
 Result<DownloadGrant> prepareDownload(TransferMetadataStore& store, Clock& clock, const RequestContext& context, NodeId id) {
     auto opened = store.beginTransferRead();
@@ -26,6 +27,12 @@ Result<DownloadGrant> prepareDownload(TransferMetadataStore& store, Clock& clock
     auto blob = read.blobs().findByNode(id);
     if (!blob) return blob.error();
     if (!blob.value()) return ErrorCode::IntegrityError;
+    auto* drive = dynamic_cast<DriveReadSnapshot*>(&read);
+    if (!drive) return ErrorCode::InternalError;
+    auto record = drive->blobLifecycle().record(blob.value()->id);
+    if (!record) return record.error();
+    if (!record.value()) return ErrorCode::IntegrityError;
+    if (record.value()->state != BlobState::Available) return ErrorCode::Retryable;
     const auto& content = std::get<FileContentMetadata>(node.value()->content);
     if (content.size.value() != blob.value()->size.value() || content.sha256 != blob.value()->sha256.bytes())
         return ErrorCode::IntegrityError;

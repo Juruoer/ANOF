@@ -12,3 +12,6 @@ target_compile_definitions(anof_client_http_test PRIVATE
 )
 anof_add_unit_test(anof_client_transfer_test TransferClient_unittest.cc)
 target_link_libraries(anof_client_transfer_test PRIVATE anof_client)
+
+anof_add_unit_test(anof_client_drive_test DriveClient_unittest.cc)
+target_link_libraries(anof_client_drive_test PRIVATE anof_client)

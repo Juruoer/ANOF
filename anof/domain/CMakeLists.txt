@@ -1,4 +1,5 @@
 add_library(anof_domain STATIC
+    drive/DrivePolicy.cc
     drive/DirectoryPolicy.cc
     identity/IdentityValues.cc
     transfer/TransferValues.cc

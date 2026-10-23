@@ -21,6 +21,7 @@ LoginCommand loginCommand(std::string name = "administrator") {
 struct UnknownTransaction : TransferTransaction {
     std::unique_ptr<MetadataTransaction> inner;
     explicit UnknownTransaction(std::unique_ptr<MetadataTransaction> value) : inner(std::move(value)) {}
+    NodeAccountingRepository& nodeAccounting() override { return inner->nodeAccounting(); }
     AuthorizationReader& authorization() override { return inner->authorization(); }
     UserRepository& users() override { return inner->users(); }
     SessionRepository& sessions() override { return inner->sessions(); }

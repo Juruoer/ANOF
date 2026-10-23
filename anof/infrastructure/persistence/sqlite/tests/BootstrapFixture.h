@@ -30,6 +30,8 @@ inline void createBootstrappedTestDatabase(const std::filesystem::path& path) {
     auto db = openSqliteDatabase(path);
     BOOST_REQUIRE(db);
     auto seed = bootstrapSeed();
+    auto nodes = initialNodeAccounting(seed);
+    BOOST_REQUIRE(nodes);
     bool active = false;
     SqliteMetadataTransaction tx(*db.value(), active, bootstrapBudget);
     BOOST_REQUIRE(tx.begin());
@@ -46,6 +48,7 @@ inline void createBootstrappedTestDatabase(const std::filesystem::path& path) {
     BOOST_REQUIRE(tx.quotas().insert(PublicContributionQuota{ seed.publicSpaceId, seed.adminUserId }, quota));
     BOOST_REQUIRE(tx.identityAudit().append({ seed.requestId, seed.createdAt, InstanceInitialized{ seed.adminUserId, seed.identity.instanceId } }));
     BOOST_REQUIRE(db.value()->execute("INSERT INTO storage_accounting VALUES(1,1024,0,0,1)"));
+    BOOST_REQUIRE(db.value()->execute("INSERT INTO node_accounting VALUES(1," + std::to_string(nodes.value().used.value()) + ",0,1)"));
     BOOST_REQUIRE(tx.commit());
 }
 }

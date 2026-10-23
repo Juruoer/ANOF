@@ -276,7 +276,7 @@ public:
         auto p = path(key);
         if (auto* e = std::get_if<E>(&p)) {
             if (*e != E::NotFound || !std::holds_alternative<ObjectFile>(key)) return *e;
-            return syncFd(*state_->ops, state_->objects.get()) ? FileStatus(std::monostate{}) : FileStatus(E::UnknownEffect);
+            return syncFd(*state_->ops, state_->objects.get()) && state_->valid() ? FileStatus(std::monostate{}) : FileStatus(E::UnknownEffect);
         }
         auto& value = std::get<Path>(p);
         auto file = open(key, false);
@@ -284,7 +284,7 @@ public:
             if (*e != E::NotFound) return *e;
         } else {
             auto* f = handle(*std::get<OwnedTransferFile>(file));
-            if (!f) return E::Integrity;
+            if (!f || !f->valid()) return E::Integrity;
             if (state_->ops->remove(f->path.parent.get(), f->path.name.c_str())) return E::UnknownEffect;
         }
         if (!value.shard.empty()) {
@@ -292,6 +292,10 @@ public:
             if (fstat(value.parent.get(), &a) || fstatat(state_->objects.get(), value.shard.c_str(), &b, AT_SYMLINK_NOFOLLOW) || !same(a, b)) return E::UnknownEffect;
         }
         if (!syncFd(*state_->ops, value.parent.get()) || !state_->valid()) return E::UnknownEffect;
+        if (!value.shard.empty()) {
+            struct stat a{}, b{};
+            if (fstat(value.parent.get(), &a) || fstatat(state_->objects.get(), value.shard.c_str(), &b, AT_SYMLINK_NOFOLLOW) || !same(a, b) || !safe(b, true)) return E::UnknownEffect;
+        }
         return std::monostate{};
     }
     FileResult<OwnedTransferHash> beginHash() override { return OwnedTransferHash(new Hash(state_)); }

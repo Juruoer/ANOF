@@ -210,3 +210,56 @@ BOOST_AUTO_TEST_CASE(real_partial_upload_is_resumed_by_next_cli_process) {
     std::string bytes((std::istreambuf_iterator<char>(in)), {});
     BOOST_CHECK_EQUAL(bytes, "abc");
 }
+
+BOOST_AUTO_TEST_CASE(real_cli_drive_management_two_users_and_deleted_upload_resume) {
+    Fixture f;
+    auto uploaded=f.upload("source","abc");
+    auto n=f.call({"stat",uploaded["node_id"]});
+    Json space;
+    const auto available=f.call({"spaces"});
+    for(const auto& s:available.at("items")) { if(s["kind"]=="private")space=s; }
+    auto dir=f.call({"mkdir","--space",space["id"],"--parent",space["root_node_id"],"--name","destination"});
+    auto renamed=f.call({"rename",n["id"],"--name","find%_one","--if-match",n["etag"]});
+    auto moved=f.call({"mv",n["id"],"--parent",dir["id"],"--if-match",renamed["etag"]});
+    Process stale(command(f.temp,"admin",{"rename",n["id"],"--name","stale","--if-match",n["etag"]}));
+    auto failure=stale.failure(3);BOOST_CHECK_EQUAL(failure["code"].get<std::string>(),"PRECONDITION_FAILED");BOOST_CHECK_EQUAL(failure["operation"].get<std::string>(),"rename");
+    auto copy=f.call({"cp",n["id"],"--space",space["id"],"--parent",space["root_node_id"],"--name","find%_two","--if-match",moved["etag"]});
+    auto page=f.call({"search","--space",space["id"],"--query","%_","--limit","1"});
+    BOOST_REQUIRE(!page["next_cursor"].is_null());auto next=f.call({"search","--space",space["id"],"--query","%_","--limit","1","--cursor",page["next_cursor"]});
+    BOOST_CHECK(page["items"][0]["id"]!=next["items"][0]["id"]);
+    auto storage=f.call({"storage","show"});BOOST_CHECK_EQUAL(storage["retained_bytes"].get<std::string>(),"3");BOOST_CHECK_EQUAL(storage["pending_gc_bytes"].get<std::string>(),"0");BOOST_CHECK_EQUAL(storage["node_limit"].get<std::string>(),"100000");
+    const auto origin=jsonFile(f.temp.path/"config/profiles/admin.json")["server"].get<std::string>();
+    auto invitation=f.call({"invite","create","--max-uses","2"});
+    for(const auto* user:{"alice","bob"}) {
+        run(f.temp,"",{"profile","add",user,"--server",origin,"--development-http"});
+        Process reg(command(f.temp,user,{"register","--login",user,"--display-name",user}),true);
+        reg.input("Invitation token: ",invitation["token"]);reg.input("New password: ",password);reg.input("Confirm password: ",password);reg.success();
+        login(f.temp,user,user,password);
+    }
+    Process hidden(command(f.temp,"alice",{"rm",moved["id"],"--if-match",moved["etag"]}));BOOST_CHECK_EQUAL(hidden.failure(3)["code"].get<std::string>(),"NOT_FOUND");
+    Json common;
+    auto spaces=run(f.temp,"alice",{"spaces"})["data"];
+    for(const auto& s:spaces["items"])if(s["kind"]=="public")common=s;
+    auto shared=run(f.temp,"alice",{"mkdir","--space",common["id"],"--parent",common["root_node_id"],"--name","mixed"})["data"];
+    run(f.temp,"bob",{"mkdir","--space",common["id"],"--parent",shared["id"],"--name","bob-child"});
+    shared=run(f.temp,"alice",{"stat",shared["id"]})["data"];
+    Process forbidden(command(f.temp,"alice",{"rm",shared["id"],"--if-match",shared["etag"]}));BOOST_CHECK_EQUAL(forbidden.failure(3)["code"].get<std::string>(),"FORBIDDEN");
+    dir=f.call({"stat",dir["id"]});
+    auto t=f.call({"rm",dir["id"],"--if-match",dir["etag"]});
+    BOOST_CHECK_EQUAL(t["node_count"].get<std::string>(),"2");
+    auto listed=f.call({"trash","list","--space",space["id"],"--root-node",dir["id"]});BOOST_REQUIRE_EQUAL(listed["items"].size(),1);
+    BOOST_CHECK(f.call({"trash","show",t["id"]})["etag"]==t["etag"]);
+    auto restored=f.call({"trash","restore",t["id"],"--name","restored","--if-match",t["etag"]});
+    t=f.call({"rm",restored["id"],"--if-match",restored["etag"]});
+    Process noConfirm(command(f.temp,"admin",{"trash","purge",t["id"],"--if-match",t["etag"]}));noConfirm.failure(2);
+    f.call({"trash","show",t["id"]});
+    Process purge(command(f.temp,"admin",{"trash","purge",t["id"],"--if-match",t["etag"],"--confirm-permanent"},false));purge.finish(0);BOOST_CHECK(purge.out.find("physical reclamation may remain pending")!=std::string::npos);
+    auto deleted=f.call({"upload","show",uploaded["upload_id"]});BOOST_CHECK(!deleted["result_deleted_at"].is_null());
+    BOOST_CHECK(f.call({"upload","complete",uploaded["upload_id"]})["result_deleted_at"]==deleted["result_deleted_at"]);
+    Process resume(command(f.temp,"admin",{"upload","resume",uploaded["transfer_id"]}));auto e=resume.failure(3);BOOST_CHECK_EQUAL(e["code"].get<std::string>(),"UPLOAD_RESULT_DELETED");
+    auto output=f.temp.path/"copy-download";f.call({"download",copy["id"],"--output",output.string()});std::ifstream input(output);std::string bytes((std::istreambuf_iterator<char>(input)),{});BOOST_CHECK_EQUAL(bytes,"abc");
+    t=f.call({"rm",copy["id"],"--if-match",copy["etag"]});f.call({"trash","purge",t["id"],"--if-match",t["etag"],"--confirm-permanent"});
+    storage=f.call({"storage","show"});BOOST_CHECK_EQUAL(storage["pending_gc_bytes"].get<std::string>(),"3");BOOST_CHECK_EQUAL(storage["pending_gc_objects"].get<std::string>(),"1");
+    f.server->stop();f.server=std::make_unique<Process>(std::vector<std::string>{"serve","--root",f.root.string()});f.server->port();
+    BOOST_CHECK(f.call({"upload","show",uploaded["upload_id"]})["result_deleted_at"]==deleted["result_deleted_at"]);
+}

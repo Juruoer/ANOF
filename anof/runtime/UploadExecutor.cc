@@ -1,6 +1,7 @@
 #include <anof/application/transfer/TransferRecovery.h>
 #include <anof/application/transfer/UploadService.h>
 #include <anof/application/transfer/DownloadService.h>
+#include <anof/application/ports/DriveMetadataStore.h>
 #include <anof/runtime/UploadExecutor.h>
 #include <muduox/net/EventLoop.h>
 
@@ -96,6 +97,7 @@ struct UploadExecutor::Impl : std::enable_shared_from_this<Impl> {
     MetadataExecutor& metadata;
     DiskExecutor& disk;
     DiskSafetyPolicy safety;
+    BlobAccessRegistry access;
     bool stopping = false, finished = false, verification = false, recovered = false, recovering = false,
          sweeping = false;
     std::size_t commands = 0, backgrounds = 0;
@@ -113,7 +115,7 @@ struct UploadExecutor::Impl : std::enable_shared_from_this<Impl> {
     std::set<UploadId> frozen;
     std::optional<UploadPosition> cleanupAfter;
     Impl(muduox::net::EventLoop& l, MetadataExecutor& m, DiskExecutor& d, DiskSafetyPolicy s)
-        : loop(l), metadata(m), disk(d), safety(s) {}
+        : loop(l), metadata(m), disk(d), safety(s), access(l) {}
     void finish() {
         if (!stopping || finished || commands || backgrounds || !patches.empty() || !reads.empty()) return;
         finished = true;
@@ -733,6 +735,7 @@ void UploadExecutor::Impl::inventory(InventoryArea area, std::optional<Inventory
                             auto id = std::get<ObjectFile>(*entry.knownKey).id;
                             auto blob = view.blobs().find(id);
                             if (!blob) return blob.error();
+                            if (blob.value() && entry.size.value() != blob.value()->size.value()) return ErrorCode::IntegrityError;
                             if (!blob.value()) {
                                 bool owned = false;
                                 for (auto scan : { UploadScan::Active, UploadScan::CleanupPending }) {
@@ -743,6 +746,7 @@ void UploadExecutor::Impl::inventory(InventoryArea area, std::optional<Inventory
                                         if (!owners) return owners.error();
                                         for (const auto& u : owners.value().items)
                                             if (u.pendingBlobId && *u.pendingBlobId == id) {
+                                                if (owned) return ErrorCode::IntegrityError;
                                                 if (u.state != UploadState::Committing &&
                                                     u.location != StagingLocation::Object)
                                                     return ErrorCode::IntegrityError;
@@ -787,6 +791,17 @@ void UploadExecutor::Impl::checkBlobs(std::optional<BlobId> after, std::function
             auto read = store->beginTransferRead();
             if (!read) return read.error();
             *page = read.value()->blobs().list(PageSize::from(64).value(), after);
+            if (!*page) return page->error();
+            auto* drive = dynamic_cast<DriveReadSnapshot*>(read.value().get());
+            if (!drive) return ErrorCode::InternalError;
+            std::vector<Blob> available;
+            for (const auto& blob : page->value().items) {
+                auto row = drive->blobLifecycle().record(blob.id);
+                if (!row) return row.error();
+                if (!row.value()) return ErrorCode::IntegrityError;
+                if (row.value()->state == BlobState::Available) available.push_back(blob);
+            }
+            page->value().items = std::move(available);
             return {};
         },
         [self, page, cb](auto read) {
@@ -810,7 +825,8 @@ void UploadExecutor::Impl::checkBlobs(std::optional<BlobId> after, std::function
                 const auto b = page->value().items[(*index)++];
                 self->verifyFile(ObjectFile{ b.id }, b.size, {}, [next](auto r) {
                     auto invoke = *next;
-                    invoke(r);
+                    // AVAILABLE包含无引用宽限对象；缺文件是损坏，不能由GC补成功。
+                    invoke(!r && r.error().code == ErrorCode::NotFound ? Result<void>{ErrorCode::IntegrityError} : r);
                 });
             };
             auto invoke = *next;
@@ -1247,6 +1263,7 @@ struct UploadExecutor::Impl::Read : std::enable_shared_from_this<Read> {
     bool slot, inFlight = true, cancelled = false, retired = false, closing = false;
     std::size_t pendingBytes = 0;
     OwnedTransferFile file;
+    std::unique_ptr<BlobAccessRegistry::Lease> lease;
     std::function<void()> onCancelled;
     std::chrono::steady_clock::time_point progress = std::chrono::steady_clock::now();
     Read(std::shared_ptr<Impl> o, DownloadGrant g, std::uint64_t n, bool stream)
@@ -1264,6 +1281,7 @@ struct UploadExecutor::Impl::Read : std::enable_shared_from_this<Read> {
                 // 清理队列在协调器停止前仍可用；失败不能在loop销毁worker句柄。
                 if (!result) std::terminate();
                 self->retired = true;
+                self->lease.reset();
                 if (self->slot) --self->owner->readSlots;
                 self->owner->reads.erase(self->id);
                 if (cb) cb();
@@ -1395,10 +1413,9 @@ public:
 }  // namespace
 bool UploadExecutor::blobPinned(BlobId id) const {
     impl_->loop.assertInLoopThread();
-    for (const auto& entry : impl_->reads)
-        if (entry.second->grant.descriptor.blob.id == id) return true;
-    return false;
+    return impl_->access.pinned(id);
 }
+BlobAccessRegistry& UploadExecutor::blobAccess() { impl_->loop.assertInLoopThread(); return impl_->access; }
 TaskSubmission UploadExecutor::submit(RequestContext context, OpenDownloadCommand command,
                                       Completion<OpenedDownload> cb) {
     auto s = impl_;
@@ -1411,7 +1428,7 @@ TaskSubmission UploadExecutor::submit(RequestContext context, OpenDownloadComman
                 *grant = prepareDownload(*store, *r.clock, context, command.id);
                 return {};
             },
-            [s, grant, command, done](auto result) {
+            [s, grant, context, command, done](auto result) {
                 if (!result) {
                     done(result.error());
                     return;
@@ -1431,10 +1448,26 @@ TaskSubmission UploadExecutor::submit(RequestContext context, OpenDownloadComman
                     done(ErrorCode::Retryable);
                     return;
                 }
+                auto lease = s->access.tryAcquireRead(grant->value().descriptor.blob.id);
+                if (!lease) { done(ErrorCode::Retryable); return; }
                 auto read = std::make_shared<Impl::Read>(s, grant->value(), s->nextRead++, !command.metadataOnly);
+                read->lease = std::move(lease);
                 s->reads.emplace(read->id, read);  // pin在磁盘open前取得，close退休后释放。
                 if (read->slot) ++s->readSlots;
-                s->io(
+                s->meta([read, context, command](auto& r) -> Result<void> {
+                    auto* store = dynamic_cast<TransferMetadataStore*>(r.metadata.get());
+                    if (!store) return ErrorCode::InternalError;
+                    auto current = prepareDownload(*store, *r.clock, context, command.id);
+                    if (!current) return current.error();
+                    if (current.value().descriptor.blob.id != read->grant.descriptor.blob.id) return ErrorCode::Conflict;
+                    return {};
+                }, [s, read, command, done](auto checked) {
+                    if (!checked || read->cancelled || s->stopping) {
+                        read->inFlight = false;
+                        read->close([done, checked] { done(checked ? Error{ErrorCode::Retryable} : checked.error()); });
+                        return;
+                    }
+                    s->io(
                     [read](auto& fs) -> Result<void> {
                         auto opened = unwrap(fs.open(ObjectFile{ read->grant.descriptor.blob.id }, false));
                         if (!opened)
@@ -1465,6 +1498,7 @@ TaskSubmission UploadExecutor::submit(RequestContext context, OpenDownloadComman
                         });
                         done(OpenedDownload{ read->grant.descriptor, std::make_unique<ReadStream<Impl::Read>>(read) });
                     });
+                });
             });
     });
 }

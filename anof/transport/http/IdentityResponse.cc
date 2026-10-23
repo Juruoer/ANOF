@@ -1,4 +1,5 @@
 #include <anof/transport/http/IdentityResponse.h>
+#include <anof/transport/http/internal/NodeJson.h>
 #include <anof/transport/http/Pagination.h>
 #include <anof/transport/http/internal/JsonOutput.h>
 #include <anof/transport/http/internal/IdentityJson.h>
@@ -25,7 +26,7 @@ Result<Json> inviteJson(const InviteInfo& invite) {
     }
     return Json{{"id", invite.id.toString()}, {"created_by", invite.createdBy.toString()}, {"created_at", created.value()}, {"expires_at", expires.value()}, {"max_uses", invite.maxUses.value()}, {"used_count", invite.usedCount.value()}, {"revoked_at", std::move(revoked)}};
 }
-Result<Json> nodeJson(const NodeDetails& node) {
+Result<Json> nodeJsonValue(const NodeDetails& node) {
     const auto& metadata = node.metadata;
     const auto* file = std::get_if<FileContentMetadata>(&node.content);
     if (metadata.parentId ? !validateDirectoryName(metadata.name) : (!metadata.name.empty() || file)) return ErrorCode::InternalError;
@@ -121,7 +122,7 @@ Result<JsonResponse> spacesResponse(const std::vector<SpaceView>& spaces, Reques
     return response(200, id, {{"items", std::move(items)}});
 }
 Result<JsonResponse> nodeResponse(const NodeDetails& node, RequestId id) {
-    auto json = nodeJson(node);
+    auto json = nodeJsonValue(node);
     if (!json) return json.error();
     auto output = response(200, id, json.value());
     output.headers.addHeader("ETag", nodeTag(node.metadata));
@@ -132,7 +133,7 @@ Result<JsonResponse> childrenResponse(const Page<NodeDetails, ChildrenCursor>& p
     Json items = Json::array();
     for (const auto& item : page.items) {
         if (!item.metadata.parentId) return ErrorCode::InternalError;
-        auto json = nodeJson(item);
+        auto json = nodeJsonValue(item);
         if (!json) return json.error();
         items.push_back(std::move(json).value());
     }
@@ -163,5 +164,8 @@ Result<JsonResponse> invitesResponse(const Page<InviteInfo, InviteCursor>& page,
         next = encoded.value();
     }
     return response(200, id, {{"items", std::move(items)}, {"next_cursor", std::move(next)}});
+}
+namespace internal {
+Result<nlohmann::json> nodeJson(const NodeDetails& node) { return nodeJsonValue(node); }
 }
 }  // namespace anof::http

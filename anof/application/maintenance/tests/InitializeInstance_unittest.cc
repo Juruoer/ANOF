@@ -122,7 +122,7 @@ BOOST_AUTO_TEST_CASE(sequence_and_lease_cover_all_writes) {
     BOOST_REQUIRE(f.state.safety);
     BOOST_CHECK_EQUAL(f.state.safety->minimum.value(), 12345);
     BOOST_CHECK_EQUAL(f.state.safety->percent.value(), 17);
-    static_assert(InitializationIdentity::schemaVersion == 3 && InitializationIdentity::formatVersion == 3);
+    static_assert(InitializationIdentity::schemaVersion == 4 && InitializationIdentity::formatVersion == 4);
     BOOST_CHECK(!f.state.held);
     const std::vector<InitStage> expected{InitStage::HashPassword, InitStage::CreateDirectory, InitStage::WriteConfiguration,
         InitStage::Bootstrap, InitStage::PublishFormat, InitStage::ClearPending};

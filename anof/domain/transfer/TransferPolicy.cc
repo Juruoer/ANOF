@@ -37,6 +37,8 @@ Result<UtcTime> uploadExpiry(UtcTime created, UtcTime progress) {
     return UtcTime(std::chrono::microseconds(std::min(c + 30 * day, p + 7 * day)));
 }
 Result<void> validateUpload(const Upload& u) {
+    if (u.resultDeletedAt && (u.state != UploadState::Completed || !u.terminalAt ||
+        *u.resultDeletedAt < *u.terminalAt)) return ErrorCode::IntegrityError;
     switch (u.state) {
         case UploadState::Creating: case UploadState::Open: case UploadState::Verifying:
         case UploadState::Ready: case UploadState::Committing: case UploadState::Completed:
@@ -66,6 +68,9 @@ Result<void> validateUpload(const Upload& u) {
 }
 Result<void> validateUploadReplacement(const Upload& before, const Upload& after) {
     if (!validateUpload(before) || !validateUpload(after)) return ErrorCode::IntegrityError;
+    if ((before.resultDeletedAt && before.resultDeletedAt != after.resultDeletedAt) ||
+        (!before.resultDeletedAt && after.resultDeletedAt && before.state != UploadState::Completed))
+        return ErrorCode::IntegrityError;
     auto next = before.generation.add(1);
     if (!next || next.value() != after.generation || before.id != after.id || before.userId != after.userId ||
         before.clientUploadId != after.clientUploadId || !(before.original == after.original) ||

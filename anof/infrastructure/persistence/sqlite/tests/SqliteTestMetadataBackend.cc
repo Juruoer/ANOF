@@ -1,12 +1,16 @@
-#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestStore.h>
-#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteTrashRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
+#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.h>
+#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestStore.h>
+#include <tests/persistence_contract/TestDriveBackend.h>
 
 #include <cstdlib>
 #include <initializer_list>
 #include <limits>
+#include <map>
+#include <set>
 #include <stdexcept>
 
 namespace anof::infrastructure::sqlite::testing {
@@ -21,7 +25,7 @@ Result<void> finish(SqliteStatement& statement, std::initializer_list<Result<voi
     return {};
 }
 
-Result<void> seedDatabase(SqliteConnection& connection, const anof::testing::MetadataSeed& seed) {
+Result<void> seedDatabase(SqliteConnection& connection, const anof::testing::MetadataSeed& seed, const anof::testing::DriveSeed* drive = nullptr) {
     // 节点种子顺序不必按拓扑排序；所有外键仍须在提交时成立。
     auto deferred = connection.execute("PRAGMA defer_foreign_keys=ON");
     if (!deferred) return deferred.error();
@@ -58,26 +62,78 @@ Result<void> seedDatabase(SqliteConnection& connection, const anof::testing::Met
         if (!result) return result.error();
     }
     for (const auto& blob : seed.blobs) {
-        auto p = SqliteStatement::prepare(connection, "INSERT INTO blobs(id,size,sha256) VALUES (?1, ?2, ?3)");
+        BlobRecord record{ { blob.id, FileLength::from(blob.size.value()).value(), Sha256(blob.sha256) }, BlobState::Available, {}, {}, {}, {}, {} };
+        if (drive) {
+            auto it = std::find_if(drive->blobRecords.begin(), drive->blobRecords.end(), [&](const auto& b) { return b.content.id == blob.id; });
+            if (it == drive->blobRecords.end()) return ErrorCode::IntegrityError;
+            record = *it;
+        }
+        auto p = SqliteStatement::prepare(connection, "INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision,unreferenced_at,delete_started_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)");
         if (!p) return p.error();
-        auto& s = *p.value();
-        auto result = finish(s, { s.bindText(1, blob.id.toString()), s.bindInt64(2, blob.size.value()),
-            s.bindBlob(3, blob.sha256.data(), blob.sha256.size()) });
-        if (!result) return result.error();
+        auto& q = *p.value();
+        auto r = finish(q, { q.bindText(1, blob.id.toString()), q.bindInt64(2, blob.size.value()), q.bindBlob(3, blob.sha256.data(), 32), q.bindInt64(4, static_cast<int>(record.state)), q.bindInt64(5, record.createdAt.time_since_epoch().count()), q.bindInt64(6, record.updatedAt.time_since_epoch().count()), q.bindInt64(7, record.revision.value()), record.unreferencedAt ? q.bindInt64(8, record.unreferencedAt->time_since_epoch().count()) : q.bindNull(8), record.deleteStartedAt ? q.bindInt64(9, record.deleteStartedAt->time_since_epoch().count()) : q.bindNull(9) });
+        if (!r) return r.error();
     }
     for (const auto& node : seed.nodes) {
-        auto p = SqliteStatement::prepare(connection, "INSERT INTO nodes VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)");
+        auto p = SqliteStatement::prepare(connection, "INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at,trash_entry_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,?12)");
         if (!p) return p.error();
         auto& s = *p.value();
         const auto& n = node.metadata;
+        std::optional<TrashId> membership;
+        if (drive) {
+            for (auto pair : drive->memberships)
+                if (pair.first == n.id) membership = pair.second;
+            if (node.trashed != bool(membership)) return ErrorCode::IntegrityError;
+        }
         auto result = finish(s, { s.bindText(1, n.id.toString()), s.bindText(2, n.spaceId.toString()),
-            n.parentId ? s.bindText(3, n.parentId->toString()) : s.bindNull(3), s.bindText(4, n.name),
-            s.bindInt64(5, node.blobId ? 1 : 0), s.bindText(6, n.createdBy.toString()),
-            node.blobId ? s.bindText(7, node.blobId->toString()) : s.bindNull(7), s.bindInt64(8, n.revision.value()),
-            s.bindInt64(9, node.trashed ? 1 : 0), s.bindInt64(10, n.createdAt.time_since_epoch().count()),
-            s.bindInt64(11, n.updatedAt.time_since_epoch().count()) });
+                                  n.parentId ? s.bindText(3, n.parentId->toString()) : s.bindNull(3), s.bindText(4, n.name),
+                                  s.bindInt64(5, node.blobId ? 1 : 0), s.bindText(6, n.createdBy.toString()),
+                                  node.blobId ? s.bindText(7, node.blobId->toString()) : s.bindNull(7), s.bindInt64(8, n.revision.value()),
+                                  s.bindInt64(9, drive && node.trashed ? 1 : 0), s.bindInt64(10, n.createdAt.time_since_epoch().count()),
+                                  s.bindInt64(11, n.updatedAt.time_since_epoch().count()), membership ? s.bindText(12, membership->toString()) : s.bindNull(12) });
         if (!result) return result.error();
     }
+    // 窄Metadata种子的trashed根映射为完整当前回收站条目，后代一起入站。
+    // 仅测试夹具转换；生产没有旧格式读取或迁移路径。
+    for (const auto& root : seed.nodes)
+        if (!drive && root.trashed) {
+            std::set<NodeId> members{ root.metadata.id };
+            for (bool changed = true; changed;) {
+                changed = false;
+                for (const auto& n : seed.nodes)
+                    if (n.metadata.parentId && members.count(*n.metadata.parentId)) changed = members.insert(n.metadata.id).second || changed;
+            }
+            if (!root.metadata.parentId || members.size() > 1000) return ErrorCode::IntegrityError;
+            auto at = root.metadata.updatedAt;
+            ByteCount bytes;
+            std::optional<UserId> sole = root.metadata.createdBy;
+            for (const auto& n : seed.nodes)
+                if (members.count(n.metadata.id)) {
+                    at = std::max(at, n.metadata.updatedAt);
+                    if (sole && *sole != n.metadata.createdBy) sole.reset();
+                    if (n.blobId) {
+                        auto b = std::find_if(seed.blobs.begin(), seed.blobs.end(), [&](const auto& v) { return v.id == *n.blobId; });
+                        if (b == seed.blobs.end()) return ErrorCode::IntegrityError;
+                        auto next = bytes.add(b->size.value());
+                        if (!next) return next.error();
+                        bytes = next.value();
+                    }
+                }
+            auto expiry = trashExpiry(at);
+            if (!expiry) return expiry.error();
+            auto p = SqliteStatement::prepare(connection, "INSERT INTO trash_entries VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,1,?10,?11,?12)");
+            if (!p) return p.error();
+            auto& q = *p.value();
+            auto& n = root.metadata;
+            auto saved = finish(q, { q.bindText(1, n.id.toString()), q.bindText(2, n.spaceId.toString()), q.bindText(3, n.id.toString()), q.bindText(4, n.parentId->toString()), q.bindText(5, n.name), q.bindInt64(6, root.blobId ? 1 : 0), q.bindText(7, n.createdBy.toString()), q.bindInt64(8, at.time_since_epoch().count()), q.bindInt64(9, expiry.value().time_since_epoch().count()), q.bindInt64(10, static_cast<std::int64_t>(members.size())), q.bindInt64(11, bytes.value()), sole ? q.bindText(12, sole->toString()) : q.bindNull(12) });
+            if (!saved) return saved.error();
+            for (auto id : members) {
+                auto u = SqliteStatement::prepare(connection, "UPDATE nodes SET trashed=1,trash_entry_id=?1,parent_id=CASE WHEN id=?1 THEN NULL ELSE parent_id END WHERE id=?2");
+                if (!u) return u.error();
+                saved = finish(*u.value(), { u.value()->bindText(1, n.id.toString()), u.value()->bindText(2, id.toString()) });
+                if (!saved) return saved.error();
+            }
+        }
     for (const auto& quota : seed.quotas) {
         const auto* contribution = std::get_if<PublicContributionQuota>(&quota.scope);
         const auto space = contribution ? contribution->spaceId : std::get<SpaceQuota>(quota.scope).spaceId;
@@ -96,7 +152,7 @@ Result<void> seedDatabase(SqliteConnection& connection, const anof::testing::Met
             s.bindInt64(6, q.reserved.bytes.value()), s.bindInt64(7, q.reserved.nodes.value()) });
         if (!result) return result.error();
     }
-    return {};
+    return connection.execute("INSERT INTO node_accounting SELECT 1,count(*),0,1 FROM nodes");
 }
 
 }  // namespace
@@ -114,6 +170,8 @@ SqliteTestMetadataBackend::~SqliteTestMetadataBackend() {
 }
 
 std::filesystem::path SqliteTestMetadataBackend::databasePath() const { return directory_ / "database" / "metadata.sqlite3"; }
+
+Result<void> seedDriveMetadata(SqliteConnection& c, const anof::testing::DriveSeed& seed) { return seedDatabase(c, seed.transfer.metadata, &seed); }
 
 Result<void> seedTransferMetadata(SqliteConnection& c,const anof::testing::MetadataSeed& seed) {return seedDatabase(c,seed);}
 

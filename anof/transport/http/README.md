@@ -1,12 +1,13 @@
 # HTTP 接入层
 
-`anof_http` 为创建目录、健康检查、身份、邀请、账户管理、目录读取、上传、下载及实例存储管理操作提供 HTTP 路由、协议转换、请求关联及异步生命周期适配。模块只依赖 application/domain 类型和抽象端口、muduox 的 HTTP/router/middleware 公共接口，以及实现内部使用的 nlohmann-json。它不直接访问数据库、调用同步应用用例或创建 worker。当前实际注册下表中的三十三个 HTTP 操作。
+`anof_http` 为创建目录、健康检查、身份、邀请、账户管理、目录读取、上传、下载、文件管理、搜索、回收站及实例存储管理操作提供 HTTP 路由、协议转换、请求关联及异步生命周期适配。模块只依赖 application/domain 类型和抽象端口、muduox 的 HTTP/router/middleware 公共接口，以及实现内部使用的 nlohmann-json。它不直接访问数据库、调用同步应用用例或创建 worker。当前实际注册下表中的四十一个 HTTP 操作。
 
 ## 接口与装配
 
 | 接口 | 职责 |
 |---|---|
 | [TransferRequest](TransferRequest.h)／[TransferResponse](TransferResponse.h) | 上传／storage 输入、DTO、头与错误转换 |
+| [DriveRequest](DriveRequest.h)／[DriveResponse](DriveResponse.h)／[DriveHandlers](DriveHandlers.h) | 文件管理条件与 JSON、搜索／回收站表示、八个异步入口 |
 | [DownloadResponse](DownloadResponse.h)／[DownloadStream](DownloadStream.h) | 授权 open 后的条件／Range、表示头与单块异步下载发送 |
 | [UploadStream](UploadStream.h) | PATCH 异步准备、单缓冲 feed／finish 与取消 |
 | [HttpApi](HttpApi.h) | 配置路由、HTTP 容量限制、响应头策略与交换 observer |
@@ -22,11 +23,11 @@
 | [Pagination](Pagination.h) | 分页查询、绑定游标编解码及严格 UTC 解析 |
 | [IdentityResponse](IdentityResponse.h) | 用户、登录、邀请、空间、节点及分页表示，204 无正文响应 |
 
-调用方提供目录 dispatcher、IdentityDispatcher、codec、identity、内存 ready 回调、TransferDispatcher 及观测 sink。IdentityDispatcher 是必需的注入依赖，十九个身份／邀请／账户／读取操作通过它提交类型化异步任务。handler 和 HttpApi 应共享同一个生命周期来源的 ready 回调。以下代码在 server 所属 loop 执行：
+调用方提供目录 dispatcher、IdentityDispatcher、codec、identity、内存 ready 回调、TransferDispatcher、DriveDispatcher 及观测 sink。IdentityDispatcher 是必需的注入依赖，十九个身份／邀请／账户／读取操作通过它提交类型化异步任务。handler 和 HttpApi 应共享同一个生命周期来源的 ready 回调。以下代码在 server 所属 loop 执行：
 
 ```cpp
 CreateDirectoryHandler handler(dispatcher, ready, taskObserver);
-HttpApi api(codec, identity, ready, handler.stream(), identityDispatcher, transferDispatcher, httpObservation);
+HttpApi api(codec, identity, ready, handler.stream(), identityDispatcher, transferDispatcher, driveDispatcher, httpObservation);
 api.configure(server);
 server.start();
 ```
@@ -39,6 +40,14 @@ server.start();
 
 | 端点 | 行为 |
 |---|---|
+| `PATCH /api/v1/nodes/{node_id}` | 改名／移动或组合更新，200 NodeMetadata＋ETag |
+| `POST /api/v1/nodes/{node_id}/copy` | 单文件复制，201 NodeMetadata＋ETag＋node Location |
+| `DELETE /api/v1/nodes/{node_id}` | 移入回收站，200 TrashEntry＋ETag＋trash Location |
+| `GET /api/v1/search` | 按空间和字面名称查询一页活动节点 |
+| `GET /api/v1/trash` | 按空间、可选原根 ID 查询一页回收站条目 |
+| `GET /api/v1/trash/{trash_id}` | 条目详情，200 TrashEntry＋ETag |
+| `POST /api/v1/trash/{trash_id}/restore` | 恢复，200 NodeMetadata＋ETag＋node Location |
+| `DELETE /api/v1/trash/{trash_id}` | 永久删除确认，204；不表示物理回收完成 |
 | `GET /api/v1/nodes/{node_id}/content` | 授权 open 后发送完整内容／单范围，支持条件请求 |
 | `HEAD /api/v1/nodes/{node_id}/content` | metadataOnly open，返回完整表示头，无正文、无流式槽 |
 | `POST /api/v1/uploads` | 创建／重放上传，按返回 disposition 为 201／200／202 |
@@ -201,12 +210,30 @@ GET／HEAD 内容入口拒绝 query、正文和 Cookie，沿用 Bearer、自有�
 
 内容路由 body limit 为 0，response 默认 21600 秒、write 3600 秒；HttpApiOptions.contentResponseSeconds 只允许有限正值收紧。JSON 的 30 秒 response 不限制内容下载；headers 15、idle 60、close 5 秒不变。新请求检查 ready，已接纳下载可在 HTTP grace 内完成。运行时无进展／禁用／停止通过同一取消回调终止等待 writable 的发送；已被 writer 接纳的字节不能撤回。
 
+## 文件管理、搜索与回收站
+
+DriveDispatcher 是 HttpApi 在 TransferDispatcher 后、observation/options 前的必填引用，无兼容构造或降级端口。八个入口复用 makeIdentityStream 和 AsyncRequestState，保持 128 HTTP 在途默认上限、JSON 请求 64 KiB、响应 512 KiB、正文 15 秒／响应 30 秒及 owner-loop writer 规则。HTTP 只提交自有命令，不执行 SQL、树权限判断、磁盘回收或 pin 管理。运行写入遇到断连／超时不等于回滚，迟到结果只消费，不发送第二份响应。
+
+五个写入口接受唯一强 If-Match：`"node-<id>-<revision>"` 或 `"trash-<id>-<revision>"`，缺失 428，弱标签／列表／通配符／畸形输入 400。解析按标签自身种类构造 DriveCondition，保留 ID 与 revision；合法异类、异 ID 或陈旧标签必须交应用在授权／可见性及必要的树修改权限检查后判定。HTTP 不提前返回 412。update 至少含 parent_id/name 之一；copy 必需 space_id/parent_id/name；restore 的 `{}` 合法，两字段均可独立覆盖。重复／未知键、null、嵌套容器均拒绝。输入 ID 复用规范 UUID 解码，输出为规范小写。
+
+搜索必需 space_id/q；q 复用 SearchText 领域校验，为 1～128 UTF-8 字节，无 NUL/C0/C1，不 trim 或改大小写，保留字面 `%`、`_`、反斜杠与空格。回收站列表必需 space_id，可选 root_node_id。两者 limit 默认 100、最大 200；其他操作拒绝 query，bodyless 操作拒绝非空正文。分页游标严格无填充 base64url，最多 2048 字节，解码 JSON 最多 1536 字节，含格式版本、排序版本及最后键。search 绑定 user/space/q 和 name/id；trash 绑定 user/space/可选 root_node_id 和 deleted_at/id。解析保留绑定值，应用负责授权后验证；游标不赋予权限，不承诺跨页快照。
+
+TrashEntry 只序列化 id、instance_id、space_id、root_node_id、original_parent_id、name、kind、deleted_at、expires_at、revision、etag、node_count、logical_bytes。原父 ID 是非空历史信息，不承诺当前可访问；内部删除者、sole creator、成员和 Blob 不公开。时间为六位微秒 UTC RFC3339，数量／revision 为十进制字符串。列表每项含 etag，整页不设置单资源 ETag；永久删除 204 无正文。无操作 update 返回应用提供的原 revision；HTTP 不自行推进版本。
+
+新增 CrossSpaceMove／DirectoryCycle／TreeLimitExceeded／NodeLimitReached／RestoreTargetUnavailable 映射对应 409；QueryLimitExceeded 映射 503 QUERY_LIMIT_EXCEEDED。注册、mkdir 和创建上传也沿公共映射返回 409 NODE_LIMIT_REACHED。文件管理元数据 StorageFull 为 507；上传 StorageFull 仍为 503，额度 PUT 的专用映射保留。队列／停止／GC 资格冲突为 503 TEMPORARILY_UNAVAILABLE；COMMIT_OUTCOME_UNKNOWN 保留 500，不声称回滚或自动重试，错误 details 保持空对象。
+
+上传 JSON 必有 nullable result_deleted_at，取自 UploadView.resultDeletedAt，仅 COMPLETED 可非空且不早于 terminal_at；保留历史 result_node_id，入站本身不产生永久删除证据。所有上传 JSON 共用转换，HEAD 上传头不增加字段。GET／PUT storage 从实际 StorageView.gc／nodes 输出 pending_gc_bytes、pending_gc_objects、deleting_bytes、deleting_objects、used_nodes、reserved_nodes、node_limit 字符串。node_limit 取领域常量 100000；deleting 是 pending 的子集，pending 字节是 retained 的子集，不叠加计费。storage ETag 仍按原预算账本 revision，不绑定派生计数。
+
+本地测试使用类型化假 dispatcher，验证原样传递条件和应用返回的 401／404／403／412，不替代真实授权事务、跨用户隔离、保留期／GC、恢复或服务装配验收。
+
 ## 构建与验证
 
-[CMakeLists.txt](CMakeLists.txt) 定义静态库；[tests/CMakeLists.txt](tests/CMakeLists.txt) 在 ANOF_BUILD_TESTS 开启时注册十四个 Boost.Test 可执行文件，每个 CTest 超时为 30 秒，并为十七个公开头生成独立编译检查。
+[CMakeLists.txt](CMakeLists.txt) 定义静态库；[tests/CMakeLists.txt](tests/CMakeLists.txt) 在 ANOF_BUILD_TESTS 开启时注册十六个 Boost.Test 可执行文件，每个 CTest 超时为 30 秒，并为二十个公开头生成独立编译检查。
 
 | 目标与源码 | 验证范围 |
 |---|---|
+| `anof_http_drive_protocol_unittest`：[DriveProtocol_unittest.cc](tests/DriveProtocol_unittest.cc) | Node／Trash 条件种类、严格 JSON／查询／游标、Trash DTO、上传删除证据、GC／节点统计和错误映射 |
+| `anof_http_drive_handlers_unittest`：[DriveHandlers_unittest.cc](tests/DriveHandlers_unittest.cc) | 八个类型化入口、异类条件交应用、成功头／204、过载／停止／迟到／超时、共享容量和 keep-alive |
 | `anof_http_download_protocol_unittest`：[DownloadProtocol_unittest.cc](tests/DownloadProtocol_unittest.cc) | 条件优先级、重复头、Range／If-Range、Unicode 附件名、HEAD／304／416、合成 1 TiB 长度 |
 | `anof_http_download_handlers_unittest`：[DownloadHandlers_unittest.cc](tests/DownloadHandlers_unittest.cc) | GET／HEAD、授权前隐藏元信息、单块所有权与 consumed、迟到／取消／停止、真实 writer 背压恢复与取消 |
 | `anof_http_transfer_protocol_unittest`：[TransferProtocol_unittest.cc](tests/TransferProtocol_unittest.cc) | 上传／storage JSON、条件、游标、DTO／头与新增错误分类 |
@@ -221,14 +248,14 @@ GET／HEAD 内容入口拒绝 query、正文和 Cookie，沿用 Bearer、自有�
 | `anof_http_protocol_unittest`：[Protocol_unittest.cc](tests/Protocol_unittest.cc) | 凭据／内容头、JSON 结构、Unicode、字节和时间边界、完整成功对象、错误映射及 muduox 序列化 |
 | `anof_http_api_unittest`：[HttpApi_unittest.cc](tests/HttpApi_unittest.cc) | 真 HTTP 健康检查、404/405、请求 ID、头部拒绝、路由限额、容量归还、keep-alive 和框架错误 |
 | `anof_http_create_directory_unittest`：[CreateDirectoryHandler_unittest.cc](tests/CreateDirectoryHandler_unittest.cc) | 真 HTTP 加可控 dispatcher，验证分片/chunked/Expect/trailer、一次提交、延后结果、201/401/503/507、取消、超时、迟到结果、停止和故障注入 |
-| `anof_http_public_headers_check` | 十七个头文件在独立翻译单元中编译，检查 include 自足性 |
+| `anof_http_public_headers_check` | 二十个头文件在独立翻译单元中编译，检查 include 自足性 |
 
 从仓库根目录复用现有 Unix Makefiles 构建目录，开启 ANOF_BUILD_TESTS，保持 MUDUOX_BUILD_TESTS／MUDUOX_BUILD_EXAMPLES 为 OFF。以下为 Debug 命令；Release 使用 `cmake-build-release` 和 `-DCMAKE_BUILD_TYPE=Release`，两组顺序执行，串行运行 CTest：
 
 ```sh
 cmake -S . -B cmake-build-debug -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug -DANOF_BUILD_TESTS=ON -DMUDUOX_BUILD_TESTS=OFF -DMUDUOX_BUILD_EXAMPLES=OFF
-cmake --build cmake-build-debug --target anof_http_download_protocol_unittest anof_http_download_handlers_unittest anof_http_transfer_protocol_unittest anof_http_upload_handlers_unittest anof_http_account_writes_unittest anof_http_account_reads_unittest anof_http_account_protocol_unittest anof_http_identity_handlers_unittest anof_http_reads_unittest anof_http_identity_stream_unittest anof_http_identity_protocol_unittest anof_http_protocol_unittest anof_http_api_unittest anof_http_create_directory_unittest anof_http_public_headers_check --parallel 2
-ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_http_(download_protocol|download_handlers|transfer_protocol|upload_handlers|account_writes|account_reads|account_protocol|identity_handlers|reads|create_directory|api|protocol|identity_protocol|identity_stream)_unittest$' -j 1
+cmake --build cmake-build-debug --target anof_http_drive_protocol_unittest anof_http_drive_handlers_unittest anof_http_download_protocol_unittest anof_http_download_handlers_unittest anof_http_transfer_protocol_unittest anof_http_upload_handlers_unittest anof_http_account_writes_unittest anof_http_account_reads_unittest anof_http_account_protocol_unittest anof_http_identity_handlers_unittest anof_http_reads_unittest anof_http_identity_stream_unittest anof_http_identity_protocol_unittest anof_http_protocol_unittest anof_http_api_unittest anof_http_create_directory_unittest anof_http_public_headers_check --parallel 2
+ctest --test-dir cmake-build-debug --output-on-failure -R '^anof_http_(drive_protocol|drive_handlers|download_protocol|download_handlers|transfer_protocol|upload_handlers|account_writes|account_reads|account_protocol|identity_handlers|reads|create_directory|api|protocol|identity_protocol|identity_stream)_unittest$' -j 1
 ```
 
 网络测试使用 127.0.0.1 端口 0 并读取实际监听地址，使用小 JSON、显式完成 gate 和有限 timer，不使用固定 sleep。等待统一复用 `anof::test::waitFor`，保持 3 秒上限和 1 毫秒轮询，转发实际调用位置并由共享工具处理 `ANOF_WAIT_TRACE`。首个观察到的完成／超时终态固定结果，未观察到完成的外部 quit 返回失败；返回和诊断不重新执行可能消费 socket 数据的谓词，谓词异常在退出 loop、清理定时器后重抛。该规则表示回调观察顺序，不承诺物理完成时刻的硬实时界限。它们覆盖 Queued、Running、AlreadyTerminal、重复／优雅停止、超时后 CommitOutcomeUnknown、ready/提交/观测/响应头异常。writer 弱引用过期约束请求状态不得被迟到回调强保活，但不等同于一般内存泄漏检测。提交异常只模拟接纳前失败，不支持“接纳后抛出且不给句柄”的违约 dispatcher。
