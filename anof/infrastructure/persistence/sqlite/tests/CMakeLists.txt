@@ -188,5 +188,5 @@ set_tests_properties(anof_sqlite_maintenance_unittest PROPERTIES TIMEOUT 60 LABE
 target_sources(anof_sqlite_maintenance_unittest PRIVATE
         SqliteFaultVfs.cc
 )
-target_link_libraries(anof_sqlite_maintenance_unittest PRIVATE anof_infrastructure)
+target_link_libraries(anof_sqlite_maintenance_unittest PRIVATE anof_infrastructure SQLite::SQLite3)
 target_compile_options(anof_sqlite_maintenance_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
