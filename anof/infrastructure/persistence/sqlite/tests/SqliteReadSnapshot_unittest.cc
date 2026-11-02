@@ -1,12 +1,13 @@
 #include <anof/application/ports/DriveMetadataStore.h>
 #define BOOST_TEST_MODULE AnofSqliteReadSnapshot
-#include <boost/test/unit_test.hpp>
-#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataReadSnapshot.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
+#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.h>
 #include <sqlite3.h>
+
+#include <boost/test/unit_test.hpp>
 #include <cstdio>
 #include <limits>
 
@@ -31,7 +32,9 @@ constexpr PasswordHashLimits budget{ 8192, 1, 1 };
 NewUser user(unsigned n, UserRole role = UserRole::Member) {
     auto hash = EncodedPasswordHash::parse("$argon2id$v=19$m=8192,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", budget);
     return { { id<UserId>(n), LoginName::parse("user" + std::to_string(n)).value(), DisplayName::parse("User").value(), role, true,
-        AuthEpoch{}, Revision{}, now, now }, std::move(hash).value(), PasswordVersion{} };
+               AuthEpoch{}, Revision{}, now, now },
+             std::move(hash).value(),
+             PasswordVersion{} };
 }
 struct Fixture {
     SqliteTestMetadataBackend backend;
@@ -45,7 +48,7 @@ struct Fixture {
         BOOST_REQUIRE(tx->users().insert(user(1, UserRole::Administrator)));
         for (unsigned n : { 1u, 2u }) {
             BOOST_REQUIRE(tx->spaces().insert({ id<SpaceId>(n), n == 1 ? SpaceKind::Private : SpaceKind::Public,
-                n == 1 ? std::optional<UserId>{ id<UserId>(1) } : std::nullopt, id<NodeId>(n) }));
+                                                n == 1 ? std::optional<UserId>{ id<UserId>(1) } : std::nullopt, id<NodeId>(n) }));
             BOOST_REQUIRE(tx->nodes().insertRoot({ id<NodeId>(n), id<SpaceId>(n), id<UserId>(1), now }));
             BOOST_REQUIRE(tx->quotas().insert(SpaceQuota{ id<SpaceId>(n) }, { { amount(100, 10), amount(0, 1), amount(0, 0) }, Revision{} }));
         }
@@ -483,7 +486,7 @@ BOOST_AUTO_TEST_CASE(node_seek_pagination_has_binary_order_and_file_metadata) {
     }
     auto raw = f.raw();
     BOOST_REQUIRE(raw->execute(
-        "INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision) VALUES('00000000-0000-4000-8000-000000000009',1099511627776,zeroblob(32),0,0,0,1); "
+        "INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision,charged_bytes) VALUES('00000000-0000-4000-8000-000000000009',1099511627776,zeroblob(32),0,0,0,1,1099511627776); "
         "INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES('00000000-0000-4000-8000-000000000009','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000001','file',1,'00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000009',1,0,123,123)"));
     auto snapshot = f.read();
     std::vector<std::string> names;
@@ -568,7 +571,7 @@ BOOST_AUTO_TEST_CASE(quota_revision_limit_noop_and_reservation_floor) {
 BOOST_AUTO_TEST_CASE(caller_appends_quota_audit_only_for_actual_limit_changes) {
     Fixture f;
     const QuotaScope scopes[] = { SpaceQuota{ id<SpaceId>(1) }, SpaceQuota{ id<SpaceId>(2) },
-        PublicContributionQuota{ id<SpaceId>(2), id<UserId>(1) } };
+                                  PublicContributionQuota{ id<SpaceId>(2), id<UserId>(1) } };
     for (const auto& scope : scopes) {
         for (unsigned attempt = 0; attempt != 2; ++attempt) {
             auto tx = f.write();
@@ -670,10 +673,10 @@ BOOST_AUTO_TEST_CASE(quota_compare_after_independent_writer_and_set_limit_overfl
 
 BOOST_AUTO_TEST_CASE(production_open_rejects_missing_required_rows_and_unbilled_roots) {
     for (const char* damage : {
-        "DELETE FROM identity_audit_events; DELETE FROM instance_settings",
-        "DELETE FROM space_quotas",
-        "UPDATE space_quotas SET used_nodes=0",
-        "UPDATE public_contribution_quotas SET used_nodes=0" }) {
+             "DELETE FROM identity_audit_events; DELETE FROM instance_settings",
+             "DELETE FROM space_quotas",
+             "UPDATE space_quotas SET used_nodes=0",
+             "UPDATE public_contribution_quotas SET used_nodes=0" }) {
         Fixture f;
         BOOST_REQUIRE(f.raw()->execute(damage));
         errorIs(openSqliteMetadataStore(f.backend.databasePath(), { budget, { 0 } }), ErrorCode::IntegrityError);

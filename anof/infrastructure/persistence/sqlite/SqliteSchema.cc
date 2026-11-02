@@ -92,14 +92,14 @@ Result<void> verifyInside(SqliteConnection& connection, const char* ddl = kSchem
     row = foreignKeys.value()->step();
     if (!row) return row.error();
     if (row.value()) return ErrorCode::IntegrityError;
-    // 返回内容只在 SQLite 内比较，最多一条损坏诊断，不回显行内容。
-    auto integrity = SqliteStatement::prepare(connection, "SELECT integrity_check='ok' FROM pragma_integrity_check(1)");
+    // 直接 PRAGMA 保留一条诊断上限；只接受唯一的 ok，不回显损坏内容。
+    auto integrity = SqliteStatement::prepare(connection, "PRAGMA integrity_check(1)");
     if (!integrity) return integrity.error();
     row = integrity.value()->step();
     if (!row) return row.error();
     if (!row.value()) return ErrorCode::IntegrityError;
-    auto ok = integrity.value()->integer(0);
-    if (!ok || ok.value() != 1) return ErrorCode::IntegrityError;
+    auto ok = integrity.value()->boundedTextView(0, 2);
+    if (!ok || ok.value() != "ok") return ErrorCode::IntegrityError;
     row = integrity.value()->step();
     if (!row) return row.error();
     return row.value() ? Result<void>(ErrorCode::IntegrityError) : Result<void>();

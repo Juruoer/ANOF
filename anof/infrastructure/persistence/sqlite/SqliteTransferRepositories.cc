@@ -12,7 +12,7 @@ Result<Blob> blob(SqliteStatement& s) {
     auto digest = s.blob(2);
     auto key = s.text(3);
     auto state = s.integer(4);
-    if (!id || !size || !digest || !key || !state || digest.value().size() != 32 || (state.value() != 0 && state.value() != 1)) return ErrorCode::IntegrityError;
+    if (!id || !size || !digest || !key || !state || digest.value().size() != 32 || (state.value() < 0 || state.value() > 2)) return ErrorCode::IntegrityError;
     std::array<std::uint8_t, 32> bytes{};
     std::copy(digest.value().begin(), digest.value().end(), bytes.begin());
     Blob b{ id.value(), size.value(), Sha256(bytes) };
@@ -55,6 +55,9 @@ Result<std::optional<Blob>> SqliteBlobRepository::findByNode(NodeId id) {
     if (!r.value()) return std::optional<Blob>{};
     auto b = readId<BlobId>(*q.value(), 0);
     if (!b) return context_.fail(b.error());
+    auto lifecycle = record(b.value());
+    if (!lifecycle) return lifecycle.error();
+    if (!lifecycle.value() || lifecycle.value()->state == BlobState::Deleting) return context_.fail(ErrorCode::IntegrityError);
     auto found = find(b.value());
     if (!found) return found.error();
     if (!found.value()) return context_.fail(ErrorCode::IntegrityError);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <anof/core/Result.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -19,6 +20,7 @@ public:
     SecretStorage(const SecretStorage&) = delete;
     SecretStorage& operator=(const SecretStorage&) = delete;
     std::string_view view() const noexcept { return size_ ? std::string_view(bytes_.get(), size_) : std::string_view{}; }
+
 private:
     void clear() noexcept;
     std::unique_ptr<char[]> bytes_;
@@ -32,6 +34,7 @@ public:
     PasswordInput(PasswordInput&&) noexcept = default;
     PasswordInput& operator=(PasswordInput&&) noexcept = default;
     std::string_view view() const noexcept { return value_.view(); }
+
 private:
     explicit PasswordInput(std::string_view text) : value_(text) {}
     detail::SecretStorage value_;
@@ -44,6 +47,7 @@ public:
     SecretToken(SecretToken&&) noexcept = default;
     SecretToken& operator=(SecretToken&&) noexcept = default;
     std::string_view view() const noexcept { return value_.view(); }
+
 private:
     explicit SecretToken(std::string_view text) : value_(text) {}
     detail::SecretStorage value_;
@@ -55,6 +59,7 @@ public:
     InviteTokenText(InviteTokenText&&) noexcept = default;
     InviteTokenText& operator=(InviteTokenText&&) noexcept = default;
     std::string_view view() const noexcept { return value_.view(); }
+
 private:
     explicit InviteTokenText(std::string_view text) : value_(text) {}
     detail::SecretStorage value_;
@@ -80,6 +85,7 @@ public:
     EncodedPasswordHash& operator=(EncodedPasswordHash&&) noexcept = default;
     std::string_view view() const noexcept { return value_.view(); }
     PasswordHashParameters parameters() const noexcept { return parameters_; }
+
 private:
     EncodedPasswordHash(std::string_view text, PasswordHashParameters parameters) : value_(text), parameters_(parameters) {}
     detail::SecretStorage value_;

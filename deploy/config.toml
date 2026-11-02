@@ -1,0 +1,13 @@
+listen_address = "127.0.0.1"
+port = 8080
+development_http = false
+web_enabled = true
+public_origin = "https://cloud.example.test"
+trusted_proxies = ["127.0.0.1"]
+audit_retention_days = 90
+audit_batch_size = 200
+metadata_queue = 256
+http_in_flight = 128
+shutdown_grace_seconds = 30
+disk_safety_min_bytes = 1073741824
+disk_safety_percent = 5

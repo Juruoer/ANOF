@@ -1,7 +1,7 @@
 #pragma once
 
-#include <anof/application/identity/IdentityCommands.h>
 #include <anof/application/identity/AccountCommands.h>
+#include <anof/application/identity/IdentityCommands.h>
 #include <anof/application/ports/TaskDispatcher.h>
 
 namespace anof {
@@ -13,7 +13,7 @@ public:
     virtual TaskSubmission submit(RequestId, RegisterCommand, Completion<UserProfile>) = 0;
     virtual TaskSubmission submit(RequestId, LoginCommand, Completion<LoginResult>) = 0;
     virtual TaskSubmission submit(RequestContext, LogoutCommand, Completion<void>) = 0;
-    virtual TaskSubmission submit(RequestContext, GetMeCommand, Completion<UserProfile>) = 0;
+    virtual TaskSubmission submit(RequestContext, GetMeCommand, Completion<CurrentUserView>) = 0;
     virtual TaskSubmission submit(RequestContext, CreateInviteCommand, Completion<CreatedInvite>) = 0;
     virtual TaskSubmission submit(RequestContext, ListInvitesCommand, Completion<Page<InviteInfo, InviteCursor>>) = 0;
     virtual TaskSubmission submit(RequestContext, RevokeInviteCommand, Completion<void>) = 0;

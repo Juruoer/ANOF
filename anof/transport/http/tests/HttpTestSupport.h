@@ -1,14 +1,20 @@
 #pragma once
-#include <boost/test/unit_test.hpp>
 #include <anof/transport/http/HttpApi.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <boost/test/unit_test.hpp>
 #include <cerrno>
 #include <cstdio>
 #include <stdexcept>
 
 namespace anof::http::testing {
 using namespace muduox::net;
+inline InstanceConfiguration developmentConfiguration() {
+    InstanceConfiguration value;
+    value.developmentHttp = true;
+    return value;
+}
 class Identity final : public RequestIdentity {
 public:
     RequestId forExchange(std::uint64_t connection, std::uint64_t request) const override {
@@ -41,7 +47,7 @@ public:
         BOOST_ERROR("Unexpected identity submission: LogoutCommand");
         return SubmitError::InternalError;
     }
-    TaskSubmission submit(RequestContext, GetMeCommand, Completion<UserProfile>) override {
+    TaskSubmission submit(RequestContext, GetMeCommand, Completion<CurrentUserView>) override {
         BOOST_ERROR("Unexpected identity submission: GetMeCommand");
         return SubmitError::InternalError;
     }
@@ -101,43 +107,76 @@ public:
 class UnexpectedTransferDispatcher final : public TransferDispatcher {
 public:
     TaskSubmission submit(RequestContext, OpenDownloadCommand, Completion<OpenedDownload>) override {
-        BOOST_ERROR("Unexpected download submission"); return SubmitError::InternalError;
+        BOOST_ERROR("Unexpected download submission");
+        return SubmitError::InternalError;
     }
     TaskSubmission submit(RequestContext, CreateUploadCommand, Completion<UploadCreated>) override {
-        BOOST_ERROR("Unexpected upload submission: CreateUploadCommand"); return SubmitError::InternalError;
+        BOOST_ERROR("Unexpected upload submission: CreateUploadCommand");
+        return SubmitError::InternalError;
     }
     TaskSubmission submit(RequestContext, ListUploadsCommand, Completion<Page<UploadView, UploadCursor>>) override {
-        BOOST_ERROR("Unexpected upload submission: ListUploadsCommand"); return SubmitError::InternalError;
+        BOOST_ERROR("Unexpected upload submission: ListUploadsCommand");
+        return SubmitError::InternalError;
     }
     TaskSubmission submit(RequestContext, GetUploadCommand, Completion<UploadView>) override {
-        BOOST_ERROR("Unexpected upload submission: GetUploadCommand"); return SubmitError::InternalError;
+        BOOST_ERROR("Unexpected upload submission: GetUploadCommand");
+        return SubmitError::InternalError;
     }
     TaskSubmission submit(RequestContext, CancelUploadCommand, Completion<void>) override {
-        BOOST_ERROR("Unexpected upload submission: CancelUploadCommand"); return SubmitError::InternalError;
+        BOOST_ERROR("Unexpected upload submission: CancelUploadCommand");
+        return SubmitError::InternalError;
     }
     TaskSubmission submit(RequestContext, CompleteUploadCommand, Completion<UploadCompletionAccepted>) override {
-        BOOST_ERROR("Unexpected upload submission: CompleteUploadCommand"); return SubmitError::InternalError;
+        BOOST_ERROR("Unexpected upload submission: CompleteUploadCommand");
+        return SubmitError::InternalError;
     }
     TaskSubmission submit(RequestContext, PreparePatchCommand, Completion<PatchPreparation>) override {
-        BOOST_ERROR("Unexpected upload submission: PreparePatchCommand"); return SubmitError::InternalError;
+        BOOST_ERROR("Unexpected upload submission: PreparePatchCommand");
+        return SubmitError::InternalError;
     }
     TaskSubmission submit(RequestContext, GetStorageCommand, Completion<StorageView>) override {
-        BOOST_ERROR("Unexpected upload submission: GetStorageCommand"); return SubmitError::InternalError;
+        BOOST_ERROR("Unexpected upload submission: GetStorageCommand");
+        return SubmitError::InternalError;
     }
     TaskSubmission submit(RequestContext, SetStorageBudgetCommand, Completion<StorageView>) override {
-        BOOST_ERROR("Unexpected upload submission: SetStorageBudgetCommand"); return SubmitError::InternalError;
+        BOOST_ERROR("Unexpected upload submission: SetStorageBudgetCommand");
+        return SubmitError::InternalError;
     }
 };
 class UnexpectedDriveDispatcher final : public DriveDispatcher {
 public:
-    TaskSubmission submit(RequestContext, UpdateNodeCommand, Completion<NodeDetails>) override { BOOST_ERROR("Unexpected drive submission: UpdateNodeCommand"); return SubmitError::InternalError; }
-    TaskSubmission submit(RequestContext, CopyFileCommand, Completion<NodeDetails>) override { BOOST_ERROR("Unexpected drive submission: CopyFileCommand"); return SubmitError::InternalError; }
-    TaskSubmission submit(RequestContext, TrashNodeCommand, Completion<TrashView>) override { BOOST_ERROR("Unexpected drive submission: TrashNodeCommand"); return SubmitError::InternalError; }
-    TaskSubmission submit(RequestContext, RestoreTrashCommand, Completion<NodeDetails>) override { BOOST_ERROR("Unexpected drive submission: RestoreTrashCommand"); return SubmitError::InternalError; }
-    TaskSubmission submit(RequestContext, PurgeTrashCommand, Completion<void>) override { BOOST_ERROR("Unexpected drive submission: PurgeTrashCommand"); return SubmitError::InternalError; }
-    TaskSubmission submit(RequestContext, GetTrashCommand, Completion<TrashView>) override { BOOST_ERROR("Unexpected drive submission: GetTrashCommand"); return SubmitError::InternalError; }
-    TaskSubmission submit(RequestContext, SearchNodesCommand, Completion<Page<NodeDetails, SearchCursor>>) override { BOOST_ERROR("Unexpected drive submission: SearchNodesCommand"); return SubmitError::InternalError; }
-    TaskSubmission submit(RequestContext, ListTrashCommand, Completion<Page<TrashView, TrashCursor>>) override { BOOST_ERROR("Unexpected drive submission: ListTrashCommand"); return SubmitError::InternalError; }
+    TaskSubmission submit(RequestContext, UpdateNodeCommand, Completion<NodeDetails>) override {
+        BOOST_ERROR("Unexpected drive submission: UpdateNodeCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, CopyFileCommand, Completion<NodeDetails>) override {
+        BOOST_ERROR("Unexpected drive submission: CopyFileCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, TrashNodeCommand, Completion<TrashView>) override {
+        BOOST_ERROR("Unexpected drive submission: TrashNodeCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, RestoreTrashCommand, Completion<NodeDetails>) override {
+        BOOST_ERROR("Unexpected drive submission: RestoreTrashCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, PurgeTrashCommand, Completion<void>) override {
+        BOOST_ERROR("Unexpected drive submission: PurgeTrashCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, GetTrashCommand, Completion<TrashView>) override {
+        BOOST_ERROR("Unexpected drive submission: GetTrashCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, SearchNodesCommand, Completion<Page<NodeDetails, SearchCursor>>) override {
+        BOOST_ERROR("Unexpected drive submission: SearchNodesCommand");
+        return SubmitError::InternalError;
+    }
+    TaskSubmission submit(RequestContext, ListTrashCommand, Completion<Page<TrashView, TrashCursor>>) override {
+        BOOST_ERROR("Unexpected drive submission: ListTrashCommand");
+        return SubmitError::InternalError;
+    }
 };
 struct Client {
     int fd;
@@ -164,10 +203,15 @@ struct Client {
             if (n > 0) {
                 bytes.append(buffer, static_cast<std::size_t>(n));
                 if (bytes.size() > responseLimit) throw std::runtime_error("test response limit exceeded");
-            } else if (n == 0 || (n < 0 && errno == ECONNRESET)) { eof = true; return; }
-            else if (errno == EINTR) continue;
-            else if (errno == EAGAIN || errno == EWOULDBLOCK) return;
-            else throw std::runtime_error("recv failed");
+            } else if (n == 0 || (n < 0 && errno == ECONNRESET)) {
+                eof = true;
+                return;
+            } else if (errno == EINTR)
+                continue;
+            else if (errno == EAGAIN || errno == EWOULDBLOCK)
+                return;
+            else
+                throw std::runtime_error("recv failed");
         }
     }
 };

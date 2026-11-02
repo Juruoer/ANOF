@@ -12,7 +12,7 @@ enum class ErrorCode {
     PreconditionFailed,
     PreconditionRequired,
     SessionLimitReached,
-    RateLimited, // 已接纳的多阶段任务可在身份读取后触发限流。
+    RateLimited,  // 已接纳的多阶段任务可在身份读取后触发限流。
     Unauthenticated,
     NotFound,
     ParentNotDirectory,

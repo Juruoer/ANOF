@@ -1,13 +1,13 @@
 #pragma once
 
 #include <anof/application/RequestContext.h>
-#include <anof/domain/identity/AuthenticationSource.h>
-#include <anof/domain/identity/User.h>
-#include <anof/domain/identity/Session.h>
-#include <anof/domain/identity/Invite.h>
 #include <anof/domain/drive/NodeDetails.h>
-#include <anof/domain/drive/Space.h>
 #include <anof/domain/drive/Quota.h>
+#include <anof/domain/drive/Space.h>
+#include <anof/domain/identity/AuthenticationSource.h>
+#include <anof/domain/identity/Invite.h>
+#include <anof/domain/identity/Session.h>
+#include <anof/domain/identity/User.h>
 
 namespace anof {
 struct RegisterCommand {
@@ -30,6 +30,10 @@ struct LoginResult {
 };
 struct LogoutCommand {};
 struct GetMeCommand {};
+struct CurrentUserView {
+    UserProfile user;
+    InstanceId instanceId;
+};
 using InviteLifetimeSeconds = Quantity<struct InviteLifetimeTag, 1, 2592000>;
 struct CreateInviteCommand {
     InviteUseLimit maxUses;

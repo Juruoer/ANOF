@@ -1,16 +1,14 @@
 #define BOOST_TEST_MODULE InstanceConfiguration
-#include <boost/test/unit_test.hpp>
-
 #include <anof/infrastructure/config/TomlInstanceConfiguration.h>
 #include <anof/infrastructure/config/internal/ConfigurationText.h>
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
 #include <anof/infrastructure/system/internal/BoundedFileRead.h>
 #include <anof/infrastructure/system/internal/InstanceFiles.h>
-
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <boost/test/unit_test.hpp>
 #include <cerrno>
 #include <filesystem>
 #include <fstream>
@@ -75,7 +73,7 @@ const std::string enabled = "development_http = true\n";
 std::size_t fdCount() {
     return static_cast<std::size_t>(std::distance(fs::directory_iterator("/proc/self/fd"), fs::directory_iterator{}));
 }
-}
+}  // namespace
 
 BOOST_AUTO_TEST_CASE(defaults_explicit_opt_in_and_owned_values) {
     Fixture f;
@@ -101,9 +99,9 @@ BOOST_AUTO_TEST_CASE(defaults_explicit_opt_in_and_owned_values) {
 BOOST_AUTO_TEST_CASE(all_field_boundaries_and_toml_syntax) {
     Fixture f;
     for (const auto* text : {
-        "port=0\nmetadata_queue=1\nhttp_in_flight=1\nshutdown_grace_seconds=0\n",
-        "port=65535\nmetadata_queue=256\nhttp_in_flight=128\nshutdown_grace_seconds=30.0\n",
-        "port=0x1f90\nmetadata_queue=2_56\nhttp_in_flight=128\nshutdown_grace_seconds=0.125\nlisten_address='127.0.0.1'\n" }) {
+             "port=0\nmetadata_queue=1\nhttp_in_flight=1\nshutdown_grace_seconds=0\n",
+             "port=65535\nmetadata_queue=256\nhttp_in_flight=128\nshutdown_grace_seconds=30.0\n",
+             "port=0x1f90\nmetadata_queue=2_56\nhttp_in_flight=128\nshutdown_grace_seconds=0.125\nlisten_address='127.0.0.1'\n" }) {
         f.write(enabled + text);
         auto result = f.loader->load(*f.lease);
         BOOST_REQUIRE(result);
@@ -120,24 +118,24 @@ BOOST_AUTO_TEST_CASE(all_field_boundaries_and_toml_syntax) {
 BOOST_AUTO_TEST_CASE(negative_oversized_and_nonfinite_values) {
     Fixture f;
     for (const auto* text : {
-        "port=-1", "port=65536", "port=9223372036854775807", "port=9223372036854775808",
-        "metadata_queue=-1", "metadata_queue=0", "metadata_queue=257", "metadata_queue=9223372036854775807",
-        "http_in_flight=-1", "http_in_flight=0", "http_in_flight=129", "http_in_flight=18446744073709551615",
-        "shutdown_grace_seconds=-0.001", "shutdown_grace_seconds=30.001", "shutdown_grace_seconds=31",
-        "shutdown_grace_seconds=nan", "shutdown_grace_seconds=+nan", "shutdown_grace_seconds=-nan",
-        "shutdown_grace_seconds=inf", "shutdown_grace_seconds=+inf", "shutdown_grace_seconds=-inf",
-        "shutdown_grace_seconds=1e999", "listen_address='0.0.0.0'", "listen_address='::1'",
-        "listen_address='localhost'", "listen_address='127.0.0.1 '" }) f.invalid(enabled + text);
+             "port=-1", "port=65536", "port=9223372036854775807", "port=9223372036854775808",
+             "metadata_queue=-1", "metadata_queue=0", "metadata_queue=257", "metadata_queue=9223372036854775807",
+             "http_in_flight=-1", "http_in_flight=0", "http_in_flight=129", "http_in_flight=18446744073709551615",
+             "shutdown_grace_seconds=-0.001", "shutdown_grace_seconds=30.001", "shutdown_grace_seconds=31",
+             "shutdown_grace_seconds=nan", "shutdown_grace_seconds=+nan", "shutdown_grace_seconds=-nan",
+             "shutdown_grace_seconds=inf", "shutdown_grace_seconds=+inf", "shutdown_grace_seconds=-inf",
+             "shutdown_grace_seconds=1e999", "listen_address='0.0.0.0'",
+             "listen_address='localhost'", "listen_address='127.0.0.1 '" }) f.invalid(enabled + text);
 }
 
 BOOST_AUTO_TEST_CASE(strict_types_unknown_and_duplicate_keys) {
     Fixture f;
     for (const auto* text : {
-        "port=1.0", "port=true", "port='8080'", "metadata_queue=1.0", "http_in_flight=false",
-        "listen_address=127", "shutdown_grace_seconds=true", "shutdown_grace_seconds='30'",
-        "port=[]", "port={value=1}", "port=1979-05-27", "unknown=1", "[http]\nport=8080",
-        "[port]\nvalue=8080", "port.value=8080", "[[port]]\nvalue=8080",
-        "port=1\nport=2", "port=1\n\"port\"=2", "listen_address='127.0.0.1'\nlisten_address='127.0.0.1'" }) {
+             "port=1.0", "port=true", "port='8080'", "metadata_queue=1.0", "http_in_flight=false",
+             "listen_address=127", "shutdown_grace_seconds=true", "shutdown_grace_seconds='30'",
+             "port=[]", "port={value=1}", "port=1979-05-27", "unknown=1", "[http]\nport=8080",
+             "[port]\nvalue=8080", "port.value=8080", "[[port]]\nvalue=8080",
+             "port=1\nport=2", "port=1\n\"port\"=2", "listen_address='127.0.0.1'\nlisten_address='127.0.0.1'" }) {
         f.invalid(enabled + text);
     }
     f.invalid("development_http='true'");
@@ -170,14 +168,14 @@ BOOST_AUTO_TEST_CASE(read_growth_short_reads_and_interruptions) {
     auto file = f.open();
     bool grew = false;
     auto growth = system::detail::readBoundedFileWith(file.get(), 65536, ErrorCode::InvalidArgument,
-        [&](int fd, void* output, std::size_t size) -> ssize_t {
-            auto count = ::read(fd, output, size);
-            if (!grew) {
-                grew = true;
-                std::ofstream(f.path(), std::ios::app) << std::string(65536, ' ');
-            }
-            return count;
-        });
+                                                      [&](int fd, void* output, std::size_t size) -> ssize_t {
+                                                          auto count = ::read(fd, output, size);
+                                                          if (!grew) {
+                                                              grew = true;
+                                                              std::ofstream(f.path(), std::ios::app) << std::string(65536, ' ');
+                                                          }
+                                                          return count;
+                                                      });
     BOOST_REQUIRE(!growth);
     BOOST_CHECK(growth.error().code == ErrorCode::InvalidArgument);
     file = system::detail::OwnedFd{};
@@ -185,10 +183,14 @@ BOOST_AUTO_TEST_CASE(read_growth_short_reads_and_interruptions) {
     file = f.open();
     bool interrupted = false;
     auto shortRead = system::detail::readBoundedFileWith(file.get(), 65536, ErrorCode::InvalidArgument,
-        [&](int fd, void* output, std::size_t size) -> ssize_t {
-            if (!interrupted) { interrupted = true; errno = EINTR; return -1; }
-            return ::read(fd, output, std::min(size, std::size_t{ 3 }));
-        });
+                                                         [&](int fd, void* output, std::size_t size) -> ssize_t {
+                                                             if (!interrupted) {
+                                                                 interrupted = true;
+                                                                 errno = EINTR;
+                                                                 return -1;
+                                                             }
+                                                             return ::read(fd, output, std::min(size, std::size_t{ 3 }));
+                                                         });
     BOOST_REQUIRE(shortRead);
     BOOST_CHECK_EQUAL(shortRead.value(), enabled);
 }
@@ -198,7 +200,7 @@ BOOST_AUTO_TEST_CASE(read_error_classification_and_invalid_fd) {
     f.write(enabled);
     auto file = f.open();
     auto result = system::detail::readBoundedFileWith(file.get(), 65536, ErrorCode::InvalidArgument,
-        [](int, void*, std::size_t) -> ssize_t { errno = EIO; return -1; });
+                                                      [](int, void*, std::size_t) -> ssize_t { errno = EIO; return -1; });
     BOOST_REQUIRE(!result);
     BOOST_CHECK(result.error().code == ErrorCode::InternalError);
     auto invalid = system::detail::readBoundedFile(-1, 65536, ErrorCode::InvalidArgument);
@@ -258,10 +260,10 @@ BOOST_AUTO_TEST_CASE(disk_safety_round_trip_defaults_and_strict_types) {
     BOOST_REQUIRE(defaults);
     BOOST_CHECK_EQUAL(defaults.value().diskSafety.minimum.value(), 1073741824);
     BOOST_CHECK_EQUAL(defaults.value().diskSafety.percent.value(), 5);
-    for (auto minimum : {std::int64_t{0}, std::int64_t{17}, INT64_MAX}) {
-        for (auto percent : {0, 37, 100}) {
+    for (auto minimum : { std::int64_t{ 0 }, std::int64_t{ 17 }, INT64_MAX }) {
+        for (auto percent : { 0, 37, 100 }) {
             auto value = defaults.value();
-            value.diskSafety = {ByteCount::from(minimum).value(), SafetyPercent::from(percent).value()};
+            value.diskSafety = { ByteCount::from(minimum).value(), SafetyPercent::from(percent).value() };
             auto text = config::detail::serializeConfiguration(value);
             BOOST_REQUIRE(text);
             BOOST_CHECK(text.value().find("content_budget") == std::string::npos);
@@ -272,8 +274,55 @@ BOOST_AUTO_TEST_CASE(disk_safety_round_trip_defaults_and_strict_types) {
             BOOST_CHECK(config::detail::parseConfiguration(text.value(), true));
         }
     }
-    for (const char* bad : {"disk_safety_min_bytes=-1", "disk_safety_min_bytes=9223372036854775808",
-             "disk_safety_min_bytes=1.0", "disk_safety_min_bytes=true", "disk_safety_min_bytes='1'",
-             "disk_safety_percent=-1", "disk_safety_percent=101", "disk_safety_percent=5.0",
-             "disk_safety_percent=true", "content_budget_bytes=1", "disk_safety_percent=1\ndisk_safety_percent=2"}) f.invalid(enabled+bad);
+    for (const char* bad : { "disk_safety_min_bytes=-1", "disk_safety_min_bytes=9223372036854775808",
+                             "disk_safety_min_bytes=1.0", "disk_safety_min_bytes=true", "disk_safety_min_bytes='1'",
+                             "disk_safety_percent=-1", "disk_safety_percent=101", "disk_safety_percent=5.0",
+                             "disk_safety_percent=true", "content_budget_bytes=1", "disk_safety_percent=1\ndisk_safety_percent=2" }) f.invalid(enabled + bad);
+}
+
+BOOST_AUTO_TEST_CASE(m5_formal_configuration_roundtrip_and_complete_shape) {
+    Fixture f;
+    for (bool web : { false, true }) {
+        InstanceConfiguration value;
+        value.listenAddress = "::1";
+        value.publicOrigin = "https://drive.example:8443";
+        value.trustedProxies = { "127.0.0.1", "::1" };
+        value.webEnabled = web;
+        value.auditRetentionDays = AuditRetentionDays::from(3650).value();
+        value.auditBatchSize = AuditBatchSize::from(1000).value();
+        auto text = config::detail::serializeConfiguration(value);
+        BOOST_REQUIRE(text);
+        auto complete = config::detail::parseConfiguration(text.value(), true);
+        BOOST_REQUIRE(complete);
+        BOOST_CHECK(config::detail::sameConfiguration(value, complete.value()));
+        f.write(text.value());
+        auto loaded = f.loader->load(*f.lease);
+        BOOST_REQUIRE(loaded);
+        BOOST_CHECK(config::detail::sameConfiguration(value, loaded.value()));
+        auto changed = value;
+        changed.auditBatchSize = AuditBatchSize::from(1).value();
+        BOOST_CHECK(!config::detail::sameConfiguration(value, changed));
+    }
+    BOOST_CHECK(!config::detail::parseConfiguration(enabled, true));
+    BOOST_CHECK(!config::detail::parseConfiguration(enabled + "#" + std::string(65536, 'x')));
+}
+
+BOOST_AUTO_TEST_CASE(m5_strict_configuration_modes_and_values) {
+    Fixture f;
+    for (const char* invalid : { "web_enabled=true", "web_enabled=1", "public_origin=1",
+                                 "public_origin='https://drive.example'", "trusted_proxies=['127.0.0.1']",
+                                 "trusted_proxies='127.0.0.1'", "trusted_proxies=[true]", "audit_retention_days=6",
+                                 "audit_retention_days=3651", "audit_retention_days=90.0", "audit_batch_size=0",
+                                 "audit_batch_size=1001", "audit_batch_size='200'", "audit_batch_size=true",
+                                 "audit_batch_size=1\naudit_batch_size=2" }) f.invalid(enabled + invalid);
+    const std::string formal = "development_http=false\n";
+    for (const char* invalid : { "public_origin='https://drive.example'",
+                                 "public_origin='http://drive.example'\ntrusted_proxies=['127.0.0.1']",
+                                 "public_origin='https://drive.example/'\ntrusted_proxies=['127.0.0.1']",
+                                 "public_origin='https://drive.example'\ntrusted_proxies=['localhost']",
+                                 "public_origin='https://drive.example'\ntrusted_proxies=['127.0.0.1','127.0.0.1']",
+                                 "public_origin='https://drive.example'\ntrusted_proxies=['127.0.0.1','::1','::1']" })
+        f.invalid(formal + invalid);
+    f.write(enabled + "listen_address='::1'\naudit_retention_days=7\naudit_batch_size=1\n");
+    BOOST_CHECK(f.loader->load(*f.lease));
 }

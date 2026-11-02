@@ -1,13 +1,14 @@
 #pragma once
 
-#include <anof/domain/identity/Session.h>
 #include <anof/core/Page.h>
+#include <anof/domain/identity/Session.h>
 
 namespace anof {
 class SessionReader {
 public:
     virtual ~SessionReader() = default;
     // 仅计未撤销、未到期且 epoch 匹配的会话；调用方同事务检查上限并插入。
+    // 两种凭据模式合计；不得分别给每种模式32个名额。
     virtual Result<SessionCount> countActive(UserId, UtcTime) = 0;
 };
 class SessionRepository : public SessionReader {

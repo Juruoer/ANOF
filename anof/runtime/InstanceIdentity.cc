@@ -1,4 +1,5 @@
 #include <anof/runtime/InstanceIdentity.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteAuditRetention.h>
 #include <anof/runtime/InstancePasswordPolicy.h>
 #include <anof/infrastructure/crypto/SodiumNodeIdGenerator.h>
 #include <anof/infrastructure/crypto/SodiumTransferIdGenerator.h>
@@ -32,10 +33,12 @@ Result<MetadataWorkerResources> makeInstanceMetadataResources(const std::filesys
     if (!transfers) return transfers.error();
     auto driveIds = infrastructure::crypto::makeSodiumDriveIdGenerator();
     if (!driveIds) return driveIds.error();
+    auto retention = infrastructure::sqlite::openSqliteAuditRetention(database);
+    if (!retention) return retention.error();
     return MetadataWorkerResources{std::move(store).value(), std::move(clock).value(), std::move(nodes).value(),
         std::make_unique<IdentityMetadataResources>(IdentityMetadataResources{
             std::move(ids).value(), std::move(issuer).value(), std::move(invites).value()}),
-        std::move(transfers).value(), std::move(reopen), std::move(driveIds).value()};
+        std::move(transfers).value(), std::move(reopen), std::move(driveIds).value(), std::move(retention).value()};
 }
 Result<PasswordWorkerResources> makeInstancePasswordResources() {
     auto hasher = infrastructure::crypto::makeSodiumPasswordHasher(instancePasswordPolicy());

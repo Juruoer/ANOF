@@ -13,10 +13,20 @@ bool validUtf8(std::string_view text, bool rejectControls) {
         auto first = static_cast<unsigned char>(text[i++]);
         std::uint32_t point = first, minimum = 0;
         std::size_t extra = 0;
-        if (first >= 0xc2 && first <= 0xdf) { point = first & 31; extra = 1; minimum = 0x80; }
-        else if (first >= 0xe0 && first <= 0xef) { point = first & 15; extra = 2; minimum = 0x800; }
-        else if (first >= 0xf0 && first <= 0xf4) { point = first & 7; extra = 3; minimum = 0x10000; }
-        else if (first >= 0x80) return false;
+        if (first >= 0xc2 && first <= 0xdf) {
+            point = first & 31;
+            extra = 1;
+            minimum = 0x80;
+        } else if (first >= 0xe0 && first <= 0xef) {
+            point = first & 15;
+            extra = 2;
+            minimum = 0x800;
+        } else if (first >= 0xf0 && first <= 0xf4) {
+            point = first & 7;
+            extra = 3;
+            minimum = 0x10000;
+        } else if (first >= 0x80)
+            return false;
         if (extra > text.size() - i) return false;
         for (std::size_t j = 0; j < extra; ++j) {
             auto next = static_cast<unsigned char>(text[i++]);
@@ -32,12 +42,18 @@ bool base64(std::string_view text, bool url) {
     if (text.empty() || text.size() % 4 == 1) return false;
     int last = 0;
     for (char c : text) {
-        if (c >= 'A' && c <= 'Z') last = c - 'A';
-        else if (c >= 'a' && c <= 'z') last = c - 'a' + 26;
-        else if (c >= '0' && c <= '9') last = c - '0' + 52;
-        else if (c == (url ? '-' : '+')) last = 62;
-        else if (c == (url ? '_' : '/')) last = 63;
-        else return false;
+        if (c >= 'A' && c <= 'Z')
+            last = c - 'A';
+        else if (c >= 'a' && c <= 'z')
+            last = c - 'a' + 26;
+        else if (c >= '0' && c <= '9')
+            last = c - '0' + 52;
+        else if (c == (url ? '-' : '+'))
+            last = 62;
+        else if (c == (url ? '_' : '/'))
+            last = 63;
+        else
+            return false;
     }
     return (text.size() % 4 != 2 || (last & 15) == 0) && (text.size() % 4 != 3 || (last & 3) == 0);
 }
@@ -120,12 +136,17 @@ detail::SecretStorage::SecretStorage(std::string_view text) : bytes_(text.empty(
 void detail::SecretStorage::clear() noexcept {
     volatile char* p = bytes_.get();
     for (std::size_t i = 0; i < size_; ++i) p[i] = 0;
-    bytes_.reset(); size_ = 0;
+    bytes_.reset();
+    size_ = 0;
 }
 detail::SecretStorage::~SecretStorage() { clear(); }
 detail::SecretStorage::SecretStorage(SecretStorage&& other) noexcept : bytes_(std::move(other.bytes_)), size_(std::exchange(other.size_, 0)) {}
 detail::SecretStorage& detail::SecretStorage::operator=(SecretStorage&& other) noexcept {
-    if (this != &other) { clear(); bytes_ = std::move(other.bytes_); size_ = std::exchange(other.size_, 0); }
+    if (this != &other) {
+        clear();
+        bytes_ = std::move(other.bytes_);
+        size_ = std::exchange(other.size_, 0);
+    }
     return *this;
 }
 }  // namespace anof

@@ -1,8 +1,7 @@
 #define BOOST_TEST_MODULE AnofDirectoryPolicy
-#include <boost/test/unit_test.hpp>
-
 #include <anof/domain/drive/DirectoryPolicy.h>
 
+#include <boost/test/unit_test.hpp>
 #include <iomanip>
 #include <sstream>
 
@@ -26,12 +25,12 @@ DirectoryPath path(std::size_t depth) {
     }
     return result;
 }
-}
+}  // namespace
 
 BOOST_AUTO_TEST_CASE(utf8_byte_limits_and_no_normalization) {
     for (const std::string& name : { std::string("文件"), std::string(" A "), std::string("a"),
-                                    std::string("A"), std::string("é"), std::string("e\xcc\x81"),
-                                    std::string("\xf4\x8f\xbf\xbf"), std::string(255, 'x') }) {
+                                     std::string("A"), std::string("é"), std::string("e\xcc\x81"),
+                                     std::string("\xf4\x8f\xbf\xbf"), std::string(255, 'x') }) {
         BOOST_CHECK(validateDirectoryName(name));
     }
     std::string multibyte;

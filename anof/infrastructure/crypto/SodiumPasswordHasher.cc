@@ -10,7 +10,7 @@ namespace {
 Result<EncodedPasswordHash> checkedEncoding(std::string_view text, PasswordHashLimits limits) {
     auto parsed = EncodedPasswordHash::parse(text, limits);
     if (!parsed) return parsed.error();
-    // 领域值还允许其他盐／输出长度；适配器只支持 libsodium 的固定 PHC 形状。
+    // 领域值还允许其他盐/输出长度；适配器只支持 libsodium 的固定 PHC 形状。
     const auto saltStart = text.find('$', 16);
     const auto hashStart = saltStart == text.npos ? text.npos : text.find('$', saltStart + 1);
     if (saltStart == text.npos || hashStart == text.npos || hashStart - saltStart - 1 != 22 || text.size() - hashStart - 1 != 43) return ErrorCode::InvalidArgument;

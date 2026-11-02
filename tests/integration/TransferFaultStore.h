@@ -17,7 +17,7 @@ class TransferFaultStore final : public DriveMetadataStore {
         TrashRepository& trash() override { return tx->trash(); }
         DriveAuditRepository& driveAudit() override { return tx->driveAudit(); }
         NodeAccountingRepository& nodeAccounting() override { return tx->nodeAccounting(); }
-    AuthorizationReader& authorization() override { return tx->authorization(); }
+        AuthorizationReader& authorization() override { return tx->authorization(); }
         UserRepository& users() override { return tx->users(); }
         SessionRepository& sessions() override { return tx->sessions(); }
         InviteRepository& invites() override { return tx->invites(); }
@@ -56,11 +56,13 @@ public:
     Result<std::unique_ptr<DriveTransaction>> beginDriveWrite() override {
         auto* drive = dynamic_cast<DriveMetadataStore*>(store_.get());
         if (!drive) return ErrorCode::InternalError;
-        auto tx = drive->beginDriveWrite(); if (!tx) return tx.error();
+        auto tx = drive->beginDriveWrite();
+        if (!tx) return tx.error();
         return std::unique_ptr<DriveTransaction>(new Transaction(std::move(tx).value(), fault_));
     }
     Result<std::unique_ptr<TransferTransaction>> beginTransferWrite() override {
-        auto tx = beginDriveWrite(); if (!tx) return tx.error();
+        auto tx = beginDriveWrite();
+        if (!tx) return tx.error();
         return std::unique_ptr<TransferTransaction>(std::move(tx).value());
     }
     Result<std::unique_ptr<MetadataReadSnapshot>> beginRead() override {

@@ -116,6 +116,8 @@ struct ClientCommands::State {
 };
 ClientCommands::ClientCommands(CLI::App& app) : state_(std::make_unique<State>(app)) {}
 ClientCommands::~ClientCommands() = default;
+bool ClientCommands::hasRemoteOptions() const { return state_->configOption->count() || state_->profileOption->count(); }
+bool ClientCommands::jsonOutput() const { return state_->json; }
 bool ClientCommands::hasGlobalOptions() const { const auto& s=*state_; return s.configOption->count() || s.profileOption->count() || s.jsonOption->count(); }
 bool ClientCommands::validOptionOrder(int argc,char** argv) const {
     bool command=false;

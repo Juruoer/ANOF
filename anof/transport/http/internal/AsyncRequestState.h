@@ -8,9 +8,10 @@
 namespace muduox::net {
 class EventLoop;
 class HttpStreamSender;
-}
+}  // namespace muduox::net
 namespace anof::http {
-enum class RequestBody { None, Json };
+enum class RequestBody { None,
+                         Json };
 namespace internal {
 class AsyncRequestState : public std::enable_shared_from_this<AsyncRequestState> {
 public:
@@ -23,6 +24,7 @@ public:
     void respond(Result<JsonResponse> response);
     void fail(ProtocolError error, bool close = false);
     void abort();
+
 private:
     std::size_t body(std::string_view part);
     void complete(const muduox::net::HttpRequest& request);

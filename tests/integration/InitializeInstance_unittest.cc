@@ -1,20 +1,21 @@
 #define BOOST_TEST_MODULE InitializeInstanceIntegration
-#include <boost/test/unit_test.hpp>
-#include <tests/integration/InitializedInstance.h>
 #include <anof/application/maintenance/InitializeInstance.h>
 #include <anof/application/maintenance/PrepareInstance.h>
 #include <anof/infrastructure/config/TomlInstanceConfiguration.h>
-#include <anof/infrastructure/crypto/SodiumPasswordHasher.h>
 #include <anof/infrastructure/crypto/SodiumIdentityIdGenerator.h>
+#include <anof/infrastructure/crypto/SodiumPasswordHasher.h>
 #include <anof/infrastructure/crypto/SodiumRequestIdentity.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteInstanceBootstrap.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteInstanceMaintenance.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
+#include <anof/infrastructure/storage/local/LocalTransferFileStore.h>
 #include <anof/infrastructure/system/LinuxInstanceInitializer.h>
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
 #include <anof/infrastructure/system/SystemClock.h>
-#include <anof/infrastructure/storage/local/LocalTransferFileStore.h>
+#include <tests/integration/InitializedInstance.h>
 #include <unistd.h>
+
+#include <boost/test/unit_test.hpp>
 
 using namespace anof;
 using namespace anof::testing;
@@ -28,7 +29,10 @@ struct Tree {
         BOOST_REQUIRE(name);
         root = name;
     }
-    ~Tree() { std::error_code ignored; std::filesystem::remove_all(root, ignored); }
+    ~Tree() {
+        std::error_code ignored;
+        std::filesystem::remove_all(root, ignored);
+    }
 };
 struct PublicationFailure : InitializationLease {
     std::unique_ptr<InitializationLease> inner;
@@ -37,9 +41,12 @@ struct PublicationFailure : InitializationLease {
     const InitializationIdentity& identity() const override { return inner->identity(); }
     InitResult<void> writeConfiguration(const InstanceConfiguration& config) override { return inner->writeConfiguration(config); }
     InitResult<void> publishFormat() override {
-        return InitFailure{InitError::PublicationOutcomeUnknown, InitStage::PublishFormat};
+        return InitFailure{ InitError::PublicationOutcomeUnknown, InitStage::PublishFormat };
     }
-    InitResult<void> clearPending() override { BOOST_FAIL("No cleanup after publication uncertainty"); return {}; }
+    InitResult<void> clearPending() override {
+        BOOST_FAIL("No cleanup after publication uncertainty");
+        return {};
+    }
 };
 struct FailingPublication : InstanceInitializer {
     InstanceInitializer& inner;
@@ -51,24 +58,24 @@ struct FailingPublication : InstanceInitializer {
     }
     InitResult<std::unique_ptr<InitializationLease>> openPending(const std::filesystem::path& root) override { return inner.openPending(root); }
 };
-}
+}  // namespace
 BOOST_AUTO_TEST_CASE(real_init_password_billing_and_prepare_share_policy) {
     Tree tree;
     auto options = testInitOptions(tree.root);
     options.contentBudget = ByteCount::from(987654).value();
-    options.instance.configuration.diskSafety = {ByteCount::from(12345).value(), SafetyPercent::from(17).value()};
+    options.instance.configuration.diskSafety = { ByteCount::from(12345).value(), SafetyPercent::from(17).value() };
     auto result = runtime::initializeInstance(std::move(options), PasswordInput::parse("fixture password only").value());
     BOOST_REQUIRE(result);
     BOOST_CHECK(!std::filesystem::exists(tree.root / ".anof/initialization.pending"));
     auto locks = system::makeLinuxInstanceLockProvider();
     auto config = config::makeTomlInstanceConfigurationLoader();
-    auto maintenance = sqlite::makeSqliteInstanceMaintenance({runtime::instancePasswordPolicy().verification, {}});
+    auto maintenance = sqlite::makeSqliteInstanceMaintenance({ runtime::instancePasswordPolicy().verification, {} });
     BOOST_REQUIRE(locks && config && maintenance);
     auto prepared = prepareInstance(tree.root, *locks.value(), *config.value(), *maintenance.value());
     BOOST_REQUIRE(prepared);
     BOOST_CHECK_EQUAL(prepared.value().configuration.diskSafety.minimum.value(), 12345);
     BOOST_CHECK_EQUAL(prepared.value().configuration.diskSafety.percent.value(), 17);
-    auto transfer = sqlite::openSqliteDriveMetadataStore(tree.root / ".anof/metadata.sqlite3", {runtime::instancePasswordPolicy().verification, {}});
+    auto transfer = sqlite::openSqliteDriveMetadataStore(tree.root / ".anof/metadata.sqlite3", { runtime::instancePasswordPolicy().verification, {} });
     BOOST_REQUIRE(transfer);
     auto transferRead = transfer.value()->beginDriveRead();
     BOOST_REQUIRE(transferRead);
@@ -97,13 +104,13 @@ BOOST_AUTO_TEST_CASE(real_init_password_billing_and_prepare_share_policy) {
     auto files = storage::openLocalTransferFileStore(tree.root);
     BOOST_REQUIRE(std::holds_alternative<std::unique_ptr<TransferFileStore>>(files));
     auto& fileStore = *std::get<std::unique_ptr<TransferFileStore>>(files);
-    for (auto area : {InventoryArea::Uploads, InventoryArea::Objects, InventoryArea::Quarantine}) {
+    for (auto area : { InventoryArea::Uploads, InventoryArea::Objects, InventoryArea::Quarantine }) {
         auto page = fileStore.inventory(area, PageSize::from(1).value(), {});
         BOOST_REQUIRE((std::holds_alternative<Page<InventoryEntry, InventoryCursor>>(page)));
         BOOST_CHECK((std::get<Page<InventoryEntry, InventoryCursor>>(page).items.empty()));
     }
     BOOST_CHECK(!locks.value()->acquire(tree.root));
-    auto store = sqlite::openSqliteMetadataStore(tree.root / ".anof/metadata.sqlite3", {runtime::instancePasswordPolicy().verification, {}});
+    auto store = sqlite::openSqliteMetadataStore(tree.root / ".anof/metadata.sqlite3", { runtime::instancePasswordPolicy().verification, {} });
     BOOST_REQUIRE(store);
     auto snapshot = store.value()->beginRead();
     BOOST_REQUIRE(snapshot);
@@ -111,9 +118,9 @@ BOOST_AUTO_TEST_CASE(real_init_password_billing_and_prepare_share_policy) {
     BOOST_REQUIRE(password && password.value());
     BOOST_CHECK_EQUAL(password.value()->encodedHash.parameters().memoryKiB, 65536U);
     BOOST_CHECK_EQUAL(password.value()->encodedHash.parameters().iterations, 2U);
-    for (QuotaScope scope : {QuotaScope{SpaceQuota{result.value().publicSpaceId}},
-            QuotaScope{SpaceQuota{result.value().privateSpaceId}},
-            QuotaScope{PublicContributionQuota{result.value().publicSpaceId, result.value().adminUserId}}}) {
+    for (QuotaScope scope : { QuotaScope{ SpaceQuota{ result.value().publicSpaceId } },
+                              QuotaScope{ SpaceQuota{ result.value().privateSpaceId } },
+                              QuotaScope{ PublicContributionQuota{ result.value().publicSpaceId, result.value().adminUserId } } }) {
         auto quota = snapshot.value()->quotas().get(scope);
         BOOST_REQUIRE(quota);
         BOOST_CHECK_EQUAL(quota.value().state.used.nodes.value(), 1);
@@ -122,7 +129,7 @@ BOOST_AUTO_TEST_CASE(real_init_password_billing_and_prepare_share_policy) {
     auto sessions = snapshot.value()->sessions().countActive(result.value().adminUserId, UtcTime{});
     BOOST_REQUIRE(sessions);
     BOOST_CHECK_EQUAL(sessions.value().value(), 0);
-    snapshot.value().reset(); // 密码计算前释放读快照。
+    snapshot.value().reset();  // 密码计算前释放读快照。
     auto hasher = crypto::makeSodiumPasswordHasher(runtime::instancePasswordPolicy());
     BOOST_REQUIRE(hasher);
     auto verified = hasher.value()->verify(PasswordInput::parse("fixture password only").value(), password.value()->encodedHash);
@@ -135,7 +142,7 @@ BOOST_AUTO_TEST_CASE(real_init_password_billing_and_prepare_share_policy) {
 BOOST_AUTO_TEST_CASE(committed_bootstrap_can_finish_without_rehash_or_reseed) {
     Tree tree;
     auto files = system::makeLinuxInstanceInitializer();
-    auto database = sqlite::makeSqliteInstanceBootstrap({runtime::instancePasswordPolicy().verification, {}});
+    auto database = sqlite::makeSqliteInstanceBootstrap({ runtime::instancePasswordPolicy().verification, {} });
     auto hasher = crypto::makeSodiumPasswordHasher(runtime::instancePasswordPolicy());
     auto ids = crypto::makeSodiumIdentityIdGenerator();
     auto clock = system::makeSystemClock();
@@ -149,7 +156,7 @@ BOOST_AUTO_TEST_CASE(committed_bootstrap_can_finish_without_rehash_or_reseed) {
     BOOST_CHECK(std::filesystem::exists(tree.root / ".anof/initialization.pending"));
     auto locks = system::makeLinuxInstanceLockProvider();
     auto config = config::makeTomlInstanceConfigurationLoader();
-    auto maintenance = sqlite::makeSqliteInstanceMaintenance({runtime::instancePasswordPolicy().verification, {}});
+    auto maintenance = sqlite::makeSqliteInstanceMaintenance({ runtime::instancePasswordPolicy().verification, {} });
     BOOST_REQUIRE(locks && config && maintenance);
     BOOST_CHECK(!prepareInstance(tree.root, *locks.value(), *config.value(), *maintenance.value()));
     auto finished = runtime::finishInitialization(tree.root);

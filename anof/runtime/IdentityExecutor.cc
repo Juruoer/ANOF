@@ -399,7 +399,7 @@ TaskSubmission IdentityExecutor::submit(RequestContext context, Command command,
     return impl_->submit<SimpleJob<Command, __VA_ARGS__>>(std::move(context), std::move(command), std::move(callback)); \
 }
 ANOF_IDENTITY_SUBMIT(LogoutCommand, void)
-ANOF_IDENTITY_SUBMIT(GetMeCommand, UserProfile)
+ANOF_IDENTITY_SUBMIT(GetMeCommand, CurrentUserView)
 ANOF_IDENTITY_SUBMIT(CreateInviteCommand, CreatedInvite)
 ANOF_IDENTITY_SUBMIT(ListInvitesCommand, Page<InviteInfo, InviteCursor>)
 ANOF_IDENTITY_SUBMIT(RevokeInviteCommand, void)

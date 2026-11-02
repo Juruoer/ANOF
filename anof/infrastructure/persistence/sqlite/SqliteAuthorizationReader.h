@@ -9,6 +9,7 @@ class SqliteAuthorizationReader final : public AuthorizationReader {
 public:
     explicit SqliteAuthorizationReader(SqliteTransactionContext& context) : context_(context) {}
     Result<Principal> requireActiveSession(const SessionCredential& credential, UtcTime now) override;
+
 private:
     SqliteTransactionContext& context_;
 };

@@ -8,7 +8,7 @@
 
 namespace anof::app {
 
-// Linux 前台进程的 SIGINT／SIGTERM 桥接。必须在创建任何 worker 前由主线程构造，
+// Linux 前台进程的 SIGINT/SIGTERM 桥接。必须在创建任何 worker 前由主线程构造，
 // worker 全部退出后由同一线程销毁。新线程继承屏蔽集；不安装异步 signal handler。
 class ShutdownSignals {
 public:

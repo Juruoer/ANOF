@@ -1,0 +1,31 @@
+{
+  "name": "anof-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "BSD-3-Clause",
+  "engines": {
+    "node": "24.22.1",
+    "npm": "11.19.1"
+  },
+  "packageManager": "npm@11.19.1",
+  "scripts": {
+    "tools:check": "node scripts/check-toolchain.mjs",
+    "dev": "vite",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node --test --test-concurrency=1 --test-timeout=30000 tests/unit/*.test.mjs",
+    "build": "npm run typecheck && vite build",
+    "browsers:install": "./scripts/browser-node.sh node_modules/playwright/cli.js install --only-shell chromium firefox",
+    "browsers:check": "timeout --signal=TERM --kill-after=5s 60s ./scripts/browser-node.sh scripts/check-browsers.mjs",
+    "test:e2e": "./scripts/browser-node.sh node_modules/playwright/cli.js test --config tests/e2e/playwright.config.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "typescript": "6.0.3",
+    "vite": "8.3.5"
+  },
+  "dependencies": {
+    "hash-wasm": "4.12.0"
+  }
+}

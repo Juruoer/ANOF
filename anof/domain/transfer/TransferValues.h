@@ -1,6 +1,7 @@
 #pragma once
 
 #include <anof/core/Quantity.h>
+
 #include <array>
 #include <cstddef>
 #include <string>
@@ -24,6 +25,7 @@ public:
     const std::array<std::uint8_t, 32>& bytes() const noexcept { return bytes_; }
     friend bool operator==(const Sha256& a, const Sha256& b) { return a.bytes_ == b.bytes_; }
     friend bool operator!=(const Sha256& a, const Sha256& b) { return !(a == b); }
+
 private:
     std::array<std::uint8_t, 32> bytes_;
 };

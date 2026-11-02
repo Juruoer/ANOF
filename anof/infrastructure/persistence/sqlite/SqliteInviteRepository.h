@@ -13,8 +13,8 @@ public:
     Result<void> insert(const NewInvite&) override;
     Result<InviteInfo> consume(const InviteDigest&, UtcTime) override;
     Result<bool> revoke(InviteId, UtcTime) override;
+
 private:
     SqliteTransactionContext& context_;
-
 };
-}
+}  // namespace anof::infrastructure::sqlite

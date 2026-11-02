@@ -1,11 +1,12 @@
 #include <anof/transport/http/HttpApi.h>
+#include <anof/transport/http/BrowserSecurity.h>
 #include <anof/transport/http/DriveHandlers.h>
 #include <anof/transport/http/TransferRequest.h>
 #include <anof/transport/http/TransferResponse.h>
 #include <anof/transport/http/UploadStream.h>
 #include <anof/transport/http/DownloadStream.h>
 #include <anof/transport/http/DownloadResponse.h>
-#include <anof/transport/http/BearerCredentials.h>
+#include <anof/transport/http/RequestCredentials.h>
 #include <anof/transport/http/IdentityStream.h>
 #include <anof/transport/http/IdentityResponse.h>
 #include <anof/transport/http/Pagination.h>
@@ -39,7 +40,7 @@ HttpRequestDecision bodylessDecision(Parsed<Command> parsed, IdentityDispatcher&
 }  // namespace
 
 HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity,
-                 std::function<bool()> ready, CreateDirectoryStream stream, IdentityDispatcher& identityDispatcher, TransferDispatcher& transferDispatcher, DriveDispatcher& driveDispatcher,
+                 std::function<bool()> ready, CreateDirectoryStream stream, IdentityDispatcher& identityDispatcher, TransferDispatcher& transferDispatcher, DriveDispatcher& driveDispatcher, const InstanceConfiguration& configuration,
                  HttpObservation observation, HttpApiOptions options)
     : identityDispatcher_(identityDispatcher), transferDispatcher_(transferDispatcher), driveDispatcher_(driveDispatcher), trace_(identity, std::move(observation)) {
     if (!ready || !stream || options.maxInFlight == 0 || options.maxInFlight > 128 ||
@@ -50,6 +51,7 @@ HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity
         !std::isfinite(options.contentResponseSeconds) || options.contentResponseSeconds <= 0 || options.contentResponseSeconds > 21600) {
         throw std::invalid_argument("Invalid HTTP API configuration");
     }
+    const BrowserSecurity security(configuration);
     auto router = std::make_shared<Router>();
     // 端点策略将 metadata 绑定到实际 callable；注册占位 callable 不应被执行。
     const auto unbound = [](const HttpRequest&, const Router::RouteParams&, HttpResponse*) { throw std::logic_error("Unbound HTTP endpoint"); };
@@ -105,8 +107,8 @@ HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity
     RouterHttpOptions routing;
     routing.methodNotAllowed = true;
     RouterHttpAdapter adapter(router, [](const auto&, auto* response) { response->setStatusCode(HttpResponse::k404NotFound); }, routing);
-    auto terminal = [adapter, trace = trace_, &codec, dispatcher = &identityDispatcher_, uploads = &transferDispatcher_, drive = &driveDispatcher_, ready = std::move(ready), stream = std::move(stream), options]
-        (const HttpRequest& request, const HttpRequestMetadata& metadata) {
+    auto terminal = [adapter, trace = trace_, &codec, dispatcher = &identityDispatcher_, uploads = &transferDispatcher_, drive = &driveDispatcher_, security, ready = std::move(ready), stream = std::move(stream), options]
+        (const HttpRequest& request, const HttpRequestMetadata& metadata, const BrowserRequest& browser) {
         const auto id = trace.requestId(metadata.exchange);
         // onMiss 无 metadata；在本次选择中把 ID 绑定到 404，保留 Router 的 405 分支。
         bool missed = false;
@@ -122,22 +124,36 @@ HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity
                     if (!ready()) return reject(ProtocolError::TemporarilyUnavailable, id);
                     const auto& pattern = selection->match.endpoint->pattern;
                     if (pattern == "/api/v1/auth/register" || pattern == "/api/v1/auth/sessions") {
-                        if (const auto error = validateAnonymousCredentials(head.headers())) return reject(*error, id);
                         if (const auto error = validateNoQuery(head.query())) return reject(*error, id);
                         if (const auto error = validateJsonContentHeaders(head.headers())) return reject(*error, id);
-                        const auto source = readAuthenticationSource(metadata);
-                        if (const auto* error = std::get_if<ProtocolError>(&source)) return reject(*error, id);
-                        const auto ownedSource = std::get<AuthenticationSource>(source);
                         if (pattern == "/api/v1/auth/register") {
                             return HttpRequestDecision::streaming(makeIdentityStream<RegisterCommand, UserProfile>(*dispatcher, id, RequestBody::Json,
-                                [ownedSource](std::string_view body) { return parseRegisterJson(body, ownedSource); }, registeredUserResponse, ready));
+                                [security, browser](std::string_view body) -> Parsed<RegisterCommand> {
+                                    auto parsed = parseRegisterJson(body, browser.source);
+                                    if (auto* error = std::get_if<ProtocolError>(&parsed)) return *error;
+                                    auto value = std::get<RegistrationRequest>(std::move(parsed));
+                                    if (auto error = security.anonymousMode(value.mode, browser)) return *error;
+                                    return std::move(value.command);
+                                }, registeredUserResponse, ready));
                         }
                         return HttpRequestDecision::streaming(makeIdentityStream<LoginCommand, LoginResult>(*dispatcher, id, RequestBody::Json,
-                            [ownedSource](std::string_view body) { return parseLoginJson(body, ownedSource); }, loginResponse, ready));
+                            [security, browser](std::string_view body) -> Parsed<LoginCommand> {
+                                auto parsed = parseLoginJson(body, browser.source);
+                                if (auto* error = std::get_if<ProtocolError>(&parsed)) return *error;
+                                auto command = std::get<LoginCommand>(std::move(parsed));
+                                if (auto error = security.anonymousMode(command.mode, browser)) return *error;
+                                browser.response->login = true;
+                                browser.response->loginMode = command.mode;
+                                browser.response->clear = command.mode == CredentialMode::Cookie;
+                                return command;
+                            }, [state = browser.response](LoginResult result, RequestId requestId) {
+                                return state->loginMode == CredentialMode::Cookie ? cookieLoginResponse(std::move(result), requestId) : loginResponse(std::move(result), requestId);
+                            }, ready));
                     }
-                    const auto credential = readBearerCredentials(head.headers(), codec);
+                    const auto credential = readRequestCredentials(head.headers(), codec);
                     if (const auto* error = std::get_if<ProtocolError>(&credential)) return reject(*error, id);
-                    const RequestContext context{{std::get<SessionDigest>(credential), CredentialMode::Bearer}, id};
+                    const auto credentials = std::get<RequestCredentials>(credential);
+                    const RequestContext context{{credentials.digest, credentials.mode}, id};
                     if (auto selectedDrive = driveDecision(head, pattern, Router::findParam(selection->match.params, "node_id"), context, *drive, ready)) return std::move(*selectedDrive);
                     if (pattern == "/api/v1/nodes/:node_id/content") {
                         if (auto error = validateNoQuery(head.query())) return reject(*error, id);
@@ -217,10 +233,10 @@ HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity
                         const auto expected = std::get<AccountCondition>(std::move(condition));
                         if (pattern == "/api/v1/users/me") {
                             return HttpRequestDecision::streaming(makeIdentityStream<UpdateDisplayNameCommand, UserProfile>(*dispatcher, context, RequestBody::Json,
-                                [expected](std::string_view body) { return parseUpdateDisplayNameJson(body, expected); }, currentUserResponse, ready));
+                                [expected](std::string_view body) { return parseUpdateDisplayNameJson(body, expected); }, userProfileResponse, ready));
                         }
                         if (pattern == "/api/v1/users/me/password") {
-                            auto source = readAuthenticationSource(metadata);
+                            Parsed<AuthenticationSource> source = browser.source;
                             if (const auto* error = std::get_if<ProtocolError>(&source)) return reject(*error, id);
                             return HttpRequestDecision::streaming(makeIdentityStream<ChangePasswordCommand, void>(*dispatcher, context, RequestBody::Json,
                                 [expected, ownedSource = std::get<AuthenticationSource>(source)](std::string_view body) { return parseChangePasswordJson(body, expected, ownedSource); }, noContentResponse, ready));
@@ -246,7 +262,7 @@ HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity
                         if (const auto error = validateNoQuery(head.query())) return reject(*error, id);
                     }
                     if (pattern == "/api/v1/users/me") {
-                        return bodylessDecision<GetMeCommand, UserProfile>(GetMeCommand{}, *dispatcher, context, currentUserResponse, ready);
+                        return bodylessDecision<GetMeCommand, CurrentUserView>(GetMeCommand{}, *dispatcher, context, currentUserResponse, ready);
                     }
                     if (pattern == "/api/v1/spaces") {
                         return bodylessDecision<ListSpacesCommand, std::vector<SpaceView>>(ListSpacesCommand{}, *dispatcher, context, spacesResponse, ready);
@@ -313,7 +329,15 @@ HttpApi::HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity
         return errorResponse(ProtocolError::TemporarilyUnavailable, trace.requestId(metadata.exchange)).buffered(true);
     };
     InFlightLimiter limiter(limit);
-    selector_ = compose(std::move(terminal), { limiter.middleware() });
+    selector_ = [terminal = std::move(terminal), admission = limiter.middleware(), security, trace = trace_](const auto& request, const auto& metadata) {
+        auto inspected = security.inspect(request, metadata);
+        if (auto* error = std::get_if<ProtocolError>(&inspected)) return reject(*error, trace.requestId(metadata.exchange));
+        const auto browser = std::get<BrowserRequest>(std::move(inspected));
+        auto admitted = compose([&](const auto& head, const auto& info) { return terminal(head, info, browser); }, {admission});
+        auto decision = admitted(request, metadata);
+        decision.attributes().addResponseHeaderPolicy(BrowserSecurity::responsePolicy(browser.response));
+        return decision;
+    };
 }
 
 void HttpApi::configure(HttpServer& server) {

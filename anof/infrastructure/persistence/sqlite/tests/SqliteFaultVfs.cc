@@ -27,7 +27,8 @@ const sqlite3_io_methods SqliteFaultVfs::File::methods{
         return result;
     },
     [](sqlite3_file* file, void* buffer, int amount, sqlite3_int64 offset) {
-        auto* real = unwrap(file); return real->pMethods->xRead(real, buffer, amount, offset);
+        auto* real = unwrap(file);
+        return real->pMethods->xRead(real, buffer, amount, offset);
     },
     [](sqlite3_file* file, const void* buffer, int amount, sqlite3_int64 offset) {
         auto& f = from(file);
@@ -35,7 +36,8 @@ const sqlite3_io_methods SqliteFaultVfs::File::methods{
         return f.real->pMethods->xWrite(f.real, buffer, amount, offset);
     },
     [](sqlite3_file* file, sqlite3_int64 size) {
-        auto* real = unwrap(file); return real->pMethods->xTruncate(real, size);
+        auto* real = unwrap(file);
+        return real->pMethods->xTruncate(real, size);
     },
     [](sqlite3_file* file, int flags) {
         auto& f = from(file);
@@ -43,21 +45,25 @@ const sqlite3_io_methods SqliteFaultVfs::File::methods{
         return f.real->pMethods->xSync(f.real, flags);
     },
     [](sqlite3_file* file, sqlite3_int64* size) {
-        auto* real = unwrap(file); return real->pMethods->xFileSize(real, size);
+        auto* real = unwrap(file);
+        return real->pMethods->xFileSize(real, size);
     },
     [](sqlite3_file* file, int lock) { auto* real = unwrap(file); return real->pMethods->xLock(real, lock); },
     [](sqlite3_file* file, int lock) { auto* real = unwrap(file); return real->pMethods->xUnlock(real, lock); },
     [](sqlite3_file* file, int* result) { auto* real = unwrap(file); return real->pMethods->xCheckReservedLock(real, result); },
     [](sqlite3_file* file, int operation, void* argument) {
-        auto* real = unwrap(file); return real->pMethods->xFileControl(real, operation, argument);
+        auto* real = unwrap(file);
+        return real->pMethods->xFileControl(real, operation, argument);
     },
     [](sqlite3_file* file) { auto* real = unwrap(file); return real->pMethods->xSectorSize(real); },
     [](sqlite3_file* file) { auto* real = unwrap(file); return real->pMethods->xDeviceCharacteristics(real); },
     [](sqlite3_file* file, int page, int pageSize, int extend, void volatile** result) {
-        auto* real = unwrap(file); return real->pMethods->xShmMap(real, page, pageSize, extend, result);
+        auto* real = unwrap(file);
+        return real->pMethods->xShmMap(real, page, pageSize, extend, result);
     },
     [](sqlite3_file* file, int offset, int count, int flags) {
-        auto* real = unwrap(file); return real->pMethods->xShmLock(real, offset, count, flags);
+        auto* real = unwrap(file);
+        return real->pMethods->xShmLock(real, offset, count, flags);
     },
     [](sqlite3_file* file) { auto* real = unwrap(file); real->pMethods->xShmBarrier(real); },
     [](sqlite3_file* file, int remove) { auto* real = unwrap(file); return real->pMethods->xShmUnmap(real, remove); },

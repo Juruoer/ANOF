@@ -1,12 +1,11 @@
 #include <anof/infrastructure/persistence/sqlite/tests/SqliteTestStore.h>
 #define BOOST_TEST_MODULE AnofSqliteNodeRepository
-#include <boost/test/unit_test.hpp>
-
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataTransaction.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
 
+#include <boost/test/unit_test.hpp>
 #include <cstdlib>
 #include <filesystem>
 #include <iomanip>
@@ -53,7 +52,7 @@ struct Database {
         connection = std::move(opened).value();
         BOOST_REQUIRE(connection->beginWrite());
         sql("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0, 'admin', 'Administrator', '" + std::string("$argon2id$v=19$m=8192,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") + "', 1, 1, 0, 0)");
-        sql("INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision) VALUES (" + quoted(kBlob) + ", 0, zeroblob(32),0,0,0,1)");
+        sql("INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision,charged_bytes) VALUES (" + quoted(kBlob) + ", 0, zeroblob(32),0,0,0,1,0)");
         sql("INSERT INTO spaces VALUES (" + quoted(kSpace) + ", 1, NULL, " + quoted(kRoot) + ")");
         sql("INSERT INTO spaces VALUES (" + quoted(kOtherSpace) + ", 0, " + quoted(kUser) + ", " + quoted(kOtherRoot) + ")");
         node(kRoot, std::nullopt, "");
@@ -85,13 +84,17 @@ struct Database {
         auto& s = *statement.value();
         BOOST_REQUIRE(s.bindText(1, nodeId.toString()));
         BOOST_REQUIRE(s.bindText(2, space.toString()));
-        if (parent) BOOST_REQUIRE(s.bindText(3, parent->toString()));
-        else BOOST_REQUIRE(s.bindNull(3));
+        if (parent)
+            BOOST_REQUIRE(s.bindText(3, parent->toString()));
+        else
+            BOOST_REQUIRE(s.bindNull(3));
         BOOST_REQUIRE(s.bindText(4, name));
         BOOST_REQUIRE(s.bindInt64(5, fileNode ? 1 : 0));
         BOOST_REQUIRE(s.bindText(6, kUser.toString()));
-        if (fileNode) BOOST_REQUIRE(s.bindText(7, kBlob.toString()));
-        else BOOST_REQUIRE(s.bindNull(7));
+        if (fileNode)
+            BOOST_REQUIRE(s.bindText(7, kBlob.toString()));
+        else
+            BOOST_REQUIRE(s.bindNull(7));
         BOOST_REQUIRE(s.bindInt64(8, trashed ? 1 : 0));
         auto row = s.step();
         BOOST_REQUIRE(row && !row.value());
@@ -176,12 +179,12 @@ BOOST_AUTO_TEST_CASE(insert_and_revision_roll_back_together_on_abandonment_and_f
 BOOST_AUTO_TEST_CASE(directory_names_validate_utf8_bytes_and_controls_without_normalization) {
     Database db;
     const std::string invalid[] = { "", ".", "..", "a/b", "a\\b", std::string("a\0b", 3), std::string(256, 'x'),
-        "\x01", "\x7f", "\xc2\x85", "\xc0\xaf", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe4\xb8" };
+                                    "\x01", "\x7f", "\xc2\x85", "\xc0\xaf", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe4\xb8" };
     for (const auto& name : invalid) errorIs(db.start().insertDirectory(db.command(10, name)), ErrorCode::InvalidName);
     auto& nodes = db.start();
     unsigned index = 10;
     for (const auto& name : { std::string(255, 'x'), std::string(" "), std::string("Case"), std::string("case"),
-                             std::string("\xc3\xa9"), std::string("e\xcc\x81") }) {
+                              std::string("\xc3\xa9"), std::string("e\xcc\x81") }) {
         auto result = nodes.insertDirectory(db.command(index++, name));
         BOOST_REQUIRE(result);
         BOOST_CHECK(result.value().name == name);
@@ -207,7 +210,11 @@ BOOST_AUTO_TEST_CASE(name_conflicts_include_files_but_id_and_foreign_key_failure
 BOOST_AUTO_TEST_CASE(missing_cross_space_and_file_parents_have_precise_errors) {
     Database db;
     db.node(id<NodeId>(10), kRoot, "file", true);
-    const struct { SpaceId space; NodeId parent; ErrorCode code; } cases[] = {
+    const struct {
+        SpaceId space;
+        NodeId parent;
+        ErrorCode code;
+    } cases[] = {
         { id<SpaceId>(99), kRoot, ErrorCode::NotFound },
         { kSpace, id<NodeId>(99), ErrorCode::NotFound },
         { kSpace, kOtherRoot, ErrorCode::NotFound },

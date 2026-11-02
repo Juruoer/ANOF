@@ -14,7 +14,7 @@ namespace anof::runtime {
 class CompletionPump {
 public:
     using Drain = std::function<bool()>;  // loop 内执行，返回是否还有结果；不得抛异常。
-    using Idle = std::function<void()>;  // drain 已退出且无待调度通知；不得抛异常。
+    using Idle = std::function<void()>;   // drain 已退出且无待调度通知；不得抛异常。
     using Post = std::function<void(std::function<void()>)>;
 
     // 默认使用 loop.queueInLoop。注入 Post 必须跨线程安全、只延后投递；

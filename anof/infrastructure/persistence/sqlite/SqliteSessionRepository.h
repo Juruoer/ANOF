@@ -13,8 +13,8 @@ public:
     Result<bool> revoke(const SessionCredential&, UserId, UtcTime) override;
     Result<SessionCount> revokeAll(UserId, UtcTime) override;
     Result<SessionCount> eraseInactive(UtcTime, PageSize) override;
+
 private:
     SqliteTransactionContext& context_;
-
 };
-}
+}  // namespace anof::infrastructure::sqlite

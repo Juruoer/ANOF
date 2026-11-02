@@ -2,8 +2,8 @@
 
 #include <anof/core/Clock.h>
 #include <anof/core/Id.h>
-#include <anof/domain/identity/IdentityValues.h>
 #include <anof/domain/drive/Quota.h>
+#include <anof/domain/identity/IdentityValues.h>
 
 namespace anof {
 struct InstanceSettings {

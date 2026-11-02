@@ -5,8 +5,10 @@ namespace anof::infrastructure::sqlite {
 
 SqliteTransactionContext::~SqliteTransactionContext() {
     if (!open_) return;
-    if (readOnly_) (void)connection_.endRead();
-    else (void)connection_.rollback();
+    if (readOnly_)
+        (void)connection_.endRead();
+    else
+        (void)connection_.rollback();
     storeActive_ = false;
 }
 
@@ -45,10 +47,14 @@ Error SqliteTransactionContext::fail(Error error) {
     return error;
 }
 
-Result<void> SqliteTransactionContext::commit() {
+Result<void> SqliteTransactionContext::commit(const std::function<Result<void>()>& beforeCommit) {
     if (!open_ || readOnly_) return ErrorCode::InvalidArgument;
     auto ready = requireOpen();
     if (ready) ready = verifyDriveMembership(connection_);
+    if (beforeCommit) {
+        auto allowed = beforeCommit();
+        if (ready && !allowed) ready = allowed.error();
+    }
     // 关闭标志先独立于底层连接，保证旧事务析构不会回滚后继事务。
     open_ = false;
     storeActive_ = false;

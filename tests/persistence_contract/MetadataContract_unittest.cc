@@ -1,8 +1,7 @@
 #define BOOST_TEST_MODULE AnofMetadataContract
-#include <boost/test/unit_test.hpp>
-
 #include <tests/persistence_contract/TestMetadataBackend.h>
 
+#include <boost/test/unit_test.hpp>
 #include <chrono>
 #include <iomanip>
 #include <sstream>

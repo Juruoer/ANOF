@@ -126,6 +126,14 @@ Result<PasswordInput> readConfirmedPassword() {
     if (std::holds_alternative<TerminalError>(result) || finish(terminal)) return ErrorCode::InvalidArgument;
     return std::move(std::get<PasswordInput>(result));
 }
+TerminalResult<PasswordInput> readResetPassword() {
+    Terminal terminal;
+    if (!terminal.open()) return TerminalError::Unavailable;
+    constexpr char prompt[] = "Administrator password: ";
+    auto result = password(terminal, prompt, sizeof prompt - 1, true);
+    if (auto error = finish(terminal)) return *error;
+    return result;
+}
 TerminalResult<PasswordInput> readLoginPassword(std::atomic_bool* cancelled) {
     Terminal terminal(cancelled);
     if (!terminal.open()) return TerminalError::Unavailable;

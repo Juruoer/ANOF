@@ -10,8 +10,8 @@ public:
     explicit SqliteSettingsRepository(SqliteTransactionContext& context) : context_(context) {}
     Result<std::optional<InstanceSettings>> get() override;
     Result<void> insertBootstrap(const InstanceSettings&) override;
+
 private:
     SqliteTransactionContext& context_;
-
 };
-}
+}  // namespace anof::infrastructure::sqlite

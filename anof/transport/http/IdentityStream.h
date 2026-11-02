@@ -14,15 +14,16 @@ namespace anof::http {
 // 依赖和 ready 的引用资源须覆盖全部任务完成及 HTTP 清理；不依赖具体 executor。
 template <typename Command, typename Value, typename Context, typename Parser, typename Formatter, typename Dispatcher>
 muduox::net::HttpStreamCallback makeIdentityStream(Dispatcher& dispatcher, Context context,
-    RequestBody bodyKind, Parser parser, Formatter formatter, std::function<bool()> ready, ProtocolError (*mapError)(ErrorCode) = protocolError) {
+                                                   RequestBody bodyKind, Parser parser, Formatter formatter, std::function<bool()> ready, ProtocolError (*mapError)(ErrorCode) = protocolError) {
     static_assert(std::is_same_v<Context, RequestId> || std::is_same_v<Context, RequestContext>);
     if (!ready || !mapError) throw std::invalid_argument("Identity stream requires readiness callback and error mapper");
     const RequestId id = [&] {
-        if constexpr (std::is_same_v<Context, RequestId>) return context;
-        else return context.requestId;
+        if constexpr (std::is_same_v<Context, RequestId>)
+            return context;
+        else
+            return context.requestId;
     }();
-    return [&dispatcher, context, id, bodyKind, parser = std::move(parser), formatter = std::move(formatter), ready = std::move(ready), mapError]
-        (const muduox::net::HttpRequest&, const std::shared_ptr<muduox::net::HttpResponseWriter>& writer) {
+    return [&dispatcher, context, id, bodyKind, parser = std::move(parser), formatter = std::move(formatter), ready = std::move(ready), mapError](const muduox::net::HttpRequest&, const std::shared_ptr<muduox::net::HttpResponseWriter>& writer) {
         using State = internal::AsyncRequestState;
         auto requestState = std::make_shared<State>(id, bodyKind, writer, ready);
         return requestState->callbacks([&dispatcher, context, id, parser, formatter, mapError](std::string_view body, std::weak_ptr<State> weak) -> State::Submission {
@@ -33,10 +34,18 @@ muduox::net::HttpStreamCallback makeIdentityStream(Dispatcher& dispatcher, Conte
                 if (!state || !state->beginCompletion(completed.taskId)) return;
                 try {
                     auto* result = std::get_if<Result<Value>>(&completed.outcome);
-                    if (!result) { state->fail(ProtocolError::TemporarilyUnavailable); return; }
-                    if (!*result) { state->fail(mapError(result->error().code)); return; }
-                    if constexpr (std::is_void_v<Value>) state->respond(formatter(id));
-                    else state->respond(formatter(std::move(*result).value(), id));
+                    if (!result) {
+                        state->fail(ProtocolError::TemporarilyUnavailable);
+                        return;
+                    }
+                    if (!*result) {
+                        state->fail(mapError(result->error().code));
+                        return;
+                    }
+                    if constexpr (std::is_void_v<Value>)
+                        state->respond(formatter(id));
+                    else
+                        state->respond(formatter(std::move(*result).value(), id));
                 } catch (...) {
                     // 此回调在框架调用栈之外；转换/响应异常必须显式终止交换。
                     state->abort();

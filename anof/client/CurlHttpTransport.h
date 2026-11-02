@@ -10,6 +10,7 @@ public:
     explicit CurlHttpTransport(long connectTimeoutMs = 5000, long timeoutMs = 35000, TransferTimeouts transfers = {});
     ClientResult<HttpResponse> perform(const Origin&, const HttpRequest&, const std::atomic_bool* cancel = nullptr) override;
     ClientResult<HttpResponse> transfer(const Origin&, const TransferRequest&, const std::atomic_bool* cancel = nullptr) override;
+
 private:
     ClientResult<HttpResponse> execute(const Origin&, const HttpRequest&, const std::atomic_bool*, const TransferRequest*);
     long connectTimeoutMs_, timeoutMs_;

@@ -1,17 +1,29 @@
 #include <apps/anof/Serve.h>
+#include <apps/anof/RuntimeDependencies.h>
+#include <apps/anof/OfflineCommands.h>
+#include <csignal>
 #include <apps/anof/Init.h>
 #include <apps/anof/ClientCommands.h>
 #include <CLI/CLI.hpp>
+#include <anof/build/Version.h>
 
 #include <cstdio>
 #include <string>
 #include <vector>
 
 int main(int argc, char** argv) {
+    if (const char* error = anof::app::runtimeDependencyFailure()) {
+        std::fprintf(stderr, "ANOF_ERROR stage=dependencies code=%s\n", error);
+        return 4;
+    }
+    std::signal(SIGPIPE, SIG_IGN);
     try {
         CLI::App application{"ANOF personal/family cloud drive"};
+        const std::string version = std::string("ANOF ") + anof::build::version;
+        application.set_version_flag("--version", version);
         application.require_subcommand(1, 1);
-        auto* command = application.add_subcommand("serve", "Serve an existing local development instance in the foreground");
+        auto* command = application.add_subcommand("serve", "Serve an existing instance in the foreground");
+        command->set_version_flag("--version", version);
         std::string root;
         command->add_option("--root", root, "Absolute existing instance root")->required();
         anof::app::InitArguments inputs;
@@ -32,10 +44,14 @@ int main(int argc, char** argv) {
         initialOptions.push_back(init->add_option("--disk-safety-min-bytes", inputs.diskSafetyMinimum, "Minimum free disk margin, default 1073741824"));
         initialOptions.push_back(init->add_option("--disk-safety-percent", inputs.diskSafetyPercent, "Free disk margin percent, default 5"));
         anof::app::ClientCommands client(application);
+        anof::app::OfflineCommands offline(application);
         try {
             application.parse(argc, argv);
+        } catch (const CLI::CallForVersion&) {
+            if (std::printf("%s\n", version.c_str()) < 0 || std::fflush(stdout) != 0) return 5;
+            return 0;
         } catch (const CLI::CallForHelp& help) {
-            return (*init || *command) ? application.exit(help) : client.help(application, help);
+            return (*init || *command || offline.selected()) ? application.exit(help) : client.help(application, help);
         } catch (const CLI::ParseError&) {
             return client.invalidArguments();
         }
@@ -51,6 +67,10 @@ int main(int argc, char** argv) {
             return anof::app::initialize(inputs);
         }
         if (*command) return anof::app::serve(root);
+        if (offline.selected()) {
+            if (client.hasRemoteOptions()) return client.invalidArguments();
+            return offline.run(client.jsonOutput());
+        }
         return client.run();
     } catch (...) {
         // 不传播第三方异常中可能含有的文件内容；fatal socket 失败不经过这里。

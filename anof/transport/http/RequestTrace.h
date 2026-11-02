@@ -20,6 +20,7 @@ struct HttpTraceRecord {
     std::optional<std::chrono::steady_clock::time_point> ended;
     std::optional<muduox::net::HttpExchangeOutcome> outcome;
     std::optional<muduox::net::HttpCancelReason> reason;
+    std::string_view route = "unmatched";  // static template, never a request view
 };
 
 struct HttpObservation {

@@ -150,7 +150,7 @@ public:
     Result<std::unique_ptr<MetadataReadSnapshot>> beginRead() override { return inner_->beginRead(); }
     Result<std::unique_ptr<MetadataTransaction>> beginWrite() override {
         ++control_.begins;
-        // gate 在事务开启之前；用于确定 Running／Queued 次序，不占用 SQLite 写锁。
+        // gate 在事务开启之前；用于确定 Running/Queued 次序，不占用 SQLite 写锁。
         if (control_.blocked) {
             std::unique_lock<std::mutex> lock(control_.mutex);
             control_.entered = true;
@@ -226,7 +226,7 @@ struct Fixture {
     }
     void start(double responseSeconds = 30) {
         BOOST_REQUIRE(backend->reset(seed));
-        api = std::make_unique<HttpApi>(*codec, *identity, [this] { return runtime.ready(); }, handler.stream(), identities, uploads, files,
+        api = std::make_unique<HttpApi>(*codec, *identity, [this] { return runtime.ready(); }, handler.stream(), identities, uploads, files, [] { InstanceConfiguration c; c.developmentHttp = true; return c; }(),
             HttpObservation{{}, [this](auto value) { record(finished, std::move(value)); }}, HttpApiOptions{4, 15, responseSeconds});
         api->configure(server);
         BOOST_REQUIRE(runtime.start([this]() -> Result<MetadataWorkerResources> {

@@ -50,7 +50,7 @@ Result<std::optional<PasswordSnapshot>> IdentityService::prepareLogin(const Logi
 }
 Result<LoginResult> IdentityService::completeLogin(RequestId request, const LoginCommand& command,
                                                   const std::optional<PasswordSnapshot>& snapshot, bool verified) {
-    if (command.mode != CredentialMode::Bearer) return ErrorCode::InvalidArgument;
+    if (command.mode != CredentialMode::Bearer && command.mode != CredentialMode::Cookie) return ErrorCode::InvalidArgument;
     if (!verified || !snapshot || !snapshot->enabled) return ErrorCode::Unauthenticated;
     // 随机源不在事务内执行；明文只在确定提交之后释放给调用者。
     auto token = issuer_.issueSession();
@@ -148,7 +148,7 @@ Result<void> IdentityService::execute(const RequestContext& context, LogoutComma
     }
     return tx->commit();
 }
-Result<UserProfile> IdentityService::execute(const RequestContext& context, GetMeCommand) {
+Result<CurrentUserView> IdentityService::execute(const RequestContext& context, GetMeCommand) {
     auto opened = store_.beginRead();
     if (!opened) return opened.error();
     auto& snapshot = opened.value();
@@ -158,7 +158,10 @@ Result<UserProfile> IdentityService::execute(const RequestContext& context, GetM
     auto profile = snapshot->users().find(user.value().userId);
     if (!profile) return profile.error();
     if (!profile.value()) return ErrorCode::IntegrityError;
-    return std::move(*profile.value());
+    auto settings = snapshot->settings().get();
+    if (!settings) return settings.error();
+    if (!settings.value()) return ErrorCode::IntegrityError;
+    return CurrentUserView{std::move(*profile.value()), settings.value()->instanceId};
 }
 Result<CreatedInvite> IdentityService::execute(const RequestContext& context, CreateInviteCommand command) {
     auto id = ids_.nextInvite();

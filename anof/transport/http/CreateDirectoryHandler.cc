@@ -14,8 +14,7 @@ class RequestState : public std::enable_shared_from_this<RequestState> {
 public:
     RequestState(RequestContext context, const std::shared_ptr<HttpResponseWriter>& writer,
                  CreateDirectoryDispatcher& dispatcher, std::function<bool()> ready, DirectoryTaskObserver observer)
-        : context_(context), writer_(writer), dispatcher_(dispatcher), ready_(std::move(ready)),
-          observer_(std::move(observer)), loop_(EventLoop::getEventLoopOfCurrentThread()) {
+        : context_(context), writer_(writer), dispatcher_(dispatcher), ready_(std::move(ready)), observer_(std::move(observer)), loop_(EventLoop::getEventLoopOfCurrentThread()) {
         if (!loop_) throw std::logic_error("HTTP handler requires an owning loop");
     }
     std::size_t body(std::string_view part) {
@@ -35,29 +34,38 @@ public:
         loop_->assertInLoopThread();
         if (cancelled_ || completed_) return;
         completed_ = true;
-        if (!request.trailers().empty()) { fail(ProtocolError::InvalidArgument); return; }
+        if (!request.trailers().empty()) {
+            fail(ProtocolError::InvalidArgument);
+            return;
+        }
         auto parsed = parseCreateDirectoryJson(body_);
         std::string().swap(body_);
-        if (const auto* error = std::get_if<ProtocolError>(&parsed)) { fail(*error); return; }
-        if (!ready_()) { fail(ProtocolError::TemporarilyUnavailable); return; }
+        if (const auto* error = std::get_if<ProtocolError>(&parsed)) {
+            fail(*error);
+            return;
+        }
+        if (!ready_()) {
+            fail(ProtocolError::TemporarilyUnavailable);
+            return;
+        }
         const std::weak_ptr<RequestState> weak = shared_from_this();
         auto submission = dispatcher_.trySubmit(context_, std::get<CreateDirectoryCommand>(std::move(parsed)),
-            [weak, id = context_.requestId, observer = observer_](CreateDirectoryCompletion completion) {
-                const auto state = weak.lock();
-                const bool active = state && !state->cancelled_;
-                // 业务终态与 HTTP 终态分离。请求已经释放时仍消费并记录迟到结果。
-                if (observer) {
-                    const auto* result = std::get_if<Result<CreateDirectoryResult>>(&completion.outcome);
-                    std::optional<ErrorCode> error;
-                    if (result && !*result) error = result->error().code;
-                    try {
-                        observer({ id, completion.taskId, completion.attempt, !result, error, active });
-                    } catch (...) {
-                        // 可丢弃观测不改变事务结果，也不能妨碍 HTTP 发送和完成名额归还。
-                    }
-                }
-                if (active) state->finished(std::move(completion));
-            });
+                                                [weak, id = context_.requestId, observer = observer_](CreateDirectoryCompletion completion) {
+                                                    const auto state = weak.lock();
+                                                    const bool active = state && !state->cancelled_;
+                                                    // 业务终态与 HTTP 终态分离。请求已经释放时仍消费并记录迟到结果。
+                                                    if (observer) {
+                                                        const auto* result = std::get_if<Result<CreateDirectoryResult>>(&completion.outcome);
+                                                        std::optional<ErrorCode> error;
+                                                        if (result && !*result) error = result->error().code;
+                                                        try {
+                                                            observer({ id, completion.taskId, completion.attempt, !result, error, active });
+                                                        } catch (...) {
+                                                            // 可丢弃观测不改变事务结果，也不能妨碍 HTTP 发送和完成名额归还。
+                                                        }
+                                                    }
+                                                    if (active) state->finished(std::move(completion));
+                                                });
         if (auto* accepted = std::get_if<AcceptedTask>(&submission)) {
             task_ = std::move(accepted->handle);
         } else {
@@ -83,11 +91,9 @@ private:
         loop_->assertInLoopThread();
         if (cancelled_ || sender_ || !writer_->active()) return;
         const auto length = response.body.size();
-        sender_ = HttpStreamSender::create(writer_, std::move(response.headers),
-            [body = std::move(response.body)]() mutable -> std::optional<std::string> {
+        sender_ = HttpStreamSender::create(writer_, std::move(response.headers), [body = std::move(response.body)]() mutable -> std::optional<std::string> {
                 if (body.empty()) return std::nullopt;
-                return std::exchange(body, {});
-            }, length);
+                return std::exchange(body, {}); }, length);
         sender_->send();
     }
     void finished(CreateDirectoryCompletion completion) {
@@ -95,10 +101,19 @@ private:
         task_.reset();
         try {
             const auto* result = std::get_if<Result<CreateDirectoryResult>>(&completion.outcome);
-            if (!result) { fail(ProtocolError::TemporarilyUnavailable); return; }
-            if (!*result) { fail(protocolError(result->error().code)); return; }
+            if (!result) {
+                fail(ProtocolError::TemporarilyUnavailable);
+                return;
+            }
+            if (!*result) {
+                fail(protocolError(result->error().code));
+                return;
+            }
             auto response = createdDirectoryResponse(result->value(), context_.requestId);
-            if (!response) { fail(ProtocolError::InternalError); return; }
+            if (!response) {
+                fail(ProtocolError::InternalError);
+                return;
+            }
             send(std::move(response).value());
         } catch (...) {
             // 完成回调不再处于 HTTP 调用栈。异常必须显式终止交换，不能等待框架捕获，

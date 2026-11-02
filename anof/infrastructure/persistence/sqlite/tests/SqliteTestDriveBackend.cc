@@ -43,7 +43,7 @@ Result<void> SqliteTestDriveBackend::reset(const anof::testing::DriveSeed& seed)
         if (std::none_of(seed.transfer.metadata.nodes.begin(), seed.transfer.metadata.nodes.end(), [&](const auto& n) { return n.metadata.id == pair.first; })) return ErrorCode::IntegrityError;
     ByteCount retained, reserved;
     for (const auto& b : seed.blobRecords) {
-        auto next = retained.add(b.content.size.value());
+        auto next = retained.add(b.chargedBytes.value());
         if (!next) return next.error();
         retained = next.value();
     }

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <anof/core/Result.h>
-
 #include <sys/types.h>
 
 #include <cstddef>

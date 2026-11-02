@@ -1,7 +1,7 @@
 #pragma once
 
-#include <tests/diagnostics/WaitTrace.h>
 #include <muduox/net/EventLoop.h>
+#include <tests/diagnostics/WaitTrace.h>
 
 #include <cmath>
 #include <exception>
@@ -11,7 +11,11 @@
 
 namespace anof::test {
 namespace detail {
-enum class WaitOutcome { Pending, Completed, TimedOut, Interrupted, Failed };
+enum class WaitOutcome { Pending,
+                         Completed,
+                         TimedOut,
+                         Interrupted,
+                         Failed };
 
 // 首个被观察到的终态胜出；cancel/quit 不撤回同批回调，因此所有入口都检查终态。
 struct WaitState {
@@ -46,8 +50,7 @@ inline bool waitFor(muduox::net::EventLoop& loop, const std::function<bool()>& p
                     double seconds = 3, const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
     loop.assertInLoopThread();
     if (!predicate || !std::isfinite(seconds) || seconds <= 0) throw std::invalid_argument("Invalid test wait");
-    auto state = std::make_shared<detail::WaitState>(detail::WaitState{predicate, WaitTrace(file, line),
-        detail::WaitOutcome::Pending, {}});
+    auto state = std::make_shared<detail::WaitState>(detail::WaitState{ predicate, WaitTrace(file, line), detail::WaitOutcome::Pending, {} });
     state->trace.event("begin");
     state->poll();
     if (state->exception) std::rethrow_exception(state->exception);
@@ -62,7 +65,7 @@ inline bool waitFor(muduox::net::EventLoop& loop, const std::function<bool()>& p
                 loop.cancel(poll);
                 loop.cancel(deadline);
             }
-        } timers{loop, state, {}, {}};
+        } timers{ loop, state, {}, {} };
         timers.poll = loop.runEvery(0.001, [state, &loop] {
             if (state->outcome != detail::WaitOutcome::Pending) return;
             state->poll();

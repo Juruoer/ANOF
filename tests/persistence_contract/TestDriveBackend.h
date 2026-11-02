@@ -1,6 +1,6 @@
 #pragma once
-#include <tests/persistence_contract/TestTransferBackend.h>
 #include <anof/application/ports/DriveMetadataStore.h>
+#include <tests/persistence_contract/TestTransferBackend.h>
 namespace anof::testing {
 struct DriveSeed {
     TransferSeed transfer;

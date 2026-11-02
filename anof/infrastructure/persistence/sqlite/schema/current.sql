@@ -1,22 +1,25 @@
--- 当前 schema 4；用于新实例建库，无开发版本升级链。
-CREATE TABLE schema_info (
-    singleton INTEGER NOT NULL PRIMARY KEY CHECK (typeof(singleton)='integer' AND singleton=1),
-    version INTEGER NOT NULL CHECK (typeof(version)='integer' AND version>0),
-    definition TEXT NOT NULL CHECK (typeof(definition)='text'),
-    created_at INTEGER NOT NULL CHECK (typeof(created_at)='integer')
+-- 当前 schema 5；用于新实例建库，无开发版本升级链。
+CREATE TABLE schema_info
+(
+    singleton  INTEGER NOT NULL PRIMARY KEY CHECK (typeof(singleton) = 'integer' AND singleton = 1),
+    version    INTEGER NOT NULL CHECK (typeof(version) = 'integer' AND version > 0),
+    definition TEXT    NOT NULL CHECK (typeof(definition) = 'text'),
+    created_at INTEGER NOT NULL CHECK (typeof(created_at) = 'integer')
 );
 
-CREATE TABLE users (
+CREATE TABLE users
+(
     id TEXT COLLATE BINARY NOT NULL PRIMARY KEY CHECK (
         typeof(id) = 'text'
-        AND length(CAST(id AS BLOB)) = 36
-        AND substr(id, 9, 1) = '-'
-        AND substr(id, 14, 1) = '-'
-        AND substr(id, 19, 1) = '-'
-        AND substr(id, 24, 1) = '-'
-        AND length(replace(id, '-', '')) = 32
-        AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'
-        AND id <> '00000000-0000-0000-0000-000000000000'),
+            AND length(CAST(id AS BLOB)) = 36
+            AND substr(id, 9, 1) = '-'
+            AND substr(id, 14, 1) = '-'
+            AND substr(id, 19, 1) = '-'
+            AND substr(id, 24, 1) = '-'
+            AND length(replace(id, '-', '')) = 32
+            AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'
+        AND id <> '00000000-0000-0000-0000-000000000000'
+) ,
     role INTEGER NOT NULL CHECK (typeof(role) = 'integer' AND role IN (0, 1)),
     enabled INTEGER NOT NULL CHECK (typeof(enabled) = 'integer' AND enabled IN (0, 1)),
     auth_epoch INTEGER NOT NULL CHECK (typeof(auth_epoch) = 'integer' AND auth_epoch >= 0),
@@ -30,50 +33,60 @@ CREATE TABLE users (
     CHECK (role<>1 OR enabled=1)
 );
 
-CREATE UNIQUE INDEX users_one_administrator ON users(role) WHERE role = 1;
+CREATE UNIQUE INDEX users_one_administrator ON users (role) WHERE role = 1;
 
-CREATE TRIGGER users_identity_update BEFORE UPDATE OF id, login, role ON users
-WHEN NEW.id<>OLD.id OR NEW.login<>OLD.login OR NEW.role<>OLD.role BEGIN
+CREATE TRIGGER users_identity_update
+    BEFORE UPDATE OF id, login, role
+    ON users
+    WHEN NEW.id <> OLD.id OR NEW.login <> OLD.login OR NEW.role <> OLD.role
+BEGIN
     SELECT RAISE(ABORT, 'user identity is immutable');
 END;
-CREATE TRIGGER users_delete BEFORE DELETE ON users BEGIN
+CREATE TRIGGER users_delete
+    BEFORE DELETE
+    ON users
+BEGIN
     SELECT RAISE(ABORT, 'user deletion is unsupported');
 END;
 
-CREATE TABLE sessions (
-    token_hash BLOB NOT NULL CHECK (typeof(token_hash) = 'blob' AND length(token_hash) = 32) PRIMARY KEY,
-    user_id TEXT COLLATE BINARY NOT NULL REFERENCES users(id) CHECK (
+CREATE TABLE sessions
+(
+    token_hash BLOB                NOT NULL CHECK (typeof(token_hash) = 'blob' AND length(token_hash) = 32) PRIMARY KEY,
+    user_id    TEXT COLLATE BINARY NOT NULL REFERENCES users (id) CHECK (
         typeof(user_id) = 'text'
-        AND length(CAST(user_id AS BLOB)) = 36
-        AND substr(user_id, 9, 1) = '-'
-        AND substr(user_id, 14, 1) = '-'
-        AND substr(user_id, 19, 1) = '-'
-        AND substr(user_id, 24, 1) = '-'
-        AND length(replace(user_id, '-', '')) = 32
-        AND replace(user_id, '-', '') NOT GLOB '*[^0-9a-f]*'
-        AND user_id <> '00000000-0000-0000-0000-000000000000'),
+            AND length(CAST(user_id AS BLOB)) = 36
+            AND substr(user_id, 9, 1) = '-'
+            AND substr(user_id, 14, 1) = '-'
+            AND substr(user_id, 19, 1) = '-'
+            AND substr(user_id, 24, 1) = '-'
+            AND length(replace(user_id, '-', '')) = 32
+            AND replace(user_id, '-', '') NOT GLOB '*[^0-9a-f]*'
+        AND user_id <> '00000000-0000-0000-0000-000000000000'
+) ,
     auth_epoch INTEGER NOT NULL CHECK (typeof(auth_epoch) = 'integer' AND auth_epoch >= 0),
     expires_at INTEGER NOT NULL CHECK (typeof(expires_at) = 'integer'),
     revoked INTEGER NOT NULL CHECK (typeof(revoked) = 'integer' AND revoked IN (0, 1)),
     created_at INTEGER NOT NULL CHECK (typeof(created_at)='integer'),
-    credential_mode TEXT NOT NULL CHECK (typeof(credential_mode)='text' AND credential_mode='bearer'),
+    credential_mode TEXT NOT NULL CHECK (typeof(credential_mode)='text' AND credential_mode IN ('bearer','cookie')),
     CHECK (expires_at>created_at)
 );
 
-CREATE INDEX sessions_user ON sessions(user_id);
-CREATE INDEX sessions_expiry ON sessions(expires_at, token_hash);
+CREATE INDEX sessions_user ON sessions (user_id);
+CREATE INDEX sessions_expiry ON sessions (expires_at, token_hash);
 
-CREATE TABLE spaces (
+CREATE TABLE spaces
+(
     id TEXT COLLATE BINARY NOT NULL PRIMARY KEY CHECK (
         typeof(id) = 'text'
-        AND length(CAST(id AS BLOB)) = 36
-        AND substr(id, 9, 1) = '-'
-        AND substr(id, 14, 1) = '-'
-        AND substr(id, 19, 1) = '-'
-        AND substr(id, 24, 1) = '-'
-        AND length(replace(id, '-', '')) = 32
-        AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'
-        AND id <> '00000000-0000-0000-0000-000000000000'),
+            AND length(CAST(id AS BLOB)) = 36
+            AND substr(id, 9, 1) = '-'
+            AND substr(id, 14, 1) = '-'
+            AND substr(id, 19, 1) = '-'
+            AND substr(id, 24, 1) = '-'
+            AND length(replace(id, '-', '')) = 32
+            AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'
+        AND id <> '00000000-0000-0000-0000-000000000000'
+) ,
     kind INTEGER NOT NULL CHECK (typeof(kind) = 'integer' AND kind IN (0, 1)),
     owner_id TEXT COLLATE BINARY REFERENCES users(id) CHECK (
         owner_id IS NULL OR (typeof(owner_id) = 'text'
@@ -99,43 +112,60 @@ CREATE TABLE spaces (
     FOREIGN KEY (id, root_node_id) REFERENCES nodes(space_id, id) DEFERRABLE INITIALLY DEFERRED
 );
 
-CREATE UNIQUE INDEX spaces_private_owner ON spaces(owner_id) WHERE kind = 0;
-CREATE UNIQUE INDEX spaces_one_public ON spaces(kind) WHERE kind = 1;
+CREATE UNIQUE INDEX spaces_private_owner ON spaces (owner_id) WHERE kind = 0;
+CREATE UNIQUE INDEX spaces_one_public ON spaces (kind) WHERE kind = 1;
 
-CREATE TABLE blobs (
+CREATE TABLE blobs
+(
     id TEXT COLLATE BINARY NOT NULL PRIMARY KEY CHECK (
         typeof(id) = 'text'
-        AND length(CAST(id AS BLOB)) = 36
-        AND substr(id, 9, 1) = '-'
-        AND substr(id, 14, 1) = '-'
-        AND substr(id, 19, 1) = '-'
-        AND substr(id, 24, 1) = '-'
-        AND length(replace(id, '-', '')) = 32
-        AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'
-        AND id <> '00000000-0000-0000-0000-000000000000'),
+            AND length(CAST(id AS BLOB)) = 36
+            AND substr(id, 9, 1) = '-'
+            AND substr(id, 14, 1) = '-'
+            AND substr(id, 19, 1) = '-'
+            AND substr(id, 24, 1) = '-'
+            AND length(replace(id, '-', '')) = 32
+            AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'
+        AND id <> '00000000-0000-0000-0000-000000000000'
+) ,
     size INTEGER NOT NULL CHECK (typeof(size) = 'integer' AND size >= 0 AND size <= 1099511627776),
     sha256 BLOB NOT NULL CHECK (typeof(sha256) = 'blob' AND length(sha256) = 32),
     storage_key TEXT GENERATED ALWAYS AS ('objects/' || substr(id,1,2) || '/' || id) VIRTUAL,
-    state INTEGER NOT NULL CHECK(typeof(state)='integer' AND state IN (0,1)),
+    state INTEGER NOT NULL CHECK(typeof(state)='integer' AND state IN (0,1,2)),
     created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer'),
     updated_at INTEGER NOT NULL CHECK(typeof(updated_at)='integer' AND updated_at>=created_at),
     revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=1),
     unreferenced_at INTEGER CHECK(unreferenced_at IS NULL OR (typeof(unreferenced_at)='integer' AND unreferenced_at>=created_at AND unreferenced_at<=updated_at AND unreferenced_at<=9223371950454775807)),
     delete_started_at INTEGER CHECK(delete_started_at IS NULL OR (typeof(delete_started_at)='integer' AND delete_started_at>=unreferenced_at+86400000000 AND delete_started_at<=updated_at)),
-    CHECK((state=0 AND delete_started_at IS NULL) OR (state=1 AND unreferenced_at IS NOT NULL AND delete_started_at IS NOT NULL))
+    charged_bytes INTEGER NOT NULL CHECK(typeof(charged_bytes)='integer' AND charged_bytes>=size),
+    unavailable_reason INTEGER CHECK(unavailable_reason IS NULL OR (typeof(unavailable_reason)='integer' AND unavailable_reason IN (0,1,2))),
+    observed_size INTEGER CHECK(observed_size IS NULL OR (typeof(observed_size)='integer' AND observed_size>=0)),
+    observed_sha256 BLOB CHECK(observed_sha256 IS NULL OR (typeof(observed_sha256)='blob' AND length(observed_sha256)=32)),
+    observed_device TEXT CHECK(observed_device IS NULL OR (typeof(observed_device)='text' AND length(observed_device) BETWEEN 1 AND 20 AND observed_device NOT GLOB '*[^0-9]*' AND (length(observed_device)=1 OR substr(observed_device,1,1)<>'0'))),
+    observed_inode TEXT CHECK(observed_inode IS NULL OR (typeof(observed_inode)='text' AND length(observed_inode) BETWEEN 1 AND 20 AND observed_inode NOT GLOB '*[^0-9]*' AND (length(observed_inode)=1 OR substr(observed_inode,1,1)<>'0'))),
+    observed_mtime_ns INTEGER CHECK(observed_mtime_ns IS NULL OR typeof(observed_mtime_ns)='integer'),
+    observed_ctime_ns INTEGER CHECK(observed_ctime_ns IS NULL OR typeof(observed_ctime_ns)='integer'),
+    CHECK((state IN (0,2) AND delete_started_at IS NULL) OR (state=1 AND unreferenced_at IS NOT NULL AND delete_started_at IS NOT NULL)),
+    CHECK((state IN (0,1) AND charged_bytes=size AND unavailable_reason IS NULL AND observed_size IS NULL AND observed_sha256 IS NULL AND observed_device IS NULL AND observed_inode IS NULL AND observed_mtime_ns IS NULL AND observed_ctime_ns IS NULL)
+       OR (state=2 AND unavailable_reason IS NOT NULL AND (
+          (unavailable_reason=0 AND charged_bytes=size AND observed_size IS NULL AND observed_sha256 IS NULL AND observed_device IS NULL AND observed_inode IS NULL AND observed_mtime_ns IS NULL AND observed_ctime_ns IS NULL)
+          OR (unavailable_reason IN (1,2) AND observed_size IS NOT NULL AND observed_device IS NOT NULL AND observed_inode IS NOT NULL AND observed_mtime_ns IS NOT NULL AND observed_ctime_ns IS NOT NULL AND charged_bytes=max(size,observed_size) AND
+             ((unavailable_reason=1 AND observed_size<>size AND observed_sha256 IS NULL) OR (unavailable_reason=2 AND observed_size=size AND observed_sha256 IS NOT NULL AND observed_sha256<>sha256))))))
 );
 
-CREATE TABLE nodes (
+CREATE TABLE nodes
+(
     id TEXT COLLATE BINARY NOT NULL PRIMARY KEY CHECK (
         typeof(id) = 'text'
-        AND length(CAST(id AS BLOB)) = 36
-        AND substr(id, 9, 1) = '-'
-        AND substr(id, 14, 1) = '-'
-        AND substr(id, 19, 1) = '-'
-        AND substr(id, 24, 1) = '-'
-        AND length(replace(id, '-', '')) = 32
-        AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'
-        AND id <> '00000000-0000-0000-0000-000000000000'),
+            AND length(CAST(id AS BLOB)) = 36
+            AND substr(id, 9, 1) = '-'
+            AND substr(id, 14, 1) = '-'
+            AND substr(id, 19, 1) = '-'
+            AND substr(id, 24, 1) = '-'
+            AND length(replace(id, '-', '')) = 32
+            AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'
+        AND id <> '00000000-0000-0000-0000-000000000000'
+) ,
     space_id TEXT COLLATE BINARY NOT NULL REFERENCES spaces(id) DEFERRABLE INITIALLY DEFERRED CHECK (
         typeof(space_id) = 'text'
         AND length(CAST(space_id AS BLOB)) = 36
@@ -193,13 +223,16 @@ CREATE TABLE nodes (
             AND instr(name, '/') = 0 AND instr(name, char(92)) = 0 AND name NOT IN ('.', '..')))
 );
 
-CREATE UNIQUE INDEX nodes_active_name ON nodes(space_id, parent_id, name COLLATE BINARY) WHERE trashed = 0 AND parent_id IS NOT NULL;
-CREATE UNIQUE INDEX nodes_active_root ON nodes(space_id) WHERE trashed = 0 AND parent_id IS NULL;
-CREATE INDEX nodes_blob ON nodes(blob_id);
-CREATE INDEX nodes_children ON nodes(space_id, parent_id, name COLLATE BINARY, id) WHERE trashed=0;
+CREATE UNIQUE INDEX nodes_active_name ON nodes (space_id, parent_id, name COLLATE BINARY) WHERE trashed = 0 AND parent_id IS NOT NULL;
+CREATE UNIQUE INDEX nodes_active_root ON nodes (space_id) WHERE trashed = 0 AND parent_id IS NULL;
+CREATE INDEX nodes_blob ON nodes (blob_id);
+CREATE INDEX nodes_children ON nodes (space_id, parent_id, name COLLATE BINARY, id) WHERE trashed=0;
 
 -- 根必须与空间声明一致；完整回收站成员关系在事务提交时验证。
-CREATE TRIGGER nodes_shape_insert BEFORE INSERT ON nodes BEGIN
+CREATE TRIGGER nodes_shape_insert
+    BEFORE INSERT
+    ON nodes
+BEGIN
     SELECT RAISE(ABORT, 'invalid root') WHERE
         (NEW.id = (SELECT root_node_id FROM spaces WHERE id = NEW.space_id)
          AND (NEW.parent_id IS NOT NULL OR NEW.kind <> 0 OR NEW.trashed <> 0 OR NEW.name <> ''))
@@ -210,7 +243,10 @@ CREATE TRIGGER nodes_shape_insert BEFORE INSERT ON nodes BEGIN
 END;
 
 -- 根必须与空间声明一致；完整回收站成员关系在事务提交时验证。
-CREATE TRIGGER nodes_shape_update BEFORE UPDATE ON nodes BEGIN
+CREATE TRIGGER nodes_shape_update
+    BEFORE UPDATE
+    ON nodes
+BEGIN
     SELECT RAISE(ABORT, 'invalid root') WHERE
         (NEW.id = (SELECT root_node_id FROM spaces WHERE id = NEW.space_id)
          AND (NEW.parent_id IS NOT NULL OR NEW.kind <> 0 OR NEW.trashed <> 0 OR NEW.name <> ''))
@@ -220,38 +256,58 @@ CREATE TRIGGER nodes_shape_update BEFORE UPDATE ON nodes BEGIN
         AND EXISTS (SELECT 1 FROM nodes WHERE id = NEW.parent_id AND space_id = NEW.space_id AND kind <> 0);
 END;
 
-CREATE TRIGGER nodes_identity_update BEFORE UPDATE OF id, space_id, kind ON nodes
-WHEN NEW.id <> OLD.id OR NEW.space_id <> OLD.space_id OR NEW.kind <> OLD.kind BEGIN
+CREATE TRIGGER nodes_identity_update
+    BEFORE UPDATE OF id, space_id, kind
+    ON nodes
+    WHEN NEW.id <> OLD.id OR NEW.space_id <> OLD.space_id OR NEW.kind <> OLD.kind
+BEGIN
     SELECT RAISE(ABORT, 'node identity is immutable');
 END;
 
-CREATE TRIGGER nodes_root_delete BEFORE DELETE ON nodes
-WHEN EXISTS (SELECT 1 FROM spaces WHERE id = OLD.space_id AND root_node_id = OLD.id) BEGIN
+CREATE TRIGGER nodes_root_delete
+    BEFORE DELETE
+    ON nodes
+    WHEN EXISTS (SELECT 1
+                 FROM spaces
+                 WHERE id = OLD.space_id
+                   AND root_node_id = OLD.id)
+BEGIN
     SELECT RAISE(ABORT, 'root is immutable');
 END;
 
-CREATE TRIGGER spaces_identity_update BEFORE UPDATE OF id, kind, owner_id, root_node_id ON spaces
-WHEN NEW.id <> OLD.id OR NEW.kind <> OLD.kind OR NEW.owner_id IS NOT OLD.owner_id OR NEW.root_node_id <> OLD.root_node_id BEGIN
+CREATE TRIGGER spaces_identity_update
+    BEFORE UPDATE OF id, kind, owner_id, root_node_id
+    ON spaces
+    WHEN NEW.id <> OLD.id OR NEW.kind <> OLD.kind OR NEW.owner_id IS NOT OLD.owner_id OR
+         NEW.root_node_id <> OLD.root_node_id
+BEGIN
     SELECT RAISE(ABORT, 'space identity is immutable');
 END;
 
-CREATE TRIGGER spaces_root_insert BEFORE INSERT ON spaces
-WHEN EXISTS (SELECT 1 FROM nodes WHERE id = NEW.root_node_id
-    AND (space_id <> NEW.id OR parent_id IS NOT NULL OR kind <> 0 OR trashed <> 0 OR name <> '')) BEGIN
+CREATE TRIGGER spaces_root_insert
+    BEFORE INSERT
+    ON spaces
+    WHEN EXISTS (SELECT 1
+                 FROM nodes
+                 WHERE id = NEW.root_node_id
+                   AND (space_id <> NEW.id OR parent_id IS NOT NULL OR kind <> 0 OR trashed <> 0 OR name <> ''))
+BEGIN
     SELECT RAISE(ABORT, 'invalid space root');
 END;
 
-CREATE TABLE space_quotas (
-    space_id TEXT COLLATE BINARY NOT NULL REFERENCES spaces(id) CHECK (
+CREATE TABLE space_quotas
+(
+    space_id TEXT COLLATE BINARY NOT NULL REFERENCES spaces (id) CHECK (
         typeof(space_id) = 'text'
-        AND length(CAST(space_id AS BLOB)) = 36
-        AND substr(space_id, 9, 1) = '-'
-        AND substr(space_id, 14, 1) = '-'
-        AND substr(space_id, 19, 1) = '-'
-        AND substr(space_id, 24, 1) = '-'
-        AND length(replace(space_id, '-', '')) = 32
-        AND replace(space_id, '-', '') NOT GLOB '*[^0-9a-f]*'
-        AND space_id <> '00000000-0000-0000-0000-000000000000'),
+            AND length(CAST(space_id AS BLOB)) = 36
+            AND substr(space_id, 9, 1) = '-'
+            AND substr(space_id, 14, 1) = '-'
+            AND substr(space_id, 19, 1) = '-'
+            AND substr(space_id, 24, 1) = '-'
+            AND length(replace(space_id, '-', '')) = 32
+            AND replace(space_id, '-', '') NOT GLOB '*[^0-9a-f]*'
+        AND space_id <> '00000000-0000-0000-0000-000000000000'
+) ,
     limit_bytes INTEGER NOT NULL CHECK (typeof(limit_bytes) = 'integer' AND limit_bytes >= 0),
     limit_nodes INTEGER NOT NULL CHECK (typeof(limit_nodes) = 'integer' AND limit_nodes >= 0),
     used_bytes INTEGER NOT NULL CHECK (typeof(used_bytes) = 'integer' AND used_bytes >= 0),
@@ -264,17 +320,19 @@ CREATE TABLE space_quotas (
     CHECK (used_nodes <= limit_nodes AND reserved_nodes <= limit_nodes - used_nodes)
 );
 
-CREATE TABLE public_contribution_quotas (
-    space_id TEXT COLLATE BINARY NOT NULL REFERENCES spaces(id) CHECK (
+CREATE TABLE public_contribution_quotas
+(
+    space_id TEXT COLLATE BINARY NOT NULL REFERENCES spaces (id) CHECK (
         typeof(space_id) = 'text'
-        AND length(CAST(space_id AS BLOB)) = 36
-        AND substr(space_id, 9, 1) = '-'
-        AND substr(space_id, 14, 1) = '-'
-        AND substr(space_id, 19, 1) = '-'
-        AND substr(space_id, 24, 1) = '-'
-        AND length(replace(space_id, '-', '')) = 32
-        AND replace(space_id, '-', '') NOT GLOB '*[^0-9a-f]*'
-        AND space_id <> '00000000-0000-0000-0000-000000000000'),
+            AND length(CAST(space_id AS BLOB)) = 36
+            AND substr(space_id, 9, 1) = '-'
+            AND substr(space_id, 14, 1) = '-'
+            AND substr(space_id, 19, 1) = '-'
+            AND substr(space_id, 24, 1) = '-'
+            AND length(replace(space_id, '-', '')) = 32
+            AND replace(space_id, '-', '') NOT GLOB '*[^0-9a-f]*'
+        AND space_id <> '00000000-0000-0000-0000-000000000000'
+) ,
     user_id TEXT COLLATE BINARY NOT NULL REFERENCES users(id) CHECK (
         typeof(user_id) = 'text'
         AND length(CAST(user_id AS BLOB)) = 36
@@ -297,28 +355,42 @@ CREATE TABLE public_contribution_quotas (
     CHECK (used_nodes <= limit_nodes AND reserved_nodes <= limit_nodes - used_nodes)
 );
 
-CREATE TRIGGER public_contribution_quotas_insert BEFORE INSERT ON public_contribution_quotas
-WHEN NOT EXISTS (SELECT 1 FROM spaces WHERE id = NEW.space_id AND kind = 1) BEGIN
+CREATE TRIGGER public_contribution_quotas_insert
+    BEFORE INSERT
+    ON public_contribution_quotas
+    WHEN NOT EXISTS (SELECT 1
+                     FROM spaces
+                     WHERE id = NEW.space_id
+                       AND kind = 1)
+BEGIN
     SELECT RAISE(ABORT, 'contribution requires public space');
 END;
 
-CREATE TRIGGER public_contribution_quotas_update BEFORE UPDATE ON public_contribution_quotas
-WHEN NOT EXISTS (SELECT 1 FROM spaces WHERE id = NEW.space_id AND kind = 1) BEGIN
+CREATE TRIGGER public_contribution_quotas_update
+    BEFORE UPDATE
+    ON public_contribution_quotas
+    WHEN NOT EXISTS (SELECT 1
+                     FROM spaces
+                     WHERE id = NEW.space_id
+                       AND kind = 1)
+BEGIN
     SELECT RAISE(ABORT, 'contribution requires public space');
 END;
 
-CREATE TABLE audit_events (
-    sequence INTEGER NOT NULL PRIMARY KEY CHECK (typeof(sequence) = 'integer' AND sequence > 0),
-    actor_id TEXT COLLATE BINARY NOT NULL REFERENCES users(id) CHECK (
+CREATE TABLE audit_events
+(
+    sequence INTEGER             NOT NULL PRIMARY KEY CHECK (typeof(sequence) = 'integer' AND sequence > 0),
+    actor_id TEXT COLLATE BINARY NOT NULL REFERENCES users (id) CHECK (
         typeof(actor_id) = 'text'
-        AND length(CAST(actor_id AS BLOB)) = 36
-        AND substr(actor_id, 9, 1) = '-'
-        AND substr(actor_id, 14, 1) = '-'
-        AND substr(actor_id, 19, 1) = '-'
-        AND substr(actor_id, 24, 1) = '-'
-        AND length(replace(actor_id, '-', '')) = 32
-        AND replace(actor_id, '-', '') NOT GLOB '*[^0-9a-f]*'
-        AND actor_id <> '00000000-0000-0000-0000-000000000000'),
+            AND length(CAST(actor_id AS BLOB)) = 36
+            AND substr(actor_id, 9, 1) = '-'
+            AND substr(actor_id, 14, 1) = '-'
+            AND substr(actor_id, 19, 1) = '-'
+            AND substr(actor_id, 24, 1) = '-'
+            AND length(replace(actor_id, '-', '')) = 32
+            AND replace(actor_id, '-', '') NOT GLOB '*[^0-9a-f]*'
+        AND actor_id <> '00000000-0000-0000-0000-000000000000'
+) ,
     space_id TEXT COLLATE BINARY NOT NULL REFERENCES spaces(id) CHECK (
         typeof(space_id) = 'text'
         AND length(CAST(space_id AS BLOB)) = 36
@@ -364,192 +436,342 @@ CREATE TABLE audit_events (
 );
 
 
-CREATE TABLE invites (
-    id TEXT COLLATE BINARY NOT NULL PRIMARY KEY CHECK (anof_uuid(id)),
-    token_hash BLOB NOT NULL UNIQUE CHECK (typeof(token_hash)='blob' AND length(token_hash)=32),
-    created_by TEXT COLLATE BINARY NOT NULL REFERENCES users(id),
-    created_at INTEGER NOT NULL CHECK (typeof(created_at)='integer'),
-    expires_at INTEGER NOT NULL CHECK (typeof(expires_at)='integer'),
-    max_uses INTEGER NOT NULL CHECK (typeof(max_uses)='integer' AND max_uses BETWEEN 1 AND 10000),
-    used_count INTEGER NOT NULL CHECK (typeof(used_count)='integer' AND used_count BETWEEN 0 AND max_uses),
-    revoked_at INTEGER CHECK (revoked_at IS NULL OR typeof(revoked_at)='integer'),
-    CHECK (expires_at>created_at AND
-        (created_at>9223372036854775807-2592000000000 OR expires_at<=created_at+2592000000000))
+CREATE TABLE invites
+(
+    id         TEXT COLLATE BINARY NOT NULL PRIMARY KEY CHECK (anof_uuid(id)),
+    token_hash BLOB                NOT NULL UNIQUE CHECK (typeof(token_hash) = 'blob' AND length(token_hash) = 32),
+    created_by TEXT COLLATE BINARY NOT NULL REFERENCES users (id),
+    created_at INTEGER             NOT NULL CHECK (typeof(created_at) = 'integer'),
+    expires_at INTEGER             NOT NULL CHECK (typeof(expires_at) = 'integer'),
+    max_uses   INTEGER             NOT NULL CHECK (typeof(max_uses) = 'integer' AND max_uses BETWEEN 1 AND 10000),
+    used_count INTEGER             NOT NULL CHECK (typeof(used_count) = 'integer' AND used_count BETWEEN 0 AND max_uses),
+    revoked_at INTEGER CHECK (revoked_at IS NULL OR typeof(revoked_at) = 'integer'),
+    CHECK (expires_at > created_at AND
+           (created_at > 9223372036854775807 - 2592000000000 OR expires_at <= created_at + 2592000000000))
 );
-CREATE INDEX invites_created ON invites(created_at, id);
-CREATE TRIGGER invites_creator_insert BEFORE INSERT ON invites
-WHEN NOT EXISTS (SELECT 1 FROM users WHERE id=NEW.created_by AND role=1 AND enabled=1) BEGIN
+CREATE INDEX invites_created ON invites (created_at, id);
+CREATE TRIGGER invites_creator_insert
+    BEFORE INSERT
+    ON invites
+    WHEN NOT EXISTS (SELECT 1
+                     FROM users
+                     WHERE id = NEW.created_by
+                       AND role = 1
+                       AND enabled = 1)
+BEGIN
     SELECT RAISE(ABORT, 'invite requires administrator');
 END;
-CREATE TRIGGER invites_identity_update BEFORE UPDATE ON invites
-WHEN NEW.id<>OLD.id OR NEW.token_hash<>OLD.token_hash OR NEW.created_by<>OLD.created_by
-    OR NEW.created_at<>OLD.created_at OR NEW.expires_at<>OLD.expires_at OR NEW.max_uses<>OLD.max_uses
-    OR NEW.used_count<OLD.used_count OR (OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS NOT OLD.revoked_at) BEGIN
+CREATE TRIGGER invites_identity_update
+    BEFORE UPDATE
+    ON invites
+    WHEN NEW.id <> OLD.id OR NEW.token_hash <> OLD.token_hash OR NEW.created_by <> OLD.created_by
+        OR NEW.created_at <> OLD.created_at OR NEW.expires_at <> OLD.expires_at OR NEW.max_uses <> OLD.max_uses
+        OR NEW.used_count < OLD.used_count OR (OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS NOT OLD.revoked_at)
+BEGIN
     SELECT RAISE(ABORT, 'invite identity is immutable');
 END;
 
-CREATE TABLE instance_settings (
-    singleton INTEGER NOT NULL PRIMARY KEY CHECK (typeof(singleton)='integer' AND singleton=1),
-    instance_id TEXT COLLATE BINARY NOT NULL UNIQUE CHECK (anof_uuid(instance_id)),
-    bootstrap_operation_id TEXT COLLATE BINARY NOT NULL UNIQUE CHECK (anof_uuid(bootstrap_operation_id)),
-    initialized_at INTEGER NOT NULL CHECK (typeof(initialized_at)='integer'),
-    max_users INTEGER NOT NULL CHECK (typeof(max_users)='integer' AND max_users BETWEEN 1 AND 10000),
-    default_private_bytes INTEGER NOT NULL CHECK (typeof(default_private_bytes)='integer' AND default_private_bytes>=0),
-    default_private_nodes INTEGER NOT NULL CHECK (typeof(default_private_nodes)='integer' AND default_private_nodes>=1),
-    default_contribution_bytes INTEGER NOT NULL CHECK (typeof(default_contribution_bytes)='integer' AND default_contribution_bytes>=0),
-    default_contribution_nodes INTEGER NOT NULL CHECK (typeof(default_contribution_nodes)='integer' AND default_contribution_nodes>=1),
-    revision INTEGER NOT NULL CHECK (typeof(revision)='integer' AND revision>=1)
+CREATE TABLE instance_settings
+(
+    singleton                  INTEGER             NOT NULL PRIMARY KEY CHECK (typeof(singleton) = 'integer' AND singleton = 1),
+    instance_id                TEXT COLLATE BINARY NOT NULL UNIQUE CHECK (anof_uuid(instance_id)),
+    bootstrap_operation_id     TEXT COLLATE BINARY NOT NULL UNIQUE CHECK (anof_uuid(bootstrap_operation_id)),
+    initialized_at             INTEGER             NOT NULL CHECK (typeof(initialized_at) = 'integer'),
+    max_users                  INTEGER             NOT NULL CHECK (typeof(max_users) = 'integer' AND max_users BETWEEN 1 AND 10000),
+    default_private_bytes      INTEGER             NOT NULL CHECK (typeof(default_private_bytes) = 'integer' AND default_private_bytes >= 0),
+    default_private_nodes      INTEGER             NOT NULL CHECK (typeof(default_private_nodes) = 'integer' AND default_private_nodes >= 1),
+    default_contribution_bytes INTEGER             NOT NULL CHECK (typeof(default_contribution_bytes) = 'integer' AND
+                                                                   default_contribution_bytes >= 0),
+    default_contribution_nodes INTEGER             NOT NULL CHECK (typeof(default_contribution_nodes) = 'integer' AND
+                                                                   default_contribution_nodes >= 1),
+    revision                   INTEGER             NOT NULL CHECK (typeof(revision) = 'integer' AND revision >= 1)
 );
-CREATE TRIGGER instance_settings_identity_update BEFORE UPDATE OF singleton,instance_id,bootstrap_operation_id,initialized_at ON instance_settings
-WHEN NEW.singleton<>OLD.singleton OR NEW.instance_id<>OLD.instance_id OR NEW.bootstrap_operation_id<>OLD.bootstrap_operation_id
-    OR NEW.initialized_at<>OLD.initialized_at BEGIN
+CREATE TRIGGER instance_settings_identity_update
+    BEFORE UPDATE OF singleton,instance_id,bootstrap_operation_id,initialized_at
+    ON instance_settings
+    WHEN NEW.singleton <> OLD.singleton OR NEW.instance_id <> OLD.instance_id OR
+         NEW.bootstrap_operation_id <> OLD.bootstrap_operation_id
+        OR NEW.initialized_at <> OLD.initialized_at
+BEGIN
     SELECT RAISE(ABORT, 'initialization identity is immutable');
 END;
 
-CREATE TABLE identity_audit_events (
-    sequence INTEGER NOT NULL PRIMARY KEY CHECK (typeof(sequence)='integer' AND sequence>0),
-    actor_id TEXT COLLATE BINARY REFERENCES users(id),
-    subject_user_id TEXT COLLATE BINARY REFERENCES users(id),
-    invite_id TEXT COLLATE BINARY REFERENCES invites(id),
-    instance_id TEXT COLLATE BINARY REFERENCES instance_settings(instance_id),
-    space_id TEXT COLLATE BINARY REFERENCES spaces(id),
-    user_id TEXT COLLATE BINARY REFERENCES users(id),
-    quota_scope TEXT CHECK (quota_scope IS NULL OR quota_scope IN ('space','contribution')),
-    request_id TEXT COLLATE BINARY NOT NULL CHECK (anof_uuid(request_id)),
-    action TEXT NOT NULL CHECK (typeof(action)='text'),
-    occurred_at INTEGER NOT NULL CHECK (typeof(occurred_at)='integer'),
+CREATE TABLE identity_audit_events
+(
+    sequence        INTEGER             NOT NULL PRIMARY KEY CHECK (typeof(sequence) = 'integer' AND sequence > 0),
+    actor_id        TEXT COLLATE BINARY REFERENCES users (id),
+    subject_user_id TEXT COLLATE BINARY REFERENCES users (id),
+    invite_id       TEXT COLLATE BINARY CHECK (invite_id IS NULL OR anof_uuid(invite_id)),
+    instance_id     TEXT COLLATE BINARY REFERENCES instance_settings (instance_id),
+    space_id        TEXT COLLATE BINARY REFERENCES spaces (id),
+    user_id         TEXT COLLATE BINARY REFERENCES users (id),
+    quota_scope     TEXT CHECK (quota_scope IS NULL OR quota_scope IN ('space', 'contribution')),
+    request_id      TEXT COLLATE BINARY NOT NULL CHECK (anof_uuid(request_id)),
+    action          TEXT                NOT NULL CHECK (typeof(action) = 'text'),
+    occurred_at     INTEGER             NOT NULL CHECK (typeof(occurred_at) = 'integer'),
     CHECK (
         (action='instance_initialized' AND actor_id IS NULL AND subject_user_id IS NOT NULL AND instance_id IS NOT NULL AND invite_id IS NULL AND space_id IS NULL AND user_id IS NULL AND quota_scope IS NULL)
-        OR (action IN ('invite_created','invite_revoked') AND actor_id IS NOT NULL AND invite_id IS NOT NULL AND subject_user_id IS NULL AND instance_id IS NULL AND space_id IS NULL AND user_id IS NULL AND quota_scope IS NULL)
-        OR (action='user_registered' AND actor_id IS NULL AND subject_user_id IS NOT NULL AND invite_id IS NOT NULL AND instance_id IS NULL AND space_id IS NULL AND user_id IS NULL AND quota_scope IS NULL)
-        OR (action IN ('session_created','session_revoked','password_changed','display_name_changed') AND actor_id IS NOT NULL AND actor_id=subject_user_id AND subject_user_id IS NOT NULL AND invite_id IS NULL AND instance_id IS NULL AND space_id IS NULL AND user_id IS NULL AND quota_scope IS NULL)
-        OR (action IN ('user_enabled','user_disabled') AND actor_id IS NOT NULL AND subject_user_id IS NOT NULL AND invite_id IS NULL AND instance_id IS NULL AND space_id IS NULL AND user_id IS NULL AND quota_scope IS NULL)
-        OR (action='quota_changed' AND actor_id IS NOT NULL AND subject_user_id IS NULL AND invite_id IS NULL AND instance_id IS NULL AND space_id IS NOT NULL AND quota_scope IS NOT NULL
+            OR
+        (action IN ('invite_created','invite_revoked') AND actor_id IS NOT NULL AND invite_id IS NOT NULL AND subject_user_id IS NULL AND instance_id IS NULL AND space_id IS NULL AND user_id IS NULL AND quota_scope IS NULL)
+            OR
+        (action='user_registered' AND actor_id IS NULL AND subject_user_id IS NOT NULL AND invite_id IS NOT NULL AND instance_id IS NULL AND space_id IS NULL AND user_id IS NULL AND quota_scope IS NULL)
+            OR
+        (action='administrator_password_reset' AND actor_id IS NULL AND subject_user_id IS NOT NULL AND invite_id IS NULL AND instance_id IS NULL AND space_id IS NULL AND user_id IS NULL AND quota_scope IS NULL)
+            OR
+        (action IN ('session_created','session_revoked','password_changed','display_name_changed') AND actor_id IS NOT NULL AND actor_id=subject_user_id AND subject_user_id IS NOT NULL AND invite_id IS NULL AND instance_id IS NULL AND space_id IS NULL AND user_id IS NULL AND quota_scope IS NULL)
+            OR
+        (action IN ('user_enabled','user_disabled') AND actor_id IS NOT NULL AND subject_user_id IS NOT NULL AND invite_id IS NULL AND instance_id IS NULL AND space_id IS NULL AND user_id IS NULL AND quota_scope IS NULL)
+            OR
+        (action='quota_changed' AND actor_id IS NOT NULL AND subject_user_id IS NULL AND invite_id IS NULL AND instance_id IS NULL AND space_id IS NOT NULL AND quota_scope IS NOT NULL
             AND ((quota_scope='space' AND user_id IS NULL) OR (quota_scope='contribution' AND user_id IS NOT NULL)))
-    )
+        )
 );
 
-CREATE INDEX blobs_gc ON blobs(state,unreferenced_at,id);
-CREATE TRIGGER blobs_immutable BEFORE UPDATE ON blobs
-WHEN NEW.id<>OLD.id OR NEW.size<>OLD.size OR NEW.sha256<>OLD.sha256 OR NEW.created_at<>OLD.created_at
- OR NEW.revision<>OLD.revision+1 OR NEW.updated_at<OLD.updated_at OR NEW.state<OLD.state
- OR (OLD.unreferenced_at IS NOT NULL AND NEW.unreferenced_at IS NOT NULL AND NEW.unreferenced_at<>OLD.unreferenced_at)
-BEGIN SELECT RAISE(ABORT,'blob invariant'); END;
-CREATE TRIGGER blobs_no_referenced_delete BEFORE DELETE ON blobs
-WHEN OLD.state<>1 OR EXISTS(SELECT 1 FROM nodes WHERE blob_id=OLD.id)
- OR EXISTS(SELECT 1 FROM uploads WHERE pending_blob_id=OLD.id AND (state IN (3,4) OR cleanup_pending=1))
-BEGIN SELECT RAISE(ABORT,'blob still held'); END;
-CREATE TRIGGER nodes_blob_insert BEFORE INSERT ON nodes WHEN NEW.blob_id IS NOT NULL AND
- NOT EXISTS(SELECT 1 FROM blobs WHERE id=NEW.blob_id AND state=0)
-BEGIN SELECT RAISE(ABORT,'blob unavailable'); END;
-CREATE TRIGGER nodes_blob_update BEFORE UPDATE OF blob_id ON nodes WHEN NEW.blob_id IS NOT OLD.blob_id
-BEGIN SELECT RAISE(ABORT,'node content immutable'); END;
-CREATE TABLE storage_accounting (
- singleton INTEGER PRIMARY KEY CHECK(singleton=1),
- content_budget_bytes INTEGER NOT NULL CHECK(typeof(content_budget_bytes)='integer' AND content_budget_bytes>=0),
- retained_bytes INTEGER NOT NULL CHECK(typeof(retained_bytes)='integer' AND retained_bytes>=0),
- reserved_bytes INTEGER NOT NULL CHECK(typeof(reserved_bytes)='integer' AND reserved_bytes>=0 AND reserved_bytes<=9223372036854775807-retained_bytes),
- revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=1)
+CREATE INDEX blobs_gc ON blobs (state, unreferenced_at, id);
+CREATE TRIGGER blobs_immutable
+    BEFORE UPDATE
+    ON blobs
+    WHEN NEW.id <> OLD.id OR NEW.size <> OLD.size OR NEW.sha256 <> OLD.sha256 OR NEW.created_at <> OLD.created_at
+        OR NEW.revision <> OLD.revision + 1 OR NEW.updated_at < OLD.updated_at OR (OLD.state = 1 AND NEW.state <> 1)
+        OR (OLD.unreferenced_at IS NOT NULL AND NEW.unreferenced_at IS NOT NULL AND
+            NEW.unreferenced_at <> OLD.unreferenced_at)
+BEGIN
+    SELECT RAISE(ABORT, 'blob invariant');
+END;
+CREATE TRIGGER blobs_no_referenced_delete
+    BEFORE DELETE
+    ON blobs
+    WHEN OLD.state <> 1 OR EXISTS(SELECT 1
+                                  FROM nodes
+                                  WHERE blob_id = OLD.id)
+        OR EXISTS(SELECT 1
+                  FROM uploads
+                  WHERE pending_blob_id = OLD.id
+                    AND (state IN (3, 4) OR cleanup_pending = 1))
+BEGIN
+    SELECT RAISE(ABORT, 'blob still held');
+END;
+CREATE TRIGGER nodes_blob_insert
+    BEFORE INSERT
+    ON nodes WHEN NEW.blob_id IS NOT NULL AND
+                  NOT EXISTS(SELECT 1
+                             FROM blobs
+                             WHERE id = NEW.blob_id
+                               AND state = 0)
+BEGIN
+    SELECT RAISE(ABORT, 'blob unavailable');
+END;
+CREATE TRIGGER nodes_blob_update
+    BEFORE UPDATE OF blob_id
+    ON nodes WHEN NEW.blob_id IS NOT OLD.blob_id
+BEGIN
+    SELECT RAISE(ABORT, 'node content immutable');
+END;
+CREATE TABLE storage_accounting
+(
+    singleton            INTEGER PRIMARY KEY CHECK (singleton = 1),
+    content_budget_bytes INTEGER NOT NULL CHECK (typeof(content_budget_bytes) = 'integer' AND content_budget_bytes >= 0),
+    retained_bytes       INTEGER NOT NULL CHECK (typeof(retained_bytes) = 'integer' AND retained_bytes >= 0),
+    reserved_bytes       INTEGER NOT NULL CHECK (typeof(reserved_bytes) = 'integer' AND reserved_bytes >= 0 AND
+                                                 reserved_bytes <= 9223372036854775807 - retained_bytes),
+    revision             INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision >= 1)
 );
-CREATE TABLE uploads (
- id TEXT PRIMARY KEY CHECK(anof_uuid(id)),
- user_id TEXT NOT NULL REFERENCES users(id),
- client_upload_id TEXT NOT NULL CHECK(anof_uuid(client_upload_id)),
- space_id TEXT NOT NULL REFERENCES spaces(id),
- original_parent_id TEXT NOT NULL CHECK(anof_uuid(original_parent_id)),
- original_name TEXT NOT NULL CHECK(anof_node_name(original_name)),
- length INTEGER NOT NULL CHECK(typeof(length)='integer' AND length BETWEEN 0 AND 1099511627776),
- expected_sha256 TEXT CHECK(expected_sha256 IS NULL OR (length(expected_sha256)=64 AND expected_sha256 NOT GLOB '*[^0-9a-f]*')),
- parent_id TEXT NOT NULL CHECK(anof_uuid(parent_id)),
- name TEXT NOT NULL CHECK(anof_node_name(name)),
- durable_offset INTEGER NOT NULL CHECK(typeof(durable_offset)='integer' AND durable_offset BETWEEN 0 AND length),
- state INTEGER NOT NULL CHECK(typeof(state)='integer' AND state BETWEEN 0 AND 8),
- generation INTEGER NOT NULL CHECK(typeof(generation)='integer' AND generation>=1),
- actual_sha256 TEXT CHECK(actual_sha256 IS NULL OR (length(actual_sha256)=64 AND actual_sha256 NOT GLOB '*[^0-9a-f]*')),
- pending_blob_id TEXT CHECK(pending_blob_id IS NULL OR anof_uuid(pending_blob_id)),
- staging_location INTEGER NOT NULL CHECK(staging_location IN (0,1)),
- result_node_id TEXT CHECK(result_node_id IS NULL OR anof_uuid(result_node_id)),
- created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer'),
- last_progress_at INTEGER NOT NULL CHECK(typeof(last_progress_at)='integer' AND last_progress_at>=created_at),
- expires_at INTEGER NOT NULL CHECK(typeof(expires_at)='integer' AND expires_at>=last_progress_at),
- terminal_at INTEGER CHECK(terminal_at IS NULL OR (typeof(terminal_at)='integer' AND terminal_at>=last_progress_at)),
- last_error INTEGER CHECK(last_error IS NULL OR (typeof(last_error)='integer' AND last_error BETWEEN 0 AND 11)),
- cancel_requested INTEGER NOT NULL CHECK(cancel_requested IN (0,1)),
- cleanup_pending INTEGER NOT NULL CHECK(cleanup_pending IN (0,1)),
- result_deleted_at INTEGER CHECK(result_deleted_at IS NULL OR (typeof(result_deleted_at)='integer' AND state=5 AND result_deleted_at>=terminal_at)),
- UNIQUE(user_id,client_upload_id),
- CHECK((state>=5)=(terminal_at IS NOT NULL)),
- CHECK((state=5)=(result_node_id IS NOT NULL)),
- CHECK(cleanup_pending=0 OR state IN (6,7,8)),
- CHECK(state NOT IN (2,3,4,5) OR durable_offset=length),
- CHECK(state!=0 OR durable_offset=0),
+CREATE TABLE uploads
+(
+    id                 TEXT PRIMARY KEY CHECK (anof_uuid(id)),
+    user_id            TEXT    NOT NULL REFERENCES users (id),
+    client_upload_id   TEXT    NOT NULL CHECK (anof_uuid(client_upload_id)),
+    space_id           TEXT    NOT NULL REFERENCES spaces (id),
+    original_parent_id TEXT    NOT NULL CHECK (anof_uuid(original_parent_id)),
+    original_name      TEXT    NOT NULL CHECK (anof_node_name(original_name)),
+    length             INTEGER NOT NULL CHECK (typeof(length) = 'integer' AND length BETWEEN 0 AND 1099511627776),
+    expected_sha256    TEXT CHECK (expected_sha256 IS NULL OR
+                                   (length(expected_sha256) = 64 AND expected_sha256 NOT GLOB '*[^0-9a-f]*')),
+    parent_id          TEXT    NOT NULL CHECK (anof_uuid(parent_id)),
+    name               TEXT    NOT NULL CHECK (anof_node_name(name)),
+    durable_offset     INTEGER NOT NULL CHECK (typeof(durable_offset) = 'integer' AND durable_offset BETWEEN 0 AND length),
+    state              INTEGER NOT NULL CHECK (typeof(state) = 'integer' AND state BETWEEN 0 AND 8),
+    generation         INTEGER NOT NULL CHECK (typeof(generation) = 'integer' AND generation >= 1),
+    actual_sha256      TEXT CHECK (actual_sha256 IS NULL OR
+                                   (length(actual_sha256) = 64 AND actual_sha256 NOT GLOB '*[^0-9a-f]*')),
+    pending_blob_id    TEXT CHECK (pending_blob_id IS NULL OR anof_uuid(pending_blob_id)),
+    staging_location   INTEGER NOT NULL CHECK (staging_location IN (0, 1)),
+    result_node_id     TEXT CHECK (result_node_id IS NULL OR anof_uuid(result_node_id)),
+    created_at         INTEGER NOT NULL CHECK (typeof(created_at) = 'integer'),
+    last_progress_at   INTEGER NOT NULL CHECK (typeof(last_progress_at) = 'integer' AND last_progress_at >= created_at),
+    expires_at         INTEGER NOT NULL CHECK (typeof(expires_at) = 'integer' AND expires_at >= last_progress_at),
+    terminal_at        INTEGER CHECK (terminal_at IS NULL OR
+                                      (typeof(terminal_at) = 'integer' AND terminal_at >= last_progress_at)),
+    last_error         INTEGER CHECK (last_error IS NULL OR
+                                      (typeof(last_error) = 'integer' AND last_error BETWEEN 0 AND 11)),
+    cancel_requested   INTEGER NOT NULL CHECK (cancel_requested IN (0, 1)),
+    cleanup_pending    INTEGER NOT NULL CHECK (cleanup_pending IN (0, 1)),
+    result_deleted_at  INTEGER CHECK (result_deleted_at IS NULL OR
+                                      (typeof(result_deleted_at) = 'integer' AND state = 5 AND
+                                       result_deleted_at >= terminal_at)),
+    UNIQUE (user_id, client_upload_id),
+    CHECK ((state >= 5) = (terminal_at IS NOT NULL)),
+    CHECK ((state = 5) = (result_node_id IS NOT NULL)),
+    CHECK (cleanup_pending = 0 OR state IN (6, 7, 8)),
+    CHECK (state NOT IN (2, 3, 4, 5) OR durable_offset = length),
+    CHECK (state!=0 OR durable_offset=0
+) ,
  CHECK(state NOT IN (3,4,5) OR actual_sha256 IS NOT NULL),
  CHECK((staging_location=0 AND state NOT IN (4,5)) OR pending_blob_id IS NOT NULL),
  CHECK(state!=5 OR (staging_location=1 AND cancel_requested=0 AND last_error IS NULL))
 );
-CREATE INDEX uploads_result ON uploads(result_node_id,state);
-CREATE INDEX uploads_user_seek ON uploads(user_id,created_at,id);
-CREATE INDEX uploads_seek ON uploads(created_at,id);
-CREATE INDEX uploads_candidate ON uploads(pending_blob_id,state);
-CREATE TRIGGER upload_original_immutable BEFORE UPDATE ON uploads
-WHEN NEW.id!=OLD.id OR NEW.user_id!=OLD.user_id OR NEW.client_upload_id!=OLD.client_upload_id OR
+CREATE INDEX uploads_result ON uploads (result_node_id, state);
+CREATE INDEX uploads_user_seek ON uploads (user_id, created_at, id);
+CREATE INDEX uploads_seek ON uploads (created_at, id);
+CREATE INDEX uploads_candidate ON uploads (pending_blob_id, state);
+CREATE TRIGGER upload_original_immutable
+    BEFORE UPDATE
+    ON uploads
+    WHEN NEW.id!=OLD.id OR NEW.user_id!=OLD.user_id OR NEW.client_upload_id!=OLD.client_upload_id OR
  NEW.space_id!=OLD.space_id OR NEW.original_parent_id!=OLD.original_parent_id OR NEW.original_name!=OLD.original_name OR
  NEW.length!=OLD.length OR NEW.expected_sha256 IS NOT OLD.expected_sha256 OR NEW.created_at!=OLD.created_at OR
  (OLD.state=5 AND (NEW.state<>5 OR NEW.result_node_id IS NOT OLD.result_node_id OR NEW.pending_blob_id IS NOT OLD.pending_blob_id OR NEW.actual_sha256 IS NOT OLD.actual_sha256 OR NEW.terminal_at IS NOT OLD.terminal_at)) OR
  (OLD.result_deleted_at IS NOT NULL AND NEW.result_deleted_at IS NOT OLD.result_deleted_at) OR
  NEW.generation!=OLD.generation+1 OR NEW.durable_offset<OLD.durable_offset OR NEW.cancel_requested<OLD.cancel_requested
-BEGIN SELECT RAISE(ABORT,'upload invariant'); END;
-CREATE TABLE transfer_audit_events (
- sequence INTEGER PRIMARY KEY,
- kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 6),
- request_id TEXT NOT NULL CHECK(anof_uuid(request_id)),
- actor_id TEXT REFERENCES users(id),
- upload_id TEXT CHECK(upload_id IS NULL OR anof_uuid(upload_id)),
- occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer'),
- failure INTEGER CHECK(failure IS NULL OR failure BETWEEN 0 AND 11),
- CHECK((kind=6 AND actor_id IS NOT NULL AND upload_id IS NULL AND failure IS NULL) OR (kind!=6 AND upload_id IS NOT NULL))
+BEGIN
+SELECT RAISE(ABORT, 'upload invariant');
+END;
+CREATE TABLE transfer_audit_events
+(
+    sequence    INTEGER PRIMARY KEY,
+    kind        INTEGER NOT NULL CHECK (kind BETWEEN 0 AND 6),
+    request_id  TEXT    NOT NULL CHECK (anof_uuid(request_id)),
+    actor_id    TEXT REFERENCES users (id),
+    upload_id   TEXT CHECK (upload_id IS NULL OR anof_uuid(upload_id)),
+    occurred_at INTEGER NOT NULL CHECK (typeof(occurred_at) = 'integer'),
+    failure     INTEGER CHECK (failure IS NULL OR failure BETWEEN 0 AND 11),
+    CHECK ((kind = 6 AND actor_id IS NOT NULL AND upload_id IS NULL AND failure IS NULL) OR
+           (kind!=6 AND upload_id IS NOT NULL))
 );
 
-CREATE TABLE trash_entries (
- id TEXT PRIMARY KEY CHECK(anof_uuid(id)),
- space_id TEXT NOT NULL REFERENCES spaces(id),
- root_node_id TEXT NOT NULL UNIQUE REFERENCES nodes(id) DEFERRABLE INITIALLY DEFERRED,
- original_parent_id TEXT NOT NULL CHECK(anof_uuid(original_parent_id)),
- original_name TEXT NOT NULL CHECK(anof_node_name(original_name)),
- kind INTEGER NOT NULL CHECK(kind IN (0,1)),
- deleted_by TEXT NOT NULL REFERENCES users(id),
- deleted_at INTEGER NOT NULL CHECK(typeof(deleted_at)='integer'),
- expires_at INTEGER NOT NULL CHECK(typeof(expires_at)='integer' AND deleted_at<=9223369444854775807 AND expires_at=deleted_at+2592000000000),
- revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=1),
- node_count INTEGER NOT NULL CHECK(typeof(node_count)='integer' AND node_count BETWEEN 1 AND 1000),
- logical_bytes INTEGER NOT NULL CHECK(typeof(logical_bytes)='integer' AND logical_bytes>=0),
- sole_creator_id TEXT REFERENCES users(id)
+CREATE TABLE trash_entries
+(
+    id                 TEXT PRIMARY KEY CHECK (anof_uuid(id)),
+    space_id           TEXT    NOT NULL REFERENCES spaces (id),
+    root_node_id       TEXT    NOT NULL UNIQUE REFERENCES nodes (id) DEFERRABLE INITIALLY DEFERRED,
+    original_parent_id TEXT    NOT NULL CHECK (anof_uuid(original_parent_id)),
+    original_name      TEXT    NOT NULL CHECK (anof_node_name(original_name)),
+    kind               INTEGER NOT NULL CHECK (kind IN (0, 1)),
+    deleted_by         TEXT    NOT NULL REFERENCES users (id),
+    deleted_at         INTEGER NOT NULL CHECK (typeof(deleted_at) = 'integer'),
+    expires_at         INTEGER NOT NULL CHECK (typeof(expires_at) = 'integer' AND deleted_at <= 9223369444854775807 AND
+                                               expires_at = deleted_at + 2592000000000),
+    revision           INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision >= 1),
+    node_count         INTEGER NOT NULL CHECK (typeof(node_count) = 'integer' AND node_count BETWEEN 1 AND 1000),
+    logical_bytes      INTEGER NOT NULL CHECK (typeof(logical_bytes) = 'integer' AND logical_bytes >= 0),
+    sole_creator_id    TEXT REFERENCES users (id)
 );
-CREATE INDEX trash_space ON trash_entries(space_id,deleted_at,id);
-CREATE INDEX trash_owner ON trash_entries(sole_creator_id,space_id,deleted_at,id);
-CREATE INDEX trash_expiry ON trash_entries(expires_at,id);
-CREATE INDEX nodes_parent ON nodes(parent_id,id);
-CREATE INDEX nodes_trash ON nodes(trash_entry_id,id);
-CREATE INDEX nodes_search ON nodes(space_id,name COLLATE BINARY,id) WHERE trash_entry_id IS NULL AND trashed=0;
-CREATE TRIGGER trash_immutable BEFORE UPDATE ON trash_entries BEGIN SELECT RAISE(ABORT,'immutable trash'); END;
-CREATE TABLE node_accounting (
- singleton INTEGER PRIMARY KEY CHECK(singleton=1),
- used_nodes INTEGER NOT NULL CHECK(typeof(used_nodes)='integer' AND used_nodes BETWEEN 0 AND 100000),
- reserved_nodes INTEGER NOT NULL CHECK(typeof(reserved_nodes)='integer' AND reserved_nodes BETWEEN 0 AND 100000-used_nodes),
+CREATE INDEX trash_space ON trash_entries (space_id, deleted_at, id);
+CREATE INDEX trash_owner ON trash_entries (sole_creator_id, space_id, deleted_at, id);
+CREATE INDEX trash_expiry ON trash_entries (expires_at, id);
+CREATE INDEX nodes_parent ON nodes (parent_id, id);
+CREATE INDEX nodes_trash ON nodes (trash_entry_id, id);
+CREATE INDEX nodes_search ON nodes (space_id, name COLLATE BINARY, id) WHERE trash_entry_id IS NULL AND trashed=0;
+CREATE TRIGGER trash_immutable
+    BEFORE UPDATE
+    ON trash_entries
+BEGIN
+    SELECT RAISE(ABORT, 'immutable trash');
+END;
+CREATE TABLE node_accounting
+(
+    singleton      INTEGER PRIMARY KEY CHECK (singleton = 1),
+    used_nodes     INTEGER NOT NULL CHECK (typeof(used_nodes) = 'integer' AND used_nodes BETWEEN 0 AND 100000),
+    reserved_nodes INTEGER NOT NULL CHECK (typeof(reserved_nodes) = 'integer' AND
+                                           reserved_nodes BETWEEN 0 AND 100000 - used_nodes),
+    revision       INTEGER NOT NULL CHECK (typeof(revision) = 'integer' AND revision >= 1)
+);
+CREATE TABLE drive_audit_events
+(
+    sequence    INTEGER PRIMARY KEY,
+    request_id  TEXT    NOT NULL CHECK (anof_uuid(request_id)),
+    observed_at INTEGER NOT NULL CHECK (typeof(observed_at) = 'integer'),
+    actor_id    TEXT REFERENCES users (id),
+    maintenance INTEGER NOT NULL CHECK (maintenance IN (0, 1)),
+    kind        INTEGER NOT NULL CHECK (kind BETWEEN 0 AND 7),
+    first_id    TEXT    NOT NULL CHECK (anof_uuid(first_id)),
+    second_id   TEXT CHECK (second_id IS NULL OR anof_uuid(second_id)),
+    third_id    TEXT CHECK (third_id IS NULL OR anof_uuid(third_id)),
+    CHECK ((maintenance = 1 AND actor_id IS NULL AND kind IN (5, 6, 7)) OR (maintenance = 0 AND actor_id IS NOT NULL)),
+    CHECK ((kind IN (0, 6, 7) AND second_id IS NULL AND third_id IS NULL) OR
+           (kind = 1 AND second_id IS NOT NULL AND third_id IS NOT NULL) OR
+           (kind IN (2, 3, 4, 5) AND second_id IS NOT NULL AND third_id IS NULL))
+);
+
+-- 维护记录不向历史审计施加强引用；隔离责任会阻止执行记录清理。
+CREATE TABLE maintenance_runs
+(
+    id          TEXT PRIMARY KEY CHECK (anof_uuid(id)),
+    plan_id     TEXT NOT NULL UNIQUE CHECK (anof_uuid(plan_id)),
+    instance_id TEXT NOT NULL REFERENCES instance_settings (instance_id),
+    plan_digest TEXT NOT NULL CHECK (length(plan_digest) = 64 AND plan_digest NOT GLOB '*[^0-9a-f]*'
+) ,
+ created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer'),
+ updated_at INTEGER NOT NULL CHECK(typeof(updated_at)='integer' AND updated_at>=created_at),
+ completed INTEGER NOT NULL CHECK(completed IN (0,1)),
  revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=1)
 );
-CREATE TABLE drive_audit_events (
- sequence INTEGER PRIMARY KEY,
- request_id TEXT NOT NULL CHECK(anof_uuid(request_id)),
- observed_at INTEGER NOT NULL CHECK(typeof(observed_at)='integer'),
- actor_id TEXT REFERENCES users(id),
- maintenance INTEGER NOT NULL CHECK(maintenance IN (0,1)),
- kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 7),
- first_id TEXT NOT NULL CHECK(anof_uuid(first_id)),
- second_id TEXT CHECK(second_id IS NULL OR anof_uuid(second_id)),
- third_id TEXT CHECK(third_id IS NULL OR anof_uuid(third_id)),
- CHECK((maintenance=1 AND actor_id IS NULL AND kind IN (5,6,7)) OR (maintenance=0 AND actor_id IS NOT NULL)),
- CHECK((kind IN (0,6,7) AND second_id IS NULL AND third_id IS NULL) OR
- (kind=1 AND second_id IS NOT NULL AND third_id IS NOT NULL) OR
- (kind IN (2,3,4,5) AND second_id IS NOT NULL AND third_id IS NULL))
+CREATE TABLE maintenance_actions
+(
+    id                     TEXT PRIMARY KEY CHECK (anof_uuid(id)),
+    run_id                 TEXT    NOT NULL REFERENCES maintenance_runs (id),
+    action_index           INTEGER NOT NULL CHECK (typeof(action_index) = 'integer' AND action_index BETWEEN 0 AND 9999),
+    kind                   INTEGER NOT NULL CHECK (kind BETWEEN 0 AND 6),
+    payload                TEXT    NOT NULL CHECK (typeof(payload) = 'text' AND
+                                                   length(CAST(payload AS BLOB)) <= 16384 AND json_valid(payload)),
+    expected_postcondition TEXT    NOT NULL CHECK (length(expected_postcondition) = 64 AND expected_postcondition NOT GLOB '*[^0-9a-f]*'
+) ,
+ state INTEGER NOT NULL CHECK(state IN (0,1,2)),
+ evidence TEXT CHECK(evidence IS NULL OR (typeof(evidence)='text' AND length(CAST(evidence AS BLOB))<=16384 AND json_valid(evidence))),
+ created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer'),
+ updated_at INTEGER NOT NULL CHECK(typeof(updated_at)='integer' AND updated_at>=created_at),
+ revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=1),
+ UNIQUE(run_id,action_index),
+ CHECK(revision=state+1),
+ CHECK((state=0 AND evidence IS NULL) OR (state IN (1,2) AND evidence IS NOT NULL))
 );
+CREATE TABLE quarantine_entries
+(
+    id          TEXT PRIMARY KEY CHECK (anof_uuid(id)),
+    source_area INTEGER NOT NULL CHECK (source_area IN (0, 1)),
+    source_id   TEXT    NOT NULL CHECK (anof_uuid(source_id)),
+    evidence    TEXT    NOT NULL CHECK (typeof(evidence) = 'text' AND length(CAST(evidence AS BLOB)) <= 4096 AND
+                                        json_valid(evidence)),
+    sha256      TEXT    NOT NULL CHECK (length(sha256) = 64 AND sha256 NOT GLOB '*[^0-9a-f]*'
+) ,
+ charged_bytes INTEGER NOT NULL CHECK(typeof(charged_bytes)='integer' AND charged_bytes>=0),
+ state INTEGER NOT NULL CHECK(state IN (0,1)),
+ plan_id TEXT NOT NULL REFERENCES maintenance_runs(plan_id),
+ action_id TEXT NOT NULL UNIQUE REFERENCES maintenance_actions(id),
+ created_at INTEGER NOT NULL CHECK(typeof(created_at)='integer'),
+ updated_at INTEGER NOT NULL CHECK(typeof(updated_at)='integer' AND updated_at>=created_at),
+ revision INTEGER NOT NULL CHECK(typeof(revision)='integer' AND revision>=1),
+ CHECK(revision=state+1),
+ UNIQUE(source_area,source_id)
+);
+CREATE TABLE maintenance_audit_events
+(
+    sequence      INTEGER PRIMARY KEY,
+    actor         TEXT    NOT NULL CHECK (actor = 'local_operator'),
+    run_id        TEXT    NOT NULL CHECK (anof_uuid(run_id)),
+    operation_id  TEXT    NOT NULL CHECK (anof_uuid(operation_id)),
+    kind          INTEGER NOT NULL CHECK (kind BETWEEN 0 AND 5),
+    outcome       INTEGER NOT NULL CHECK (outcome BETWEEN 0 AND 2),
+    error         INTEGER CHECK (error IS NULL OR error BETWEEN 0 AND 16),
+    resource_area INTEGER CHECK (resource_area IS NULL OR resource_area BETWEEN 0 AND 2),
+    resource_id   TEXT CHECK (resource_id IS NULL OR anof_uuid(resource_id)),
+    action_id     TEXT CHECK (action_id IS NULL OR anof_uuid(action_id)),
+    occurred_at   INTEGER NOT NULL CHECK (typeof(occurred_at) = 'integer'),
+    CHECK ((resource_area IS NULL) = (resource_id IS NULL))
+);
+CREATE INDEX maintenance_runs_completed ON maintenance_runs (completed, updated_at, id);
+CREATE INDEX identity_audit_expiry ON identity_audit_events (occurred_at, sequence);
+CREATE INDEX audit_expiry ON audit_events (occurred_at, sequence);
+CREATE INDEX transfer_audit_expiry ON transfer_audit_events (occurred_at, sequence);
+CREATE INDEX drive_audit_expiry ON drive_audit_events (observed_at, sequence);
+CREATE INDEX maintenance_audit_expiry ON maintenance_audit_events (occurred_at, sequence);

@@ -2,7 +2,13 @@
 #include <anof/domain/drive/Trash.h>
 #include <anof/domain/identity/Principal.h>
 namespace anof {
-struct TrashQuery { Principal actor; SpaceId spaceId; std::optional<NodeId> root; PageSize limit; std::optional<TrashPosition> after; };
+struct TrashQuery {
+    Principal actor;
+    SpaceId spaceId;
+    std::optional<NodeId> root;
+    PageSize limit;
+    std::optional<TrashPosition> after;
+};
 class TrashReader {
 public:
     virtual ~TrashReader() = default;

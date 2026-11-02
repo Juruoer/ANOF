@@ -40,7 +40,7 @@ void file(anof::testing::DriveSeed& s, unsigned n, unsigned parent, std::string 
 }
 void blob(anof::testing::DriveSeed& s, unsigned n, std::int64_t length, std::optional<UtcTime> unref = {}) {
     auto hash = Sha256::parse(std::string(64, 'a')).value();
-    s.blobRecords.push_back({ { id<BlobId>(n), FileLength::from(length).value(), hash }, BlobState::Available, time(100), time(100), {}, unref, {} });
+    s.blobRecords.push_back({ { id<BlobId>(n), FileLength::from(length).value(), hash }, BlobState::Available, time(100), time(100), {}, unref, {}, bytes(length), {} });
     s.transfer.metadata.blobs.push_back({ id<BlobId>(n), bytes(length), hash.bytes() });
     s.transfer.storage.retained = s.transfer.storage.retained.add(length).value();
 }
@@ -89,7 +89,14 @@ void trash(Fixture& f, unsigned node, unsigned tid) {
 BOOST_AUTO_TEST_CASE(new_blob_with_unreferenced_time_fails_transaction_and_reopen) {
     Fixture f(seed());
     const BlobRecord record{ { id<BlobId>(1), FileLength::from(7).value(), Sha256::parse(std::string(64, 'a')).value() },
-                             BlobState::Available, time(100), time(100), {}, time(100), {} };
+                             BlobState::Available,
+                             time(100),
+                             time(100),
+                             {},
+                             time(100),
+                             {},
+                             bytes(7),
+                             {} };
     {
         auto tx = f.write();
         BOOST_REQUIRE(tx->nodeAccounting().reserve(count(1)));

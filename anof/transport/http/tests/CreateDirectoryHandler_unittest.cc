@@ -1,9 +1,11 @@
 #include <tests/support/EventLoopWait.h>
 #define BOOST_TEST_MODULE CreateDirectoryHttp
-#include <boost/test/unit_test.hpp>
 #include <anof/transport/http/CreateDirectoryHandler.h>
 #include <muduox/net/EventLoop.h>
+
+#include <boost/test/unit_test.hpp>
 #include <nlohmann/json.hpp>
+
 #include "HttpTestSupport.h"
 
 using namespace anof;
@@ -14,7 +16,7 @@ namespace {
 const std::string space = "10000000-0000-4000-8000-000000000001";
 const std::string parent = "20000000-0000-4000-8000-000000000001";
 const std::string node = "30000000-0000-4000-8000-000000000001";
-std::string body() { return nlohmann::json{{"space_id", space}, {"parent_id", parent}, {"name", "家庭照片"}}.dump(); }
+std::string body() { return nlohmann::json{ { "space_id", space }, { "parent_id", parent }, { "name", "家庭照片" } }.dump(); }
 std::string head(std::size_t length, bool close = true) {
     return "POST /api/v1/nodes HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test-token\r\nContent-Type: application/json\r\nContent-Length: " + std::to_string(length) + (close ? "\r\nConnection: close" : "") + "\r\n\r\n";
 }
@@ -23,7 +25,10 @@ void status(const std::string& wire, std::string_view text) { BOOST_CHECK(wire.f
 
 class Dispatcher final : public CreateDirectoryDispatcher {
 public:
-    enum class Phase { Queued, Running, Cancelled, Terminal };
+    enum class Phase { Queued,
+                       Running,
+                       Cancelled,
+                       Terminal };
     struct Job {
         std::uint64_t id;
         RequestContext context;
@@ -37,10 +42,14 @@ public:
         Handle(std::shared_ptr<Job> job, int& cancels) : job_(std::move(job)), cancels_(cancels) {}
         CancelBeforeStartResult cancelBeforeStart() noexcept override {
             ++cancels_;
-            if (job_->phase == Phase::Queued) { job_->phase = Phase::Cancelled; return CancelBeforeStartResult::Cancelled; }
+            if (job_->phase == Phase::Queued) {
+                job_->phase = Phase::Cancelled;
+                return CancelBeforeStartResult::Cancelled;
+            }
             return job_->phase == Phase::Running ? CancelBeforeStartResult::AlreadyRunning : CancelBeforeStartResult::AlreadyTerminal;
         }
         std::uint64_t id() const noexcept override { return job_->id; }
+
     private:
         std::shared_ptr<Job> job_;
         int& cancels_;
@@ -61,7 +70,7 @@ public:
         ++submissions;
         if (throwOnSubmit) throw std::runtime_error("injected submit failure");
         if (rejection) return *rejection;
-        auto job = std::make_shared<Job>(Job{static_cast<std::uint64_t>(jobs.size() + 1), context, std::move(command), std::move(callback)});
+        auto job = std::make_shared<Job>(Job{ static_cast<std::uint64_t>(jobs.size() + 1), context, std::move(command), std::move(callback) });
         jobs.push_back(job);
         if (!deferred) release(job);
         return AcceptedTask{ std::make_unique<Handle>(job, cancels) };
@@ -73,13 +82,16 @@ public:
             auto callback = std::move(job->callback);
             const bool cancelled = job->phase == Phase::Cancelled;
             job->phase = Phase::Terminal;
-            CreateDirectoryCompletion completion{job->id, CancelledBeforeStart{}, std::nullopt};
+            CreateDirectoryCompletion completion{ job->id, CancelledBeforeStart{}, std::nullopt };
             if (!cancelled) {
-                completion.attempt = CreateDirectoryAttempt{NodeId::parse(node).value(), job->context.requestId};
-                if (error) completion.outcome = Result<CreateDirectoryResult>(*error);
-                else completion.outcome = Result<CreateDirectoryResult>(CreateDirectoryResult{
-                    {NodeId::parse(node).value(), job->command.spaceId, job->command.parentId, job->command.name,
-                     UserId::parse("40000000-0000-4000-8000-000000000001").value(), Revision::from(1).value(), UtcTime{}, UtcTime{}}, Revision::from(2).value()});
+                completion.attempt = CreateDirectoryAttempt{ NodeId::parse(node).value(), job->context.requestId };
+                if (error)
+                    completion.outcome = Result<CreateDirectoryResult>(*error);
+                else
+                    completion.outcome = Result<CreateDirectoryResult>(CreateDirectoryResult{
+                        { NodeId::parse(node).value(), job->command.spaceId, job->command.parentId, job->command.name,
+                          UserId::parse("40000000-0000-4000-8000-000000000001").value(), Revision::from(1).value(), UtcTime{}, UtcTime{} },
+                        Revision::from(2).value() });
             }
             if (invalidResult && !cancelled && !error) {
                 std::get<Result<CreateDirectoryResult>>(completion.outcome).value().directory.parentId.reset();
@@ -100,31 +112,26 @@ public:
     bool throwTaskObserver = false;
     bool throwHttpObserver = false;
     std::vector<std::weak_ptr<HttpResponseWriter>> writers;
-    Dispatcher dispatcher{loop};
+    Dispatcher dispatcher{ loop };
     std::vector<DirectoryTaskRecord> tasks;
     std::vector<HttpTraceRecord> exchanges;
-    CreateDirectoryHandler handler{dispatcher, [this] {
+    CreateDirectoryHandler handler{ dispatcher, [this] {
         if (throwReady) throw std::runtime_error("injected ready failure");
-        return ready;
-    }, [this](auto record) {
+        return ready; }, [this](auto record) {
         tasks.push_back(std::move(record));
-        if (throwTaskObserver) throw std::runtime_error("injected task observer failure");
-    }};
+        if (throwTaskObserver) throw std::runtime_error("injected task observer failure"); } };
     UnexpectedTransferDispatcher uploadDispatcher;
     UnexpectedDriveDispatcher driveDispatcher;
     HttpApi api;
-    HttpServer server{&loop, InetAddress(0, true), "directory-test"};
+    HttpServer server{ &loop, InetAddress(0, true), "directory-test" };
     bool stopping = false;
     bool httpStopped = false;
     explicit Fixture(HttpApiOptions options = {}, bool failHeaders = false)
-        : api(codec, identity, [this] { return ready; },
-              [this, stream = handler.stream()](auto context, const auto& request, const auto& writer) {
+        : api(codec, identity, [this] { return ready; }, [this, stream = handler.stream()](auto context, const auto& request, const auto& writer) {
                   writers.push_back(writer);
-                  return stream(context, request, writer);
-              }, identityDispatcher, uploadDispatcher, driveDispatcher, {{}, [this](auto record) {
+                  return stream(context, request, writer); }, identityDispatcher, uploadDispatcher, driveDispatcher, developmentConfiguration(), { {}, [this](auto record) {
                   exchanges.push_back(std::move(record));
-                  if (throwHttpObserver) throw std::runtime_error("injected HTTP observer failure");
-              }}, options) {
+                  if (throwHttpObserver) throw std::runtime_error("injected HTTP observer failure"); } }, options) {
         api.configure(server);
         if (failHeaders) {
             server.setResponseHeaderPolicy([](const auto&, auto, auto, auto&) { throw std::runtime_error("injected header failure"); });
@@ -139,16 +146,15 @@ public:
     ~Fixture() {
         stop();
         for (const auto& job : dispatcher.jobs) dispatcher.release(job);
-        if (!anof::test::waitFor(loop, [&] {
-                return httpStopped && dispatcher.deliveries == static_cast<int>(dispatcher.jobs.size());
-            }, 3)) std::terminate();
+        if (!anof::test::waitFor(loop, [&] { return httpStopped && dispatcher.deliveries == static_cast<int>(dispatcher.jobs.size()); }, 3)) std::terminate();
     }
     void until(const std::function<bool()>& done,
                const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
         BOOST_REQUIRE(anof::test::waitFor(loop, done, 3, file, line));
     }
     std::string exchange(std::string payload) {
-        Client client(server.listenAddress()); client.send(payload);
+        Client client(server.listenAddress());
+        client.send(payload);
         until([&] { client.read(); return client.eof; });
         return client.bytes;
     }
@@ -198,7 +204,8 @@ BOOST_AUTO_TEST_CASE(fragmentedExpectRequestSubmitsOnlyAfterComplete) {
 BOOST_AUTO_TEST_CASE(chunkedAndActualTrailerHandling) {
     Fixture fixture;
     const std::string headers = "POST /api/v1/nodes HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer test-token\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n";
-    char length[32]; std::snprintf(length, sizeof length, "%zx", body().size());
+    char length[32];
+    std::snprintf(length, sizeof length, "%zx", body().size());
     const auto chunks = std::string(length) + "\r\n" + body() + "\r\n0\r\n";
     status(fixture.exchange(headers + chunks + "\r\n"), "201 Created");
     const auto rejected = fixture.exchange(headers + chunks + "X-Extra: trailer\r\n\r\n");
@@ -208,17 +215,18 @@ BOOST_AUTO_TEST_CASE(chunkedAndActualTrailerHandling) {
 }
 BOOST_AUTO_TEST_CASE(invalidJsonNeverSubmits) {
     Fixture fixture;
-    for (const auto& payload : {std::string{}, std::string("{}"), std::string("[]"), body().substr(0, body().size()-1) + ",\"name\":\"again\"}"}) {
+    for (const auto& payload : { std::string{}, std::string("{}"), std::string("[]"), body().substr(0, body().size() - 1) + ",\"name\":\"again\"}" }) {
         status(fixture.exchange(head(payload.size()) + payload), "400 Bad Request");
     }
     BOOST_CHECK_EQUAL(fixture.dispatcher.submissions, 0);
 }
 BOOST_AUTO_TEST_CASE(submissionRejectionsHaveNoCompletion) {
     Fixture fixture;
-    for (auto error : {SubmitError::QueueFull, SubmitError::Stopping, SubmitError::InternalError, SubmitError::RateLimited}) {
+    for (auto error : { SubmitError::QueueFull, SubmitError::Stopping, SubmitError::InternalError, SubmitError::RateLimited }) {
         fixture.dispatcher.rejection = error;
         const auto wire = fixture.exchange(head(body().size()) + body());
-        status(wire, error == SubmitError::InternalError ? "500 Internal Server Error" : error == SubmitError::RateLimited ? "429 Too Many Requests" : "503 Service Unavailable");
+        status(wire, error == SubmitError::InternalError ? "500 Internal Server Error" : error == SubmitError::RateLimited ? "429 Too Many Requests"
+                                                                                                                           : "503 Service Unavailable");
     }
     BOOST_CHECK_EQUAL(fixture.dispatcher.deliveries, 0);
     BOOST_CHECK(fixture.tasks.empty());
@@ -226,12 +234,12 @@ BOOST_AUTO_TEST_CASE(submissionRejectionsHaveNoCompletion) {
 BOOST_AUTO_TEST_CASE(applicationFailuresRemainDistinctOnWire) {
     Fixture fixture;
     const std::tuple<ErrorCode, const char*, const char*> cases[] = {
-        {ErrorCode::Unauthenticated, "401 Unauthorized", "UNAUTHENTICATED"},
-        {ErrorCode::StorageFull, "507 Insufficient Storage", "STORAGE_FULL"},
-        {ErrorCode::Retryable, "503 Service Unavailable", "TEMPORARILY_UNAVAILABLE"},
-        {ErrorCode::CommitOutcomeUnknown, "500 Internal Server Error", "COMMIT_OUTCOME_UNKNOWN"},
-        {ErrorCode::NameConflict, "409 Conflict", "NAME_CONFLICT"},
-        {ErrorCode::QuotaExceeded, "403 Forbidden", "QUOTA_EXCEEDED"}
+        { ErrorCode::Unauthenticated, "401 Unauthorized", "UNAUTHENTICATED" },
+        { ErrorCode::StorageFull, "507 Insufficient Storage", "STORAGE_FULL" },
+        { ErrorCode::Retryable, "503 Service Unavailable", "TEMPORARILY_UNAVAILABLE" },
+        { ErrorCode::CommitOutcomeUnknown, "500 Internal Server Error", "COMMIT_OUTCOME_UNKNOWN" },
+        { ErrorCode::NameConflict, "409 Conflict", "NAME_CONFLICT" },
+        { ErrorCode::QuotaExceeded, "403 Forbidden", "QUOTA_EXCEEDED" }
     };
     for (const auto& [error, line, code] : cases) {
         fixture.dispatcher.error = error;
@@ -246,18 +254,23 @@ BOOST_AUTO_TEST_CASE(applicationFailuresRemainDistinctOnWire) {
 BOOST_AUTO_TEST_CASE(stoppingAfterHeadersPreventsSubmission) {
     Fixture fixture;
     Client client(fixture.server.listenAddress());
-    auto headers = head(body().size()); headers.insert(headers.size()-2, "Expect: 100-continue\r\n");
+    auto headers = head(body().size());
+    headers.insert(headers.size() - 2, "Expect: 100-continue\r\n");
     client.send(headers);
     fixture.until([&] { client.read(); return !client.bytes.empty(); });
-    fixture.ready = false; client.bytes.clear(); client.send(body());
+    fixture.ready = false;
+    client.bytes.clear();
+    client.send(body());
     fixture.until([&] { client.read(); return client.eof; });
     status(client.bytes, "503 Service Unavailable");
     BOOST_CHECK_EQUAL(fixture.dispatcher.submissions, 0);
 }
 BOOST_AUTO_TEST_CASE(httpCancellationConsumesQueuedAndRunningLateResults) {
-    for (bool running : {false, true}) {
-        Fixture fixture; fixture.dispatcher.deferred = true;
-        Client client(fixture.server.listenAddress()); client.send(head(body().size()) + body());
+    for (bool running : { false, true }) {
+        Fixture fixture;
+        fixture.dispatcher.deferred = true;
+        Client client(fixture.server.listenAddress());
+        client.send(head(body().size()) + body());
         fixture.until([&] { return fixture.dispatcher.submissions == 1; });
         const auto job = fixture.dispatcher.jobs.front();
         if (running) job->phase = Dispatcher::Phase::Running;
@@ -274,10 +287,13 @@ BOOST_AUTO_TEST_CASE(httpCancellationConsumesQueuedAndRunningLateResults) {
     }
 }
 BOOST_AUTO_TEST_CASE(cancelledBeforeStartWhileHttpActiveReturns503) {
-    Fixture fixture; fixture.dispatcher.deferred = true;
-    Client client(fixture.server.listenAddress()); client.send(head(body().size()) + body());
+    Fixture fixture;
+    fixture.dispatcher.deferred = true;
+    Client client(fixture.server.listenAddress());
+    client.send(head(body().size()) + body());
     fixture.until([&] { return fixture.dispatcher.submissions == 1; });
-    auto job = fixture.dispatcher.jobs.front(); job->phase = Dispatcher::Phase::Cancelled;
+    auto job = fixture.dispatcher.jobs.front();
+    job->phase = Dispatcher::Phase::Cancelled;
     fixture.dispatcher.release(job);
     fixture.until([&] { client.read(); return client.eof; });
     status(client.bytes, "503 Service Unavailable");
@@ -308,7 +324,7 @@ BOOST_AUTO_TEST_CASE(disconnectDuringBodyDoesNotSubmit) {
 }
 
 BOOST_AUTO_TEST_CASE(bodyTimeoutReleasesReceivingStateWithoutSubmission) {
-    Fixture fixture({128, 0.1, 30});
+    Fixture fixture({ 128, 0.1, 30 });
     Client client(fixture.server.listenAddress());
     client.send(head(body().size()) + body().substr(0, 1));
     fixture.until([&] { client.read(); return client.eof; });
@@ -320,8 +336,8 @@ BOOST_AUTO_TEST_CASE(bodyTimeoutReleasesReceivingStateWithoutSubmission) {
     BOOST_CHECK(fixture.exchanges[0].reason == HttpCancelReason::RequestTimeout);
 }
 BOOST_AUTO_TEST_CASE(responseTimeoutRetainsTaskUntilLateResultConsumption) {
-    for (auto phase : {Dispatcher::Phase::Queued, Dispatcher::Phase::Running, Dispatcher::Phase::Terminal}) {
-        Fixture fixture({1, 15, 0.1});
+    for (auto phase : { Dispatcher::Phase::Queued, Dispatcher::Phase::Running, Dispatcher::Phase::Terminal }) {
+        Fixture fixture({ 1, 15, 0.1 });
         fixture.dispatcher.deferred = true;
         Client first(fixture.server.listenAddress());
         first.send(head(body().size(), false) + body());
@@ -392,10 +408,12 @@ BOOST_AUTO_TEST_CASE(headerPreparationFailureHasOnlyOneFrameworkResponse) {
     BOOST_CHECK(fixture.writers.back().expired());
 }
 BOOST_AUTO_TEST_CASE(synchronousDependencyExceptionsEndExchangeWithoutRetry) {
-    for (bool submit : {false, true}) {
+    for (bool submit : { false, true }) {
         Fixture fixture;
-        if (submit) fixture.dispatcher.throwOnSubmit = true;
-        else fixture.throwReady = true;
+        if (submit)
+            fixture.dispatcher.throwOnSubmit = true;
+        else
+            fixture.throwReady = true;
         const auto response = fixture.exchange(head(body().size()) + body());
         status(response, "500 Internal Server Error");
         BOOST_CHECK_EQUAL(fixture.dispatcher.submissions, submit ? 1 : 0);
@@ -407,7 +425,8 @@ BOOST_AUTO_TEST_CASE(synchronousDependencyExceptionsEndExchangeWithoutRetry) {
 BOOST_AUTO_TEST_CASE(repeatedStopDoesNotRetirePendingCompletion) {
     Fixture fixture;
     fixture.dispatcher.deferred = true;
-    Client client(fixture.server.listenAddress()); client.send(head(body().size()) + body());
+    Client client(fixture.server.listenAddress());
+    client.send(head(body().size()) + body());
     fixture.until([&] { return fixture.dispatcher.submissions == 1; });
     fixture.dispatcher.jobs[0]->phase = Dispatcher::Phase::Running;
     fixture.stop();
@@ -432,17 +451,19 @@ BOOST_AUTO_TEST_CASE(gracefulStopRejectsCompletionOfPreviouslyAcceptedBody) {
     fixture.ready = false;
     fixture.stopping = true;
     BOOST_REQUIRE(fixture.server.stop(1, [&] { fixture.httpStopped = true; }));
-    client.bytes.clear(); client.send(body());
+    client.bytes.clear();
+    client.send(body());
     fixture.until([&] { client.read(); return client.eof; });
     status(client.bytes, "503 Service Unavailable");
     BOOST_CHECK_EQUAL(fixture.dispatcher.submissions, 0);
     BOOST_CHECK(fixture.writers.back().expired());
 }
 BOOST_AUTO_TEST_CASE(lateUnknownCommitRemainsDiagnosticAfterTimeout) {
-    Fixture fixture({128, 15, 0.1});
+    Fixture fixture({ 128, 15, 0.1 });
     fixture.dispatcher.deferred = true;
     fixture.dispatcher.error = ErrorCode::CommitOutcomeUnknown;
-    Client client(fixture.server.listenAddress()); client.send(head(body().size()) + body());
+    Client client(fixture.server.listenAddress());
+    client.send(head(body().size()) + body());
     fixture.until([&] { return fixture.dispatcher.submissions == 1; });
     fixture.dispatcher.jobs[0]->phase = Dispatcher::Phase::Running;
     fixture.until([&] { client.read(); return client.eof; });

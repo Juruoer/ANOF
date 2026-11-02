@@ -1,13 +1,11 @@
 #include <tests/support/EventLoopWait.h>
 #define BOOST_TEST_MODULE AnofRuntime
-#include <boost/test/unit_test.hpp>
-
 #include <anof/runtime/AnofRuntime.h>
 #include <anof/runtime/CompletionPump.h>
-
 #include <muduox/net/EventLoop.h>
 
 #include <atomic>
+#include <boost/test/unit_test.hpp>
 #include <condition_variable>
 #include <limits>
 #include <mutex>
@@ -72,7 +70,10 @@ struct Owned {
     void checkThread() const {
         if (tracking->worker != std::this_thread::get_id()) tracking->wrongThread = true;
     }
-    ~Owned() { checkThread(); ++tracking->destroyed; }
+    ~Owned() {
+        checkThread();
+        ++tracking->destroyed;
+    }
 };
 
 struct Store final : MetadataStore, Owned {
@@ -93,7 +94,10 @@ struct Store final : MetadataStore, Owned {
 
 struct TestClock final : Clock, Owned {
     using Owned::Owned;
-    UtcTime now() const override { checkThread(); return UtcTime{}; }
+    UtcTime now() const override {
+        checkThread();
+        return UtcTime{};
+    }
 };
 
 struct TestIds final : NodeIdGenerator, Owned {
@@ -185,8 +189,7 @@ BOOST_AUTO_TEST_CASE(deferred_owner_loop_delivery_and_worker_resource_lifetime) 
         int started = 0, stopped = 0, completed = 0;
         const auto owner = std::this_thread::get_id();
         BOOST_REQUIRE(f.executor.start(factory(data), [&](Result<void> r) {
-            BOOST_CHECK(r.hasValue()); BOOST_CHECK(std::this_thread::get_id() == owner); ++started;
-        }, [&] { ++stopped; }));
+            BOOST_CHECK(r.hasValue()); BOOST_CHECK(std::this_thread::get_id() == owner); ++started; }, [&] { ++stopped; }));
         BOOST_CHECK_EQUAL(started, 0);
         BOOST_REQUIRE(drive(f.loop, [&] { return started == 1; }));
         BOOST_CHECK(data->worker != owner);
@@ -235,7 +238,8 @@ BOOST_AUTO_TEST_CASE(pending_and_unretired_limits_are_independent) {
     rejected(f.executor.trySubmit(context(), command(), [](auto) {}), SubmitError::QueueFull);
     BOOST_REQUIRE(drive(f.loop, [&] { return delivered == 1; }));
     auto third = accepted(f.executor.trySubmit(context(), command(), [&](auto result) {
-        BOOST_CHECK(std::holds_alternative<CancelledBeforeStart>(result.outcome)); ++delivered;
+        BOOST_CHECK(std::holds_alternative<CancelledBeforeStart>(result.outcome));
+        ++delivered;
     }));
     BOOST_CHECK(third->cancelBeforeStart() == CancelBeforeStartResult::Cancelled);
     BOOST_CHECK(second->cancelBeforeStart() == CancelBeforeStartResult::AlreadyRunning);
@@ -256,12 +260,14 @@ BOOST_AUTO_TEST_CASE(cancel_before_start_wins_and_handle_destruction_does_not_ca
     BOOST_REQUIRE(f.tracking->first.awaitEntry());
     auto cancelledHandle = accepted(f.executor.trySubmit(context(), command(), [&](auto result) {
         BOOST_CHECK(std::holds_alternative<CancelledBeforeStart>(result.outcome));
-        BOOST_CHECK(!result.attempt); ++cancelled;
+        BOOST_CHECK(!result.attempt);
+        ++cancelled;
     }));
     BOOST_CHECK(cancelledHandle->cancelBeforeStart() == CancelBeforeStartResult::Cancelled);
     BOOST_CHECK(cancelledHandle->cancelBeforeStart() == CancelBeforeStartResult::AlreadyTerminal);
     accepted(f.executor.trySubmit(context(), command(), [&](auto result) {
-        BOOST_CHECK(std::holds_alternative<Result<CreateDirectoryResult>>(result.outcome)); ++executed;
+        BOOST_CHECK(std::holds_alternative<Result<CreateDirectoryResult>>(result.outcome));
+        ++executed;
     })).reset();
     f.tracking->first.release();
     BOOST_REQUIRE(drive(f.loop, [&] { return cancelled + executed == 3; }));
@@ -275,11 +281,13 @@ BOOST_AUTO_TEST_CASE(stop_cancels_waiting_tasks_but_preserves_running_and_cleanu
     f.start();
     int callbacks = 0;
     auto running = accepted(f.executor.trySubmit(context(), command(), [&](auto result) {
-        BOOST_CHECK(std::holds_alternative<Result<CreateDirectoryResult>>(result.outcome)); ++callbacks;
+        BOOST_CHECK(std::holds_alternative<Result<CreateDirectoryResult>>(result.outcome));
+        ++callbacks;
     }));
     BOOST_REQUIRE(f.tracking->first.awaitEntry());
     for (int i = 0; i < 2; ++i) accepted(f.executor.trySubmit(context(), command(), [&](auto result) {
-        BOOST_CHECK(std::holds_alternative<CancelledBeforeStart>(result.outcome)); ++callbacks;
+        BOOST_CHECK(std::holds_alternative<CancelledBeforeStart>(result.outcome));
+        ++callbacks;
     }));
     f.executor.requestStop();
     BOOST_CHECK(f.executor.snapshot().state == MetadataExecutorState::Stopping);
@@ -303,12 +311,14 @@ BOOST_AUTO_TEST_CASE(execute_and_callback_exceptions_do_not_lose_capacity_or_wor
     int callbacks = 0;
     accepted(f.executor.trySubmit(context(), command(), [&](auto result) {
         BOOST_CHECK(std::get<Result<CreateDirectoryResult>>(result.outcome).error().code == ErrorCode::CommitOutcomeUnknown);
-        BOOST_CHECK(result.attempt.has_value()); ++callbacks;
+        BOOST_CHECK(result.attempt.has_value());
+        ++callbacks;
         throw std::runtime_error("Injected callback failure");
     }));
     BOOST_REQUIRE(drive(f.loop, [&] { return callbacks == 1; }));
     accepted(f.executor.trySubmit(context(), command(), [&](auto result) {
-        BOOST_CHECK(std::get<Result<CreateDirectoryResult>>(result.outcome).error().code == ErrorCode::Retryable); ++callbacks;
+        BOOST_CHECK(std::get<Result<CreateDirectoryResult>>(result.outcome).error().code == ErrorCode::Retryable);
+        ++callbacks;
     }));
     BOOST_REQUIRE(drive(f.loop, [&] { return callbacks == 2; }));
     const auto snapshot = f.executor.snapshot();
@@ -325,11 +335,9 @@ BOOST_AUTO_TEST_CASE(failed_factory_and_invalid_resources_complete_startup_clean
         BOOST_REQUIRE(f.executor.start([mode]() -> Result<MetadataWorkerResources> {
             if (mode == 0) return ErrorCode::StorageFull;
             if (mode == 1) throw std::runtime_error("Injected startup failure");
-            return MetadataWorkerResources{};
-        }, [&](Result<void> result) {
+            return MetadataWorkerResources{}; }, [&](Result<void> result) {
             BOOST_CHECK(!result); ++starts;
-            throw std::runtime_error("Injected startup callback failure");
-        }, [&] { ++stops; throw std::runtime_error("Injected stopped callback failure"); }));
+            throw std::runtime_error("Injected startup callback failure"); }, [&] { ++stops; throw std::runtime_error("Injected stopped callback failure"); }));
         BOOST_REQUIRE(drive(f.loop, [&] { return f.executor.snapshot().state == MetadataExecutorState::Stopped; }));
         BOOST_CHECK_EQUAL(starts, 1);
         BOOST_CHECK_EQUAL(stops, 1);
@@ -343,7 +351,8 @@ BOOST_AUTO_TEST_CASE(stop_during_startup_never_reopens_admission) {
     f.tracking->blockStartup = true;
     int starts = 0;
     BOOST_REQUIRE(f.executor.start(factory(f.tracking), [&](Result<void> result) {
-        BOOST_CHECK(result.hasValue()); ++starts;
+        BOOST_CHECK(result.hasValue());
+        ++starts;
         BOOST_CHECK(f.executor.snapshot().state == MetadataExecutorState::Stopping);
         rejected(f.executor.trySubmit(context(), command(), [](auto) {}), SubmitError::Stopping);
     }));
@@ -372,8 +381,7 @@ BOOST_AUTO_TEST_CASE(pump_coalesces_notifications_and_yields_between_batches) {
     std::vector<int64_t> iterations;
     CompletionPump pump(loop, [&] {
         iterations.push_back(loop.iteration());
-        return ++calls < 3;
-    }, [&] { ++idle; });
+        return ++calls < 3; }, [&] { ++idle; });
     for (int i = 0; i < 16; ++i) pump.notify();
     BOOST_CHECK_EQUAL(loop.queueSize(), 1U);
     BOOST_REQUIRE(drive(loop, [&] { return pump.idle() && calls == 3; }));
@@ -392,8 +400,7 @@ BOOST_AUTO_TEST_CASE(pump_notify_during_drain_and_after_idle_cannot_lose_wakeup)
             std::thread producer([&] { access->notify(); });
             producer.join();  // 测试限定通知期间无业务或 loop 依赖。
         }
-        return false;
-    }, [] {});
+        return false; }, [] {});
     access = &pump;
     pump.notify();
     BOOST_REQUIRE(drive(loop, [&] { return calls == 2 && pump.idle(); }));
@@ -406,8 +413,7 @@ BOOST_AUTO_TEST_CASE(pump_preserves_work_when_post_throws) {
     int posts = 0, delivered = 0;
     CompletionPump pump(loop, [&] { return ++delivered < 3; }, [] {}, [&](auto callback) {
         if (++posts <= 2) throw std::bad_alloc();
-        loop.queueInLoop(std::move(callback));
-    });
+        loop.queueInLoop(std::move(callback)); });
     pump.notify();
     pump.notify();
     BOOST_CHECK(!pump.idle());
@@ -425,8 +431,7 @@ BOOST_AUTO_TEST_CASE(runtime_waits_for_both_http_and_metadata_barriers) {
         BOOST_CHECK(!runtime.ready());
         BOOST_CHECK(!runtime.markHttpStarted());
         BOOST_REQUIRE(runtime.start(factory(data), [&](Result<void> result) {
-            BOOST_CHECK(result.hasValue()); ++initialized;
-        }, [&] { ++stopped; }));
+            BOOST_CHECK(result.hasValue()); ++initialized; }, [&] { ++stopped; }));
         BOOST_REQUIRE(drive(loop, [&] { return initialized == 1; }));
         BOOST_CHECK(!runtime.ready());
         BOOST_REQUIRE(runtime.markHttpStarted());
@@ -498,7 +503,8 @@ BOOST_AUTO_TEST_CASE(cancel_and_worker_start_race_has_one_consistent_terminal_re
         accepted(f.executor.trySubmit(context(), command(), [&](auto) { ++delivered; }));
         BOOST_REQUIRE(f.tracking->first.awaitEntry());
         auto handle = accepted(f.executor.trySubmit(context(), command(), [&](auto result) {
-            cancelled = std::holds_alternative<CancelledBeforeStart>(result.outcome); ++delivered;
+            cancelled = std::holds_alternative<CancelledBeforeStart>(result.outcome);
+            ++delivered;
         }));
         CancelBeforeStartResult won = CancelBeforeStartResult::AlreadyTerminal;
         std::thread contender([&] { won = handle->cancelBeforeStart(); });
@@ -519,8 +525,10 @@ BOOST_AUTO_TEST_CASE(late_result_can_discard_expired_request_and_still_retire) {
     std::weak_ptr<int> weak = request;
     int dropped = 0;
     accepted(f.executor.trySubmit(context(), command(), [weak, &dropped](auto) {
-        if (auto state = weak.lock()) ++*state;
-        else ++dropped;
+        if (auto state = weak.lock())
+            ++*state;
+        else
+            ++dropped;
     }));
     BOOST_REQUIRE(f.tracking->first.awaitEntry());
     request.reset();
@@ -532,9 +540,7 @@ BOOST_AUTO_TEST_CASE(late_result_can_discard_expired_request_and_still_retire) {
 BOOST_AUTO_TEST_CASE(runtime_stop_notification_failure_does_not_reopen_state) {
     muduox::net::EventLoop loop;
     AnofRuntime runtime(loop);
-    BOOST_REQUIRE(runtime.start([]() -> Result<MetadataWorkerResources> { return ErrorCode::InternalError; }, {}, [] {
-        throw std::runtime_error("Injected runtime notification failure");
-    }));
+    BOOST_REQUIRE(runtime.start([]() -> Result<MetadataWorkerResources> { return ErrorCode::InternalError; }, {}, [] { throw std::runtime_error("Injected runtime notification failure"); }));
     BOOST_REQUIRE(drive(loop, [&] { return runtime.state() == RuntimeState::Stopped; }));
     BOOST_CHECK_EQUAL(runtime.notificationExceptions(), 1U);
 }

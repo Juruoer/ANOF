@@ -96,7 +96,9 @@ Result<NodeDetails> DriveService::execute(const RequestContext& ctx, const CopyF
     auto content = tx.blobs().findByNode(c.id); if (!content) return content.error();
     if (!content.value()) return ErrorCode::IntegrityError;
     auto blob = tx.blobs().record(content.value()->id); if (!blob) return blob.error();
-    if (!blob.value() || blob.value()->state != BlobState::Available) return ErrorCode::Retryable;
+    if (!blob.value()) return ErrorCode::IntegrityError;
+    if (blob.value()->state == BlobState::Unavailable) return ErrorCode::IntegrityError;
+    if (blob.value()->state != BlobState::Available) return ErrorCode::Retryable;
     auto id = nodes_.next(); if (!id) return id.error();
     auto scopes = directoryQuotaScopes(actor.value(), space.value()); if (!scopes) return scopes.error();
     const QuotaDelta delta{ByteCount::from(content.value()->size.value()).value(), NodeCount::from(1).value()};

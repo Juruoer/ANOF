@@ -31,7 +31,9 @@ struct Fixture {
         held.emplace(std::move(lock).value());
         BOOST_REQUIRE(held->saveCredential(credential()));
         http.reply = [](const auto&, const auto&) {
-            auto r = response(200, userJson());
+            auto user = userJson();
+            user["instance_id"] = rid;
+            auto r = response(200, user);
             r.headers["etag"] = "\"user-" + uid + "-9223372036854775807\"";
             return r;
         };
@@ -154,7 +156,6 @@ BOOST_AUTO_TEST_CASE(unknown_create_uses_persisted_key_without_second_post) {
     BOOST_REQUIRE(!resumed);
     BOOST_CHECK_EQUAL(resumed.error().code, "UPLOAD_CREATE_UNRESOLVED");
     BOOST_CHECK_EQUAL(posts, 1);
-
 }
 BOOST_AUTO_TEST_CASE(part_replacement_and_record_binding_rejected) {
     Fixture f;
@@ -247,28 +248,43 @@ BOOST_AUTO_TEST_CASE(unknown_patch_queries_server_offset_and_never_replays_confi
     auto first = f.client().upload(source.string(), SpaceId::parse(sid).value(), NodeId::parse(nid).value(), "file");
     BOOST_REQUIRE(!first);
     BOOST_REQUIRE(first.error().transferId);
-    auto recordPath=f.record(*first.error().transferId);auto original=read(recordPath);
-    auto changedRecord=original;changedRecord["sha256"]=std::string(64,'0');save(recordPath,changedRecord);
-    auto changed=f.client().resume(*first.error().transferId,false);BOOST_REQUIRE(!changed);BOOST_CHECK_EQUAL(changed.error().code,"SOURCE_CHANGED");
-    save(recordPath,original);
+    auto recordPath = f.record(*first.error().transferId);
+    auto original = read(recordPath);
+    auto changedRecord = original;
+    changedRecord["sha256"] = std::string(64, '0');
+    save(recordPath, changedRecord);
+    auto changed = f.client().resume(*first.error().transferId, false);
+    BOOST_REQUIRE(!changed);
+    BOOST_CHECK_EQUAL(changed.error().code, "SOURCE_CHANGED");
+    save(recordPath, original);
     auto resumed = f.client().resume(*first.error().transferId, false);
     BOOST_REQUIRE(resumed);
     BOOST_CHECK(resumed.value().data["published"] == true);
     BOOST_CHECK_EQUAL(creates, 1);
     BOOST_CHECK_EQUAL(patches, 1);
-    upload["result_deleted_at"]="2026-10-11T10:00:01.000000Z";
+    upload["result_deleted_at"] = "2026-10-11T10:00:01.000000Z";
     std::filesystem::remove(source);
-    auto deleted=f.client().resume(*first.error().transferId,false);
-    BOOST_REQUIRE(!deleted);BOOST_CHECK_EQUAL(deleted.error().code,"UPLOAD_RESULT_DELETED");BOOST_CHECK_EQUAL(deleted.error().exitCode(),3);
-    BOOST_CHECK_EQUAL(creates,1);BOOST_CHECK_EQUAL(patches,1);
+    auto deleted = f.client().resume(*first.error().transferId, false);
+    BOOST_REQUIRE(!deleted);
+    BOOST_CHECK_EQUAL(deleted.error().code, "UPLOAD_RESULT_DELETED");
+    BOOST_CHECK_EQUAL(deleted.error().exitCode(), 3);
+    BOOST_CHECK_EQUAL(creates, 1);
+    BOOST_CHECK_EQUAL(patches, 1);
     BOOST_REQUIRE(f.client().show(UploadId::parse(rid).value()));
-    auto malformed=upload;malformed.erase("result_deleted_at");auto missing=response(200,malformed);
-    BOOST_CHECK(!decodeTransfer(TransferOperation::Show,missing));
-    malformed=upload;malformed["result_deleted_at"]="2026-10-11T09:59:59.999999Z";auto backwards=response(200,malformed);
-    BOOST_CHECK(!decodeTransfer(TransferOperation::Show,backwards));
-    malformed=upload;malformed["state"]="OPEN";malformed["result_node_id"]=nullptr;malformed["terminal_at"]=nullptr;
-    auto wrongState=response(200,malformed);BOOST_CHECK(!decodeTransfer(TransferOperation::Show,wrongState));
-
+    auto malformed = upload;
+    malformed.erase("result_deleted_at");
+    auto missing = response(200, malformed);
+    BOOST_CHECK(!decodeTransfer(TransferOperation::Show, missing));
+    malformed = upload;
+    malformed["result_deleted_at"] = "2026-10-11T09:59:59.999999Z";
+    auto backwards = response(200, malformed);
+    BOOST_CHECK(!decodeTransfer(TransferOperation::Show, backwards));
+    malformed = upload;
+    malformed["state"] = "OPEN";
+    malformed["result_node_id"] = nullptr;
+    malformed["terminal_at"] = nullptr;
+    auto wrongState = response(200, malformed);
+    BOOST_CHECK(!decodeTransfer(TransferOperation::Show, wrongState));
 }
 BOOST_AUTO_TEST_CASE(storage_tag_and_read_only_head_failures) {
     BOOST_REQUIRE(ConditionTag::parse("\"storage-" + sid + "-1\""));

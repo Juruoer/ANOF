@@ -36,6 +36,17 @@ public:
 };
 }
 
+Result<InstanceConfiguration> loadExplicitInstanceConfiguration(const std::filesystem::path& path) {
+    if (!path.is_absolute() || path.lexically_normal() != path || path.filename().empty()) return ErrorCode::InvalidArgument;
+    auto parent = system::detail::openControlledDirectory(path.parent_path());
+    if (!parent) return parent.error();
+    auto file = system::detail::openPrivateFile(parent.value().rootFd.get(), path.filename().c_str(), false);
+    if (!file) return file.error();
+    auto text = system::detail::readBoundedFile(file.value().get(), 65536, ErrorCode::InvalidArgument);
+    if (!text) return text.error();
+    return detail::parseConfiguration(text.value(), true);
+}
+
 Result<std::unique_ptr<InstanceConfigurationLoader>> makeTomlInstanceConfigurationLoader() {
     try {
         return std::unique_ptr<InstanceConfigurationLoader>(new TomlInstanceConfigurationLoader);

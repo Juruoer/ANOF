@@ -2,7 +2,13 @@
 #include <anof/domain/transfer/Upload.h>
 
 namespace anof {
-enum class TransferEventKind { Create, AcceptComplete, Publish, Cancel, Expire, Fail, StorageLimit };
+enum class TransferEventKind { Create,
+                               AcceptComplete,
+                               Publish,
+                               Cancel,
+                               Expire,
+                               Fail,
+                               StorageLimit };
 struct TransferEvent {
     TransferEventKind kind;
     RequestId requestId;

@@ -6,11 +6,23 @@
 namespace anof {
 
 Result<void> validateInstanceConfiguration(const InstanceConfiguration& configuration) {
-    if (configuration.listenAddress != "127.0.0.1" || !configuration.developmentHttp ||
+    if (!isTrustedLoopbackProxy(configuration.listenAddress) ||
         configuration.metadataQueue == 0 || configuration.metadataQueue > 256 ||
         configuration.httpInFlight == 0 || configuration.httpInFlight > 128 ||
         !std::isfinite(configuration.shutdownGraceSeconds) || configuration.shutdownGraceSeconds < 0 ||
         configuration.shutdownGraceSeconds > 30) return ErrorCode::InvalidArgument;
+    if (configuration.developmentHttp) {
+        if (configuration.webEnabled || !configuration.publicOrigin.empty() || !configuration.trustedProxies.empty())
+            return ErrorCode::InvalidArgument;
+    } else {
+        auto origin = PublicOrigin::parse(configuration.publicOrigin);
+        if (!origin || origin.value().value() != configuration.publicOrigin || configuration.trustedProxies.empty() ||
+            configuration.trustedProxies.size() > 2) return ErrorCode::InvalidArgument;
+        for (const auto& proxy : configuration.trustedProxies)
+            if (!isTrustedLoopbackProxy(proxy)) return ErrorCode::InvalidArgument;
+        if (configuration.trustedProxies.size() == 2 && configuration.trustedProxies[0] == configuration.trustedProxies[1])
+            return ErrorCode::InvalidArgument;
+    }
     return {};
 }
 

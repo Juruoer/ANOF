@@ -1,0 +1,165 @@
+{
+  "lockVersion": 1,
+  "platform": "linux-x64",
+  "node": {
+    "version": "24.22.1",
+    "npm": "11.19.1",
+    "archive": "node-v24.22.1-linux-x64.tar.xz",
+    "url": "https://nodejs.org/dist/v24.22.1/node-v24.22.1-linux-x64.tar.xz",
+    "sha256": "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6",
+    "checksums": "https://nodejs.org/dist/v24.22.1/SHASUMS256.txt",
+    "license": "MIT AND bundled third-party notices",
+    "licenseSource": "https://github.com/nodejs/node/blob/v24.22.1/LICENSE"
+  },
+  "packages": [
+    {
+      "name": "vite",
+      "version": "8.3.5",
+      "engines": {
+        "node": "^20.19.0 || >=22.12.0"
+      },
+      "license": "MIT",
+      "tarball": "https://registry.npmjs.org/vite/-/vite-8.3.5.tgz",
+      "integrity": "sha512-z1YpjieJ9g0ebTmQpLBv/oq9E3F9EIlOe+7LahW8SrE3LTiG3udBRUXQOlYXP9b+IC2q2phHeVxj9xGlw34OEQ=="
+    },
+    {
+      "name": "typescript",
+      "version": "6.0.3",
+      "engines": {
+        "node": ">=14.17"
+      },
+      "license": "Apache-2.0",
+      "tarball": "https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz",
+      "integrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="
+    },
+    {
+      "name": "@playwright/test",
+      "version": "1.64.1",
+      "engines": {
+        "node": ">=20"
+      },
+      "license": "Apache-2.0",
+      "tarball": "https://registry.npmjs.org/@playwright/test/-/test-1.64.1.tgz",
+      "integrity": "sha512-IaYGml/nSOiZWROfPtuIL7neuu9qDOZ3TNvNljUIrhDMxiGTgPjzj/g9p9RxpS2tSepPDRY+UwAaEeiKtUvIAg=="
+    },
+    {
+      "name": "hash-wasm",
+      "version": "4.12.0",
+      "engines": {},
+      "license": "MIT",
+      "tarball": "https://registry.npmjs.org/hash-wasm/-/hash-wasm-4.12.0.tgz",
+      "integrity": "sha512-+/2B2rYLb48I/evdOIhP+K/DD2ca2fgBjp6O+GBEnCDk2e4rpeXIK8GvIyRPjTezgmWn9gmKwkQjjx6BtqDHVQ==",
+      "runtime": true
+    }
+  ],
+  "browserManifest": "https://github.com/microsoft/playwright/blob/v1.64.1/packages/playwright-core/browsers.json",
+  "browsers": [
+    {
+      "name": "chromium",
+      "revision": "1248",
+      "installByDefault": true,
+      "browserVersion": "156.0.8078.4",
+      "title": "Chrome for Testing"
+    },
+    {
+      "name": "chromium-headless-shell",
+      "revision": "1248",
+      "installByDefault": true,
+      "browserVersion": "156.0.8078.4",
+      "title": "Chrome Headless Shell"
+    },
+    {
+      "name": "firefox",
+      "revision": "1555",
+      "installByDefault": true,
+      "browserVersion": "157.0",
+      "title": "Firefox"
+    },
+    {
+      "name": "ffmpeg",
+      "revision": "1013",
+      "installByDefault": true
+    }
+  ],
+  "securityReview": {
+    "date": "2026-10-27",
+    "sources": [
+      "https://nodejs.org/en/blog/vulnerability/october-2026-security-releases",
+      "https://github.com/vitejs/vite/security/advisories",
+      "https://github.com/microsoft/TypeScript/security/advisories",
+      "https://github.com/microsoft/playwright/security/advisories",
+      "https://ubuntu.com/security/notices/USN-8947-1",
+      "https://ubuntu.com/security/notices/USN-8044-1"
+    ]
+  },
+  "browserLibraries": {
+    "distribution": "Ubuntu 24.04",
+    "prefix": ".tools/browser-libs",
+    "packages": [
+      {
+        "name": "libnss3",
+        "version": "2:3.98-1ubuntu0.3",
+        "url": "https://archive.ubuntu.com/ubuntu/pool/main/n/nss/libnss3_3.98-1ubuntu0.3_amd64.deb",
+        "archive": "libnss3_3.98-1ubuntu0.3_amd64.deb",
+        "sha256": "e11fdf8c09a068d0f0c3fd90ed971253dfed7227cc20d3d487fd615d4771f1bb",
+        "downloadBytes": 1444912,
+        "licenseFile": "usr/share/doc/libnss3/copyright"
+      },
+      {
+        "name": "libnspr4",
+        "version": "2:4.35-1.1build1",
+        "url": "https://archive.ubuntu.com/ubuntu/pool/main/n/nspr/libnspr4_4.35-1.1build1_amd64.deb",
+        "archive": "libnspr4_4.35-1.1build1_amd64.deb",
+        "sha256": "e579e72d091f6c7a13f5a756c31065b15aae5b81840d61b069355aa2283c07b4",
+        "downloadBytes": 117398,
+        "licenseFile": "usr/share/doc/libnspr4/copyright"
+      },
+      {
+        "name": "libasound2t64",
+        "version": "1.2.11-1ubuntu0.3",
+        "url": "https://archive.ubuntu.com/ubuntu/pool/main/a/alsa-lib/libasound2t64_1.2.11-1ubuntu0.3_amd64.deb",
+        "archive": "libasound2t64_1.2.11-1ubuntu0.3_amd64.deb",
+        "sha256": "5d17bfb5683eb99f1be951fe48e1be5bf3c52391913b6b74a8aecf9b4f5e779f",
+        "downloadBytes": 397772,
+        "licenseFile": "usr/share/doc/libasound2t64/copyright"
+      },
+      {
+        "name": "libasound2-data",
+        "version": "1.2.11-1ubuntu0.3",
+        "url": "https://archive.ubuntu.com/ubuntu/pool/main/a/alsa-lib/libasound2-data_1.2.11-1ubuntu0.3_all.deb",
+        "archive": "libasound2-data_1.2.11-1ubuntu0.3_all.deb",
+        "sha256": "0c26896193480d9dbb055e85e8ddfb9c9f34cf19afee340987cd6311e2886fc1",
+        "downloadBytes": 21350,
+        "licenseFile": "usr/share/doc/libasound2-data/copyright"
+      },
+      {
+        "name": "libnss3-tools",
+        "version": "2:3.98-1ubuntu0.3",
+        "url": "https://archive.ubuntu.com/ubuntu/pool/main/n/nss/libnss3-tools_3.98-1ubuntu0.3_amd64.deb",
+        "archive": "libnss3-tools_3.98-1ubuntu0.3_amd64.deb",
+        "sha256": "0bb7919188cb21d3bfba5d45b5aa45848aa61b92ced34ff3f8ecda7b92d788c0",
+        "downloadBytes": 615126,
+        "licenseFile": "usr/share/doc/libnss3-tools/copyright"
+      }
+    ]
+  },
+  "browserArchives": [
+    {
+      "name": "chromium-headless-shell",
+      "revision": "1248",
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/156.0.8078.4/linux64/chrome-headless-shell-linux64.zip",
+      "bytes": 125797539,
+      "upstreamMd5": "743dac7baf99eaa72e221335ea966f07",
+      "sha256": "c3e50596aef52c58f8fda3c6b3411c33d34c88b177b3ed1c2243359fd3b8ba20"
+    }
+  ],
+  "hashWasmReview": {
+    "date": "2026-10-28",
+    "sources": [
+      "https://github.com/Daninet/hash-wasm/blob/v4.12.0/package.json",
+      "https://github.com/Daninet/hash-wasm/security/advisories",
+      "https://github.com/Daninet/hash-wasm/blob/v4.12.0/src/sha256.c"
+    ],
+    "notes": "MIT wrapper; SHA-256 C notice retained. No engines declared. Upstream advisories page had no published advisories; not a guarantee of absence."
+  }
+}

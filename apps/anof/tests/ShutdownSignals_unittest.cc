@@ -1,8 +1,9 @@
 #define BOOST_TEST_MODULE ShutdownSignals
-#include <boost/test/unit_test.hpp>
 #include <apps/anof/ShutdownSignals.h>
 #include <pthread.h>
 #include <unistd.h>
+
+#include <boost/test/unit_test.hpp>
 
 namespace anof::app::testing {
 BOOST_AUTO_TEST_CASE(blocked_signals_are_consumed_on_poll_and_request_is_sticky) {

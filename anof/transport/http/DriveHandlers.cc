@@ -3,7 +3,7 @@
 #include <anof/transport/http/DriveResponse.h>
 #include <anof/transport/http/Pagination.h>
 #include <anof/transport/http/IdentityStream.h>
-#include <anof/transport/http/BearerCredentials.h>
+#include <anof/transport/http/RequestCredentials.h>
 namespace anof::http {
 namespace {
 using namespace muduox::net;
@@ -46,7 +46,8 @@ std::optional<muduox::net::HttpRequestDecision> driveDecision(const muduox::net:
         auto target = NodeId::parse(*routeId);
         if (!target) return reject(ProtocolError::InvalidArgument, id);
         if (copy) return HttpRequestDecision::streaming(makeIdentityStream<CopyFileCommand, NodeDetails>(dispatcher, context, RequestBody::Json,
-            [target = target.value(), condition](auto body) { return parseCopyFile(body, target, condition); }, copiedNodeResponse, ready));
+            [target = target.value(), condition](auto body) { return parseCopyFile(body, target, condition); }, copiedNodeResponse, ready,
+            [](ErrorCode code) { return code == ErrorCode::IntegrityError ? ProtocolError::IntegrityError : protocolError(code); }));
         if (request.method() == HttpRequest::kDelete) return read<TrashNodeCommand, TrashView>(TrashNodeCommand{target.value(), condition}, context, dispatcher, trashedNodeResponse, ready);
         return HttpRequestDecision::streaming(makeIdentityStream<UpdateNodeCommand, NodeDetails>(dispatcher, context, RequestBody::Json,
             [target = target.value(), condition](auto body) { return parseUpdateNode(body, target, condition); }, nodeResponse, ready));

@@ -1,5 +1,6 @@
 #pragma once
 #include <anof/application/ports/InstancePreparation.h>
+
 #include <string_view>
 
 namespace anof::infrastructure::config::detail {

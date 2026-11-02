@@ -1,9 +1,10 @@
 #include <anof/infrastructure/persistence/sqlite/SqliteBlobRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteIdentitySql.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
+#include <charconv>
 namespace anof::infrastructure::sqlite {
 namespace {
-constexpr const char* columns = "id,size,sha256,state,created_at,updated_at,revision,unreferenced_at,delete_started_at";
+constexpr const char* columns = "id,size,sha256,state,created_at,updated_at,revision,unreferenced_at,delete_started_at,charged_bytes,unavailable_reason,observed_size,observed_sha256,observed_device,observed_inode,observed_mtime_ns,observed_ctime_ns";
 Result<BlobRecord> decode(SqliteStatement& s) {
     auto id = readId<BlobId>(s, 0);
     auto size = readQuantity<FileLength>(s, 1);
@@ -12,10 +13,10 @@ Result<BlobRecord> decode(SqliteStatement& s) {
     auto created = readTime(s, 4);
     auto updated = readTime(s, 5);
     auto rev = readQuantity<Revision>(s, 6);
-    if (!id || !size || !digest || digest.value().size() != 32 || !state || state.value() < 0 || state.value() > 1 || !created || !updated || !rev) return ErrorCode::IntegrityError;
+    if (!id || !size || !digest || digest.value().size() != 32 || !state || state.value() < 0 || state.value() > 2 || !created || !updated || !rev) return ErrorCode::IntegrityError;
     std::array<std::uint8_t, 32> hash{};
     std::copy(digest.value().begin(), digest.value().end(), hash.begin());
-    BlobRecord b{ { id.value(), size.value(), Sha256(hash) }, static_cast<BlobState>(state.value()), created.value(), updated.value(), rev.value(), {}, {} };
+    BlobRecord b{ { id.value(), size.value(), Sha256(hash) }, static_cast<BlobState>(state.value()), created.value(), updated.value(), rev.value(), {}, {}, {}, {} };
     for (int i = 7; i < 9; ++i) {
         auto nil = s.isNull(i);
         if (!nil) return nil.error();
@@ -24,6 +25,37 @@ Result<BlobRecord> decode(SqliteStatement& s) {
             if (!t) return t.error();
             (i == 7 ? b.unreferencedAt : b.deleteStartedAt) = t.value();
         }
+    }
+    auto charge = readQuantity<ByteCount>(s, 9);
+    if (!charge) return charge.error();
+    b.chargedBytes = charge.value();
+    auto missing = s.isNull(10);
+    if (!missing) return missing.error();
+    if (!missing.value()) {
+        auto reason = s.integer(10);
+        if (!reason || reason.value() < 0 || reason.value() > 2) return ErrorCode::IntegrityError;
+        UnavailableEvidence evidence{static_cast<UnavailableReason>(reason.value()), {}, {}};
+        if (evidence.reason != UnavailableReason::Missing) {
+            auto length = readQuantity<ByteCount>(s, 11);
+            auto device = s.text(13), inode = s.text(14);
+            auto mt = s.integer(15), ct = s.integer(16);
+            if (!length || !device || !inode || !mt || !ct) return ErrorCode::IntegrityError;
+            std::uint64_t dev = 0, ino = 0;
+            auto parse = [](const std::string& text, std::uint64_t& value) {
+                auto r = std::from_chars(text.data(), text.data()+text.size(), value);
+                return r.ec == std::errc{} && r.ptr == text.data()+text.size() && std::to_string(value)==text;
+            };
+            if (!parse(device.value(), dev) || !parse(inode.value(), ino)) return ErrorCode::IntegrityError;
+            evidence.file = FileEvidence{dev,ino,length.value(),mt.value(),ct.value()};
+            if (evidence.reason == UnavailableReason::Hash) {
+                auto actual = s.blob(12);
+                if (!actual || actual.value().size()!=32) return ErrorCode::IntegrityError;
+                std::array<std::uint8_t,32> bytes{};
+                std::copy(actual.value().begin(),actual.value().end(),bytes.begin());
+                evidence.sha256 = Sha256(bytes);
+            }
+        }
+        b.unavailable = evidence;
     }
     if (!validateBlobRecord(b)) return ErrorCode::IntegrityError;
     return b;
@@ -35,7 +67,7 @@ Result<void> save(SqliteTransactionContext& c, const BlobRecord& before, const B
 }  // namespace
 Result<void> SqliteBlobRepository::insert(const BlobRecord& b) {
     if (!validateBlobRecord(b) || b.state != BlobState::Available || b.revision.value() != 1 || b.unreferencedAt) return context_.fail(ErrorCode::IntegrityError);
-    return detail::one(context_, detail::write(context_, "INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision,unreferenced_at,delete_started_at) VALUES(?1,?2,?3,0,?4,?5,1,?6,NULL)",
+    return detail::one(context_, detail::write(context_, "INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision,unreferenced_at,delete_started_at,charged_bytes) VALUES(?1,?2,?3,0,?4,?5,1,?6,NULL,?2)",
                                                { b.content.id.toString(), b.content.size.value(), detail::BlobParameter{ b.content.sha256.bytes().data(), 32 }, b.createdAt.time_since_epoch().count(), b.updatedAt.time_since_epoch().count(), b.unreferencedAt ? detail::Parameter(b.unreferencedAt->time_since_epoch().count()) : detail::Parameter(nullptr) }));
 }
 Result<std::optional<BlobRecord>> SqliteBlobRepository::record(BlobId id) {
@@ -53,7 +85,7 @@ Result<BlobRecord> SqliteBlobRepository::markUnreferenced(BlobId id, Revision ex
     if (!old) return old.error();
     if (!old.value()) return context_.fail(ErrorCode::NotFound);
     auto b = *old.value();
-    if (b.revision != expected || b.state != BlobState::Available) return context_.fail(ErrorCode::Conflict);
+    if (b.revision != expected || b.state == BlobState::Deleting) return context_.fail(ErrorCode::Conflict);
     auto n = hasNodeReference(id);
     auto u = hasUploadReference(id);
     if (!n) return n.error();
@@ -143,7 +175,7 @@ Result<Page<BlobRecord, BlobId>> SqliteBlobRepository::deleting(PageSize size, s
     }
 }
 Result<GcStatistics> SqliteBlobRepository::gcStatistics() {
-    auto q = detail::query(context_, "SELECT coalesce(sum(size),0),count(*),coalesce(sum(CASE WHEN state=1 THEN size ELSE 0 END),0),coalesce(sum(state=1),0) FROM blobs WHERE unreferenced_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM nodes n WHERE n.blob_id=blobs.id) AND NOT EXISTS(SELECT 1 FROM uploads u WHERE u.pending_blob_id=blobs.id AND (u.state IN (3,4) OR u.cleanup_pending=1))");
+    auto q = detail::query(context_, "SELECT coalesce(sum(size),0),count(*),coalesce(sum(CASE WHEN state=1 THEN size ELSE 0 END),0),coalesce(sum(state=1),0) FROM blobs WHERE state IN (0,1) AND unreferenced_at IS NOT NULL AND NOT EXISTS(SELECT 1 FROM nodes n WHERE n.blob_id=blobs.id) AND NOT EXISTS(SELECT 1 FROM uploads u WHERE u.pending_blob_id=blobs.id AND (u.state IN (3,4) OR u.cleanup_pending=1))");
     if (!q) return q.error();
     auto r = q.value()->step();
     if (!r || !r.value()) return context_.fail(ErrorCode::IntegrityError);
@@ -152,6 +184,20 @@ Result<GcStatistics> SqliteBlobRepository::gcStatistics() {
     auto c = readQuantity<ByteCount>(*q.value(), 2);
     auto d = readQuantity<NodeCount>(*q.value(), 3);
     if (!a || !b || !c || !d) return context_.fail(ErrorCode::IntegrityError);
-    return GcStatistics{ a.value(), b.value(), c.value(), d.value() };
+    auto extras = detail::query(context_, "SELECT (SELECT coalesce(sum(charged_bytes),0) FROM quarantine_entries),(SELECT count(*) FROM quarantine_entries),(SELECT coalesce(sum(charged_bytes),0) FROM blobs WHERE state=2),(SELECT count(*) FROM blobs WHERE state=2)");
+    if (!extras) return extras.error();
+    auto row = extras.value()->step();
+    if (!row || !row.value()) return context_.fail(ErrorCode::IntegrityError);
+    auto qb=readQuantity<ByteCount>(*extras.value(),0), ub=readQuantity<ByteCount>(*extras.value(),2);
+    auto qn=readQuantity<NodeCount>(*extras.value(),1), un=readQuantity<NodeCount>(*extras.value(),3);
+    if (!qb || !ub || !qn || !un) return context_.fail(ErrorCode::IntegrityError);
+    GcStatistics stats{a.value(),b.value(),c.value(),d.value(),qb.value(),qn.value(),ub.value(),un.value()};
+    auto total = detail::query(context_, "SELECT retained_bytes FROM storage_accounting WHERE singleton=1");
+    if (!total) return total.error();
+    auto present=total.value()->step();
+    if (!present || !present.value()) return context_.fail(ErrorCode::IntegrityError);
+    auto retained=readQuantity<ByteCount>(*total.value(),0);
+    if (!retained || !validateStorageStatistics(stats,retained.value())) return context_.fail(ErrorCode::IntegrityError);
+    return stats;
 }
 }  // namespace anof::infrastructure::sqlite

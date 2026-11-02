@@ -1,0 +1,36 @@
+[Unit]
+Description=ANOF personal cloud drive
+After=network.target
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=exec
+User=anof
+Group=anof
+UMask=0077
+WorkingDirectory=/var/lib/anof
+ExecStartPre=/usr/local/bin/anof --json config validate --root /var/lib/anof/instance
+ExecStart=/usr/local/bin/anof serve --root /var/lib/anof/instance
+Restart=on-failure
+RestartSec=5s
+RestartPreventExitStatus=2 3
+KillSignal=SIGTERM
+KillMode=control-group
+TimeoutStopSec=120s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=anof
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/anof
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

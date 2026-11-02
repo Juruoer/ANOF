@@ -1,12 +1,10 @@
 #define BOOST_TEST_MODULE SessionTokenCodec
-#include <boost/test/unit_test.hpp>
-
 #include <anof/infrastructure/crypto/SodiumSessionTokenCodec.h>
 #include <anof/infrastructure/crypto/internal/SodiumSupport.h>
-
 #include <sodium.h>
 
 #include <array>
+#include <boost/test/unit_test.hpp>
 #include <string>
 #include <string_view>
 
@@ -67,7 +65,7 @@ BOOST_AUTO_TEST_CASE(initialization_status_classification) {
 }
 
 BOOST_AUTO_TEST_CASE(repeated_production_construction) {
-    // 不重置进程全局状态；首次／重复状态的分类由上一个测试独立覆盖。
+    // 不重置进程全局状态；首次/重复状态的分类由上一个测试独立覆盖。
     for (int i = 0; i < 3; ++i) {
         auto codec = makeSodiumSessionTokenCodec();
         BOOST_REQUIRE(codec);
@@ -92,7 +90,8 @@ BOOST_AUTO_TEST_CASE(canonical_round_trips) {
     for (std::size_t v = 0; v < 3; ++v) {
         std::array<unsigned char, 32> bytes{};
         for (std::size_t i = 0; i < bytes.size(); ++i) {
-            bytes[i] = v == 0 ? 0 : v == 1 ? static_cast<unsigned char>(i) : 255;
+            bytes[i] = v == 0 ? 0 : v == 1 ? static_cast<unsigned char>(i)
+                                           : 255;
         }
         std::array<char, 44> encoded{};
         sodium_bin2base64(encoded.data(), encoded.size(), bytes.data(), bytes.size(), sodium_base64_VARIANT_URLSAFE_NO_PADDING);
@@ -108,8 +107,8 @@ BOOST_AUTO_TEST_CASE(wrong_lengths_padding_scheme_and_trailing_input) {
     BOOST_REQUIRE(codec);
     const std::string valid = vectors[0].token;
     for (const auto& token : { std::string{}, std::string(42, 'A'), std::string(44, 'A'), std::string(4096, 'A'),
-                              valid + "=", valid + "==", valid + "A", valid + "\n", " " + valid,
-                              "Bearer " + valid, std::string(vectors[0].digest), valid + std::string(1, '\0') }) {
+                               valid + "=", valid + "==", valid + "A", valid + "\n", " " + valid,
+                               "Bearer " + valid, std::string(vectors[0].digest), valid + std::string(1, '\0') }) {
         checkUnauthenticated(*codec.value(), token);
     }
     // string_view 不要求 NUL 结尾，也不得读取视图之外的尾随字节。

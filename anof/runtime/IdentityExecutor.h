@@ -26,7 +26,7 @@ public:
     TaskSubmission submit(RequestId, RegisterCommand, Completion<UserProfile>) override;
     TaskSubmission submit(RequestId, LoginCommand, Completion<LoginResult>) override;
     TaskSubmission submit(RequestContext, LogoutCommand, Completion<void>) override;
-    TaskSubmission submit(RequestContext, GetMeCommand, Completion<UserProfile>) override;
+    TaskSubmission submit(RequestContext, GetMeCommand, Completion<CurrentUserView>) override;
     TaskSubmission submit(RequestContext, CreateInviteCommand, Completion<CreatedInvite>) override;
     TaskSubmission submit(RequestContext, ListInvitesCommand, Completion<Page<InviteInfo, InviteCursor>>) override;
     TaskSubmission submit(RequestContext, RevokeInviteCommand, Completion<void>) override;
@@ -40,6 +40,7 @@ public:
     TaskSubmission submit(RequestContext, SetUserEnabledCommand, Completion<AdminUserView>) override;
     TaskSubmission submit(RequestContext, GetQuotaCommand, Completion<ManagedQuota>) override;
     TaskSubmission submit(RequestContext, SetQuotaLimitCommand, Completion<ManagedQuota>) override;
+
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

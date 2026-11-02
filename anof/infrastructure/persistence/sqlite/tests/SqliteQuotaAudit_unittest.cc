@@ -1,11 +1,10 @@
 #define BOOST_TEST_MODULE AnofSqliteQuotaAudit
-#include <boost/test/unit_test.hpp>
-
-#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
+#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.h>
 
 #include <algorithm>
+#include <boost/test/unit_test.hpp>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -41,11 +40,7 @@ struct Scenario {
     QuotaScope scope = SpaceQuota{ space };
     QuotaScope contribution = PublicContributionQuota{ space, user };
     MetadataSeed seed{
-        { { { user, UserRole::Administrator, AuthEpoch{} }, true } }, {},
-        { { space, SpaceKind::Public, std::nullopt, root } }, {},
-        { { { root, space, std::nullopt, "", user, Revision{}, now, now }, std::nullopt, false } },
-        { { scope, { amount(100, 10), amount(10, 1), amount(20, 2) } },
-          { contribution, { amount(100, 10), amount(10, 1), amount(20, 2) } } }
+        { { { user, UserRole::Administrator, AuthEpoch{} }, true } }, {}, { { space, SpaceKind::Public, std::nullopt, root } }, {}, { { { root, space, std::nullopt, "", user, Revision{}, now, now }, std::nullopt, false } }, { { scope, { amount(100, 10), amount(10, 1), amount(20, 2) } }, { contribution, { amount(100, 10), amount(10, 1), amount(20, 2) } } }
     };
     NewDirectory directory() const { return { child, space, root, "child", user, now }; }
     DirectoryCreatedEvent event() const { return { user, space, child, root, id<RequestId>(10), now }; }
@@ -334,8 +329,8 @@ BOOST_AUTO_TEST_CASE(account_quota_missing_rows_and_occupied_overflow_fail_close
             } else {
                 const std::string dimension = damage == 1 ? "bytes" : "nodes";
                 execute(backend, std::string("PRAGMA ignore_check_constraints=ON; UPDATE ") + table +
-                    " SET limit_" + dimension + "=9223372036854775807,used_" + dimension +
-                    "=9223372036854775807,reserved_" + dimension + "=1");
+                                     " SET limit_" + dimension + "=9223372036854775807,used_" + dimension +
+                                     "=9223372036854775807,reserved_" + dimension + "=1");
             }
             auto store = connect(backend);
             auto tx = begin(*store);

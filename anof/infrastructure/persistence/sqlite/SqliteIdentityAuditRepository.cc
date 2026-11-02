@@ -28,6 +28,9 @@ Result<void> SqliteIdentityAuditRepository::append(const IdentityEvent& event) {
             action = std::is_same_v<T, UserEnabled> ? "user_enabled" : "user_disabled";
             actor = value.actor.toString();
             subject = value.subject.toString();
+        } else if constexpr (std::is_same_v<T, AdministratorPasswordReset>) {
+            action = "administrator_password_reset";
+            subject = value.subject.toString();
         } else if constexpr (std::is_same_v<T, QuotaChanged>) {
             action = "quota_changed";
             actor = value.actor.toString();

@@ -1,1 +1,2 @@
 anof_add_unit_test(anof_identity_values_unittest IdentityValues_unittest.cc)
+set_tests_properties(anof_identity_values_unittest PROPERTIES TIMEOUT 30 LABELS "unit;domain;identity")

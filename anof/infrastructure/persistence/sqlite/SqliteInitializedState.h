@@ -7,4 +7,4 @@ Result<InitReceipt> verifyInitialized(SqliteConnection&, PasswordHashLimits, boo
 inline bool validPasswordLimits(PasswordHashLimits limits) {
     return limits.maxMemoryKiB >= 8 && limits.maxMemoryKiB <= 262144 && limits.maxIterations >= 1 && limits.maxIterations <= 10 && limits.maxParallelism == 1;
 }
-}
+}  // namespace anof::infrastructure::sqlite::detail

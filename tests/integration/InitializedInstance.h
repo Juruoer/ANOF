@@ -4,14 +4,13 @@
 
 namespace anof::testing {
 inline TransferInitOptions testInitOptions(const std::filesystem::path& root) {
-    const QuotaDelta quota{ByteCount::from(1LL << 40).value(), NodeCount::from(100).value()};
+    const QuotaDelta quota{ ByteCount::from(1LL << 40).value(), NodeCount::from(100).value() };
     InstanceConfiguration config;
     config.developmentHttp = true;
     config.port = 0;
     config.metadataQueue = 1;
     config.shutdownGraceSeconds = 0.5;
-    return {InitOptions{root, LoginName::parse("administrator").value(), DisplayName::parse("Test administrator").value(),
-        {quota, quota, quota}, UserLimit::from(10).value(), config}, ByteCount::from(1048576).value()};
+    return { InitOptions{ root, LoginName::parse("administrator").value(), DisplayName::parse("Test administrator").value(), { quota, quota, quota }, UserLimit::from(10).value(), config }, ByteCount::from(1048576).value() };
 }
 inline InitResult<InitReceipt> initializeTestInstance(const std::filesystem::path& root) {
     // 仅测试输入；生产入口从终端读取，不提供这个密码或默认账户。

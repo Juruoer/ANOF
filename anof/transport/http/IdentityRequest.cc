@@ -1,4 +1,5 @@
 #include <anof/transport/http/IdentityRequest.h>
+#include <anof/transport/http/RequestCredentials.h>
 #include <anof/transport/http/internal/FlatJson.h>
 #include <muduox/net/http/HttpQueryParams.h>
 #include <arpa/inet.h>
@@ -6,23 +7,24 @@
 namespace anof::http {
 using internal::FieldType;
 using internal::FlatJson;
-Parsed<RegisterCommand> parseRegisterJson(std::string_view body, AuthenticationSource source) {
-    FlatJson json{{"login"}, {"display_name"}, {"password"}, {"invite_token"}};
+Parsed<RegistrationRequest> parseRegisterJson(std::string_view body, AuthenticationSource source) {
+    FlatJson json{{"login"}, {"display_name"}, {"password"}, {"invite_token"}, {"credential_mode", FieldType::Text, false}};
     if (auto error = json.parse(body)) return *error;
     auto login = LoginName::parse(json[0].text);
     auto display = DisplayName::parse(json[1].text);
     auto password = PasswordInput::parse(json[2].text);
     auto invite = InviteTokenText::parse(json[3].text);
     if (!login || !display || !password || !invite) return ProtocolError::InvalidArgument;
-    return RegisterCommand{std::move(login).value(), std::move(display).value(), std::move(password).value(), std::move(invite).value(), source};
+    if (json[4].seen && json[4].text != "bearer" && json[4].text != "cookie") return ProtocolError::InvalidArgument;
+    return RegistrationRequest{{std::move(login).value(), std::move(display).value(), std::move(password).value(), std::move(invite).value(), source}, json[4].text == "cookie" ? CredentialMode::Cookie : CredentialMode::Bearer};
 }
 Parsed<LoginCommand> parseLoginJson(std::string_view body, AuthenticationSource source) {
     FlatJson json{{"login"}, {"password"}, {"credential_mode"}};
     if (auto error = json.parse(body)) return *error;
     auto login = LoginName::parse(json[0].text);
     auto password = PasswordInput::parse(json[1].text);
-    if (!login || !password || json[2].text != "bearer") return ProtocolError::InvalidArgument;
-    return LoginCommand{std::move(login).value(), std::move(password).value(), CredentialMode::Bearer, source};
+    if (!login || !password || (json[2].text != "bearer" && json[2].text != "cookie")) return ProtocolError::InvalidArgument;
+    return LoginCommand{std::move(login).value(), std::move(password).value(), json[2].text == "cookie" ? CredentialMode::Cookie : CredentialMode::Bearer, source};
 }
 Parsed<CreateInviteCommand> parseCreateInviteJson(std::string_view body) {
     FlatJson json{{"max_uses", FieldType::Integer, false}, {"valid_for_seconds", FieldType::Integer, false}};
@@ -43,7 +45,9 @@ Parsed<RevokeInviteCommand> parseRevokeInvite(std::string_view id) {
     return RevokeInviteCommand{value.value()};
 }
 std::optional<ProtocolError> validateAnonymousCredentials(const muduox::net::HttpHeaders& headers) {
-    if (headers.contains("authorization") || headers.contains("cookie")) return ProtocolError::InvalidArgument;
+    if (headers.contains("authorization")) return ProtocolError::InvalidArgument;
+    auto cookie = readCookieSession(headers);
+    if (auto* error = std::get_if<ProtocolError>(&cookie)) return *error;
     return std::nullopt;
 }
 std::optional<ProtocolError> validateBodylessHeaders(const muduox::net::HttpHeaders& headers) {

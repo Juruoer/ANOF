@@ -49,7 +49,7 @@ Result<void> directoryPermissions(int fd, bool privateDirectory) {
 }
 }
 
-Result<InstanceRoot> openInstanceRoot(const std::filesystem::path& root) {
+static Result<InstanceRoot> openDirectory(const std::filesystem::path& root, bool privateFinal) {
     if (!root.is_absolute() || root.native().find('\0') != std::string::npos) return ErrorCode::InvalidArgument;
     std::vector<std::string> components;
     for (const auto& part : root.relative_path()) {
@@ -58,19 +58,22 @@ Result<InstanceRoot> openInstanceRoot(const std::filesystem::path& root) {
     }
     OwnedFd current(::open("/", O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
     if (current.get() < 0) return filesystemError(errno);
-    auto valid = directoryPermissions(current.get(), components.empty());
+    auto valid = directoryPermissions(current.get(), components.empty() && privateFinal);
     if (!valid) return valid.error();
     std::filesystem::path absolute = "/";
     for (std::size_t i = 0; i < components.size(); ++i) {
         OwnedFd next(::openat(current.get(), components[i].c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
         if (next.get() < 0) return filesystemError(errno);
-        valid = directoryPermissions(next.get(), i + 1 == components.size());
+        valid = directoryPermissions(next.get(), i + 1 == components.size() && privateFinal);
         if (!valid) return valid.error();
         absolute /= components[i];
         current = std::move(next);
     }
     return InstanceRoot{ std::move(absolute), std::move(current) };
 }
+
+Result<InstanceRoot> openInstanceRoot(const std::filesystem::path& root) { return openDirectory(root,true); }
+Result<InstanceRoot> openControlledDirectory(const std::filesystem::path& root) { return openDirectory(root,false); }
 
 Result<InstanceDirectories> openInstanceDirectories(const std::filesystem::path& root) {
     auto opened = openInstanceRoot(root);

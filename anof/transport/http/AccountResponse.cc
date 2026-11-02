@@ -11,11 +11,11 @@ using Json = nlohmann::json;
 JsonResponse response(RequestId id, const Json& json) {
     return internal::jsonResponse(200, "OK", id, json, kMaxIdentityResponseBytes);
 }
-}
+}  // namespace
 Result<JsonResponse> adminUserResponse(const AdminUserView& user, RequestId id) {
     auto json = internal::userJson(user.user);
     if (!json) return json.error();
-    auto output = response(id, {{"user", std::move(json).value()}, {"private_space_id", user.privateSpaceId.toString()}});
+    auto output = response(id, { { "user", std::move(json).value() }, { "private_space_id", user.privateSpaceId.toString() } });
     output.headers.addHeader("ETag", internal::userTag(user.user));
     return output;
 }
@@ -30,10 +30,11 @@ Result<JsonResponse> managedQuotaResponse(const ManagedQuota& quota, RequestId i
             tag = "\"quota-contribution-" + scope.spaceId.toString() + "-" + scope.userId.toString();
         }
         tag += "-" + std::to_string(quota.quota.revision.value()) + "\"";
-        auto output = response(id, {{"space_id", scope.spaceId.toString()}, {"user_id", std::move(user)}, {"quota", internal::quotaJson(quota.quota)}});
+        auto output = response(id, { { "space_id", scope.spaceId.toString() }, { "user_id", std::move(user) }, { "quota", internal::quotaJson(quota.quota) } });
         output.headers.addHeader("ETag", tag);
         return output;
-    }, quota.scope);
+    },
+                      quota.scope);
 }
 Result<JsonResponse> usersResponse(const Page<UserProfile, UserCursor>& page, RequestId id) {
     if (page.items.size() > 200 || (page.items.empty() && page.next)) return ErrorCode::InternalError;
@@ -50,7 +51,7 @@ Result<JsonResponse> usersResponse(const Page<UserProfile, UserCursor>& page, Re
         if (!cursor) return cursor.error();
         next = std::move(cursor).value();
     }
-    return response(id, {{"items", std::move(items)}, {"next_cursor", std::move(next)}});
+    return response(id, { { "items", std::move(items) }, { "next_cursor", std::move(next) } });
 }
 ProtocolError quotaUpdateError(ErrorCode code) {
     return code == ErrorCode::QuotaExceeded ? ProtocolError::QuotaLimitExceeded : protocolError(code);

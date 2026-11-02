@@ -4,7 +4,14 @@
 
 namespace anof::infrastructure::sqlite {
 
-enum class SqliteOperation { Open, Configure, Prepare, Bind, Step, Begin, Commit, Rollback };
+enum class SqliteOperation { Open,
+                             Configure,
+                             Prepare,
+                             Bind,
+                             Step,
+                             Begin,
+                             Commit,
+                             Rollback };
 
 // 仅保存诊断分类，避免把 SQL、路径或绑定凭据写入公开错误。
 struct SqliteDiagnostic {

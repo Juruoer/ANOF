@@ -2,6 +2,7 @@
 
 #include <anof/core/Quantity.h>
 #include <anof/domain/identity/SessionDigest.h>
+
 #include <array>
 #include <string>
 #include <string_view>
@@ -15,7 +16,8 @@ using SessionCount = Quantity<struct SessionCountTag>;
 using InviteUseCount = Quantity<struct InviteUseCountTag, 0, 10000>;
 using InviteUseLimit = Quantity<struct InviteUseLimitTag, 1, 10000>;
 
-enum class CredentialMode { Bearer };
+enum class CredentialMode { Bearer = 0,
+                            Cookie = 1 };
 struct SessionCredential {
     SessionDigest digest;
     CredentialMode mode;
@@ -28,6 +30,7 @@ public:
     const Bytes& bytes() const noexcept { return bytes_; }
     friend bool operator==(const InviteDigest& a, const InviteDigest& b) noexcept { return a.bytes_ == b.bytes_; }
     friend bool operator!=(const InviteDigest& a, const InviteDigest& b) noexcept { return !(a == b); }
+
 private:
     Bytes bytes_;
 };
@@ -37,6 +40,7 @@ public:
     static Result<LoginName> parse(std::string_view text);
     const std::string& value() const noexcept { return value_; }
     friend bool operator==(const LoginName& a, const LoginName& b) { return a.value_ == b.value_; }
+
 private:
     explicit LoginName(std::string text) : value_(std::move(text)) {}
     std::string value_;
@@ -46,6 +50,7 @@ class DisplayName {
 public:
     static Result<DisplayName> parse(std::string_view text);
     const std::string& value() const noexcept { return value_; }
+
 private:
     explicit DisplayName(std::string text) : value_(std::move(text)) {}
     std::string value_;

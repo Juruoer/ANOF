@@ -9,8 +9,8 @@ class SqliteIdentityAuditRepository final : public IdentityAuditRepository {
 public:
     explicit SqliteIdentityAuditRepository(SqliteTransactionContext& context) : context_(context) {}
     Result<void> append(const IdentityEvent&) override;
+
 private:
     SqliteTransactionContext& context_;
-
 };
-}
+}  // namespace anof::infrastructure::sqlite

@@ -4,7 +4,10 @@
 
 namespace anof::runtime {
 
-enum class RuntimeState { Starting, Ready, Stopping, Stopped };
+enum class RuntimeState { Starting,
+                          Ready,
+                          Stopping,
+                          Stopped };
 
 // 调度与生命周期基础，不拥有 HTTP 或实例资源；具体装配由 InstanceServer 完成。
 // 调用方完成实例准备后 start；HTTP 配置并启动成功后 markHttpStarted。
@@ -19,7 +22,7 @@ public:
     Result<void> start(MetadataExecutor::Factory factory, MetadataExecutor::Started metadataStarted = {},
                        MetadataExecutor::Stopped stopped = {});
     bool markHttpStarted();
-    void requestStop();  // 先关闭准入；调用方随后执行 HttpServer::stop。
+    void requestStop();      // 先关闭准入；调用方随后执行 HttpServer::stop。
     bool markHttpStopped();  // 仅由 HTTP stop callback 或启动回滚的等价清理屏障调用。
     RuntimeState state() const;
     bool ready() const;

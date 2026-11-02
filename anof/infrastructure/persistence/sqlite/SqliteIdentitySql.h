@@ -1,7 +1,8 @@
 #pragma once
 
-#include <anof/infrastructure/persistence/sqlite/SqliteTransactionContext.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteTransactionContext.h>
+
 #include <initializer_list>
 #include <variant>
 
@@ -20,7 +21,7 @@ struct Parameter {
     Parameter(const char* s) : value(std::string_view(s)) {}
     Parameter(BlobParameter b) : value(b) {}
 };
-Result<std::unique_ptr<SqliteStatement>> query(SqliteTransactionContext&, std::string_view, std::initializer_list<Parameter>  = {});
-Result<std::int64_t> write(SqliteTransactionContext&, std::string_view, std::initializer_list<Parameter>  = {});
+Result<std::unique_ptr<SqliteStatement>> query(SqliteTransactionContext&, std::string_view, std::initializer_list<Parameter> = {});
+Result<std::int64_t> write(SqliteTransactionContext&, std::string_view, std::initializer_list<Parameter> = {});
 Result<void> one(SqliteTransactionContext&, const Result<std::int64_t>&);
-}
+}  // namespace anof::infrastructure::sqlite::detail

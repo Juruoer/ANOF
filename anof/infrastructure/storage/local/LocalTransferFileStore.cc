@@ -44,6 +44,18 @@ E error() {
         return E::Integrity;
     }
 }
+FileResult<FileEvidence> fileEvidence(const struct stat& s) {
+    auto ns = [](const timespec& t) -> std::optional<std::int64_t> {
+        if (t.tv_sec > INT64_MAX / 1000000000 || t.tv_sec < INT64_MIN / 1000000000 || t.tv_nsec < 0 || t.tv_nsec >= 1000000000) return {};
+        auto base = static_cast<std::int64_t>(t.tv_sec) * 1000000000;
+        if (base > INT64_MAX - t.tv_nsec) return {};
+        return base + t.tv_nsec;
+    };
+    auto size = ByteCount::from(s.st_size);
+    auto mt = ns(s.st_mtim), ct = ns(s.st_ctim);
+    if (!size || !mt || !ct) return E::Integrity;
+    return FileEvidence{ static_cast<std::uint64_t>(s.st_dev), static_cast<std::uint64_t>(s.st_ino), size.value(), *mt, *ct };
+}
 bool same(const struct stat& a, const struct stat& b) { return a.st_dev == b.st_dev && a.st_ino == b.st_ino; }
 bool safe(const struct stat& s, bool directory) {
     return s.st_uid == geteuid() && (s.st_mode & 07777) == (directory ? 0700 : 0600) &&
@@ -174,7 +186,9 @@ public:
         if (!f || fstat(f->fd.get(), &s) || !safe(s, false)) return E::Integrity;
         auto count = ByteCount::from(s.st_size);
         if (!count) return E::Integrity;
-        return TransferFileStat{ count.value() };
+        auto evidence = fileEvidence(s);
+        if (auto* e = std::get_if<E>(&evidence)) return *e;
+        return TransferFileStat{ count.value(), std::get<FileEvidence>(evidence) };
     }
     FileStatus write(TransferFileHandle& h, UploadOffset offset, const TransferBlock& block) override {
         if (!bounds(offset, block.size)) return E::Integrity;
@@ -350,7 +364,9 @@ FileResult<Page<InventoryEntry, InventoryCursor>> Store::inventory(InventoryArea
             auto id = BlobId::parse(name);
             if (id && id.value().toString() == name && relative.substr(0, 2) == name.substr(0, 2)) key = ObjectFile{ id.value() };
         }
-        entries.push_back({ relative, key, ByteCount::from(s.st_size).value() });
+        auto evidence = fileEvidence(s);
+        if (auto* e = std::get_if<E>(&evidence)) return *e;
+        entries.push_back({ relative, key, ByteCount::from(s.st_size).value(), std::get<FileEvidence>(evidence) });
         std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) { return a.relativeName < b.relativeName; });
         if (entries.size() > static_cast<std::size_t>(size.value() + 1)) entries.pop_back();
         return std::monostate{};

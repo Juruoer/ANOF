@@ -1,9 +1,9 @@
 #pragma once
 
 #include <anof/transport/http/JsonResponse.h>
-#include <nlohmann/json.hpp>
 
 #include <initializer_list>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -11,7 +11,9 @@
 namespace anof::http::internal {
 // 仅清理本模块持有的字符串，不承诺清除调用者或 JSON lexer 内部副本。
 void clearText(std::string& text) noexcept;
-enum class FieldType { Text, Integer, Boolean };
+enum class FieldType { Text,
+                       Integer,
+                       Boolean };
 struct Field {
     Field(std::string_view fieldName, FieldType fieldType = FieldType::Text, bool isRequired = true)
         : name(fieldName), type(fieldType), required(isRequired) {}
@@ -45,6 +47,7 @@ public:
     bool key(string_t& value) override;
     bool string(string_t& value) override;
     bool parse_error(std::size_t, const std::string&, const nlohmann::detail::exception&) override { return false; }
+
 private:
     std::vector<Field> fields_;
     Field* current_ = nullptr;

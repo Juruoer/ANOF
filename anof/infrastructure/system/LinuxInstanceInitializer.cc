@@ -90,7 +90,7 @@ InitResult<void> publish(int directory, int root, const char* name, std::string_
     if (::fstat(file.get(), &held) != 0 || ::fstatat(directory, temporary.c_str(), &named, AT_SYMLINK_NOFOLLOW) != 0) return initializationErrno(errno, stage);
     if (held.st_dev != named.st_dev || held.st_ino != named.st_ino) return InitFailure{ InitError::IntegrityError, stage };
     if (ops.renameNoReplace(directory, temporary.c_str(), directory, name) != 0) {
-        // EIO 等错误不能证明名字未发布；已知未执行的冲突／权限等错误保留具体分类。
+        // EIO 等错误不能证明名字未发布；已知未执行的冲突/权限等错误保留具体分类。
         if (errno == EIO || errno == EINTR) return InitFailure{ InitError::PublicationOutcomeUnknown, stage };
         return initializationErrno(errno, stage);
     }

@@ -1,5 +1,6 @@
 #include <tests/diagnostics/ProcessSnapshot.h>
 #include <tests/diagnostics/WaitTrace.h>
+#include <nlohmann/json.hpp>
 #define BOOST_TEST_MODULE ServeProcess
 #include <boost/test/unit_test.hpp>
 #include <tests/integration/InitializedInstance.h>
@@ -99,9 +100,9 @@ struct Process {
         return false;
     }
     unsigned short ready() {
-        BOOST_REQUIRE_MESSAGE(wait([&] { const auto start = text.find("ANOF_READY address=127.0.0.1 port="); return start != std::string::npos && text.find('\n', start) != std::string::npos; }), text);
-        const auto pos = text.find("ANOF_READY address=127.0.0.1 port=");
-        return static_cast<unsigned short>(std::stoul(text.substr(pos + std::string("ANOF_READY address=127.0.0.1 port=").size())));
+        std::optional<unsigned short> port;
+        BOOST_REQUIRE_MESSAGE(wait([&] {std::istringstream lines(text);std::string line;while(std::getline(lines,line)){auto j=nlohmann::json::parse(line,nullptr,false);if(j.is_object()&&j.value("event","")=="ANOF_READY")port=j.at("port").get<unsigned short>();}return port.has_value();}), text);
+        return *port;
     }
     void exited(int code) {
         anof::test::WaitTrace trace(__FILE__, __LINE__);
@@ -212,7 +213,7 @@ BOOST_AUTO_TEST_CASE(second_process_is_rejected_without_disturbing_live_instance
     Fixture fixture;
     Process first(fixture.arguments()); const auto port = first.ready();
     Process second(fixture.arguments()); second.exited(3);
-    BOOST_CHECK(second.text.find("stage=prepare code=CONFLICT") != std::string::npos);
+    BOOST_CHECK(second.text.find("\"stage\":\"prepare\"") != std::string::npos && second.text.find("\"code\":\"CONFLICT\"") != std::string::npos);
     BOOST_CHECK(second.text.find("ANOF_READY") == std::string::npos);
     Client client(port, first); client.send("GET /health/live HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
     BOOST_CHECK(client.receive().find("HTTP/1.1 200 OK\r\n") == 0);
@@ -265,7 +266,7 @@ BOOST_AUTO_TEST_CASE(bind_failure_exits_cleanly_releases_lock_and_allows_restart
     fixture.write("config.toml", "development_http=true\nport=" + std::to_string(ntohs(address.sin_port)) + "\n");
     Process process(fixture.arguments());
     process.exited(4);
-    BOOST_CHECK(process.text.find("ANOF_ERROR stage=startup code=CONFLICT") != std::string::npos);
+    BOOST_CHECK(process.text.find("\"code\":\"CONFLICT\"") != std::string::npos && process.text.find("\"stage\":\"startup\"") != std::string::npos);
     BOOST_CHECK(process.text.find("ANOF_READY") == std::string::npos);
     BOOST_CHECK(process.text.find("ANOF_STOPPED") != std::string::npos);
     fixture.lockAvailable(true);
@@ -284,7 +285,7 @@ BOOST_AUTO_TEST_CASE(port_conflict_does_not_disturb_another_live_instance) {
     secondRoot.write("config.toml", "development_http=true\nport=" + std::to_string(port) + "\n");
     Process second(secondRoot.arguments());
     second.exited(4);
-    BOOST_CHECK(second.text.find("stage=startup code=CONFLICT") != std::string::npos);
+    BOOST_CHECK(second.text.find("\"stage\":\"startup\"") != std::string::npos && second.text.find("\"code\":\"CONFLICT\"") != std::string::npos);
     BOOST_CHECK(second.text.find("ANOF_READY") == std::string::npos);
     BOOST_CHECK(second.text.find("ANOF_STOPPED") != std::string::npos);
     secondRoot.lockAvailable(true);

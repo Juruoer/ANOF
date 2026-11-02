@@ -1,6 +1,6 @@
 #pragma once
-#include <tests/persistence_contract/TestMetadataBackend.h>
 #include <anof/application/ports/TransferMetadataStore.h>
+#include <tests/persistence_contract/TestMetadataBackend.h>
 
 namespace anof::testing {
 struct TransferSeed {

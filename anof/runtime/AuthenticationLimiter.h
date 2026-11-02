@@ -1,6 +1,7 @@
 #pragma once
 #include <anof/domain/identity/AuthenticationSource.h>
 #include <anof/domain/identity/IdentityValues.h>
+
 #include <chrono>
 #include <optional>
 #include <vector>
@@ -12,6 +13,7 @@ public:
     using Time = std::chrono::steady_clock::time_point;
     explicit AuthenticationLimiter(std::size_t capacity = 1024);
     bool allow(AuthenticationSource source, const LoginName& login, Time now);
+
 private:
     struct Entry {
         AuthenticationSource source;

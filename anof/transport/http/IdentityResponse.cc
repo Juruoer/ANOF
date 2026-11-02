@@ -1,4 +1,5 @@
 #include <anof/transport/http/IdentityResponse.h>
+#include <anof/transport/http/internal/FlatJson.h>
 #include <anof/transport/http/internal/NodeJson.h>
 #include <anof/transport/http/Pagination.h>
 #include <anof/transport/http/internal/JsonOutput.h>
@@ -68,11 +69,37 @@ Result<JsonResponse> registeredUserResponse(const UserProfile& user, RequestId i
     if (!json) return json.error();
     return response(201, id, json.value());
 }
-Result<JsonResponse> currentUserResponse(const UserProfile& user, RequestId id) {
+Result<JsonResponse> userProfileResponse(const UserProfile& user, RequestId id) {
     auto json = userJson(user);
     if (!json) return json.error();
     auto output = response(200, id, json.value());
     output.headers.addHeader("ETag", userTag(user));
+    return output;
+}
+Result<JsonResponse> currentUserResponse(const CurrentUserView& current, RequestId id) {
+    auto json = userJson(current.user);
+    if (!json) return json.error();
+    json.value()["instance_id"] = current.instanceId.toString();
+    auto output = response(200, id, json.value());
+    output.headers.addHeader("ETag", userTag(current.user));
+    return output;
+}
+Result<JsonResponse> cookieLoginResponse(LoginResult result, RequestId id) {
+    auto user = userJson(result.user);
+    auto expires = formatUtcTimestamp(result.expiresAt);
+    if (!user || !expires || !SecretToken::session(result.accessToken.view())) return ErrorCode::InternalError;
+    auto output = response(201, id, {{"user", user.value()}, {"expires_at", expires.value()}, {"credential_mode", "cookie"}});
+    // 秘密只进入最终 Set-Cookie，不进入 JSON DOM 或日志。
+    std::string cookie;
+    struct ClearCookie {
+        std::string& value;
+        ~ClearCookie() { internal::clearText(value); }
+    } clear{cookie};
+    cookie.reserve(128);
+    cookie = "__Host-anof_session=";
+    cookie.append(result.accessToken.view());
+    cookie += "; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=604800";
+    output.headers.addHeader("Set-Cookie", cookie);
     return output;
 }
 Result<JsonResponse> loginResponse(LoginResult result, RequestId id) {

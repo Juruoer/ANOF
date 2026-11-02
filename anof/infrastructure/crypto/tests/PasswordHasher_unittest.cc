@@ -1,10 +1,11 @@
 #define BOOST_TEST_MODULE AnofPasswordHasher
-#include <boost/test/unit_test.hpp>
 #include <anof/infrastructure/crypto/SodiumPasswordHasher.h>
 #include <anof/infrastructure/crypto/internal/PasswordWork.h>
 #include <anof/infrastructure/crypto/internal/SecretBuffer.h>
 #include <sodium.h>
+
 #include <algorithm>
+#include <boost/test/unit_test.hpp>
 #include <limits>
 #include <type_traits>
 
@@ -24,18 +25,27 @@ void errorIs(const Result<T>& result, ErrorCode code) {
     BOOST_CHECK(result.error().code == code);
 }
 int calls = 0;
-int failHash(char*, const char*, unsigned long long, unsigned long long, std::size_t) { ++calls; return -1; }
-int failDerive(unsigned char*, unsigned long long, const char*, unsigned long long, const unsigned char*, unsigned long long, std::size_t, int) { ++calls; return -1; }
+int failHash(char*, const char*, unsigned long long, unsigned long long, std::size_t) {
+    ++calls;
+    return -1;
+}
+int failDerive(unsigned char*, unsigned long long, const char*, unsigned long long, const unsigned char*, unsigned long long, std::size_t, int) {
+    ++calls;
+    return -1;
+}
 }  // namespace
 
 BOOST_AUTO_TEST_CASE(explicit_policy_boundaries_are_validated_without_password_work) {
     errorIs(makeSodiumPasswordHasher({}), ErrorCode::InvalidArgument);
     for (const SodiumPasswordPolicy bad : {
-        SodiumPasswordPolicy{ { 7, 1, 1 }, { 8192, 1, 1 } },
-        { { 8192, 0, 1 }, { 8192, 1, 1 } }, { { 8192, 1, 2 }, { 8192, 1, 2 } },
-        { { 8192, 1, 1 }, { 8191, 1, 1 } }, { { 8192, 2, 1 }, { 8192, 1, 1 } },
-        { { 8192, 1, 1 }, { 262145, 1, 1 } }, { { 8192, 1, 1 }, { 8192, 11, 1 } },
-        { { 8192, 1, 1 }, { std::numeric_limits<std::uint32_t>::max(), 1, 1 } } }) {
+             SodiumPasswordPolicy{ { 7, 1, 1 }, { 8192, 1, 1 } },
+             { { 8192, 0, 1 }, { 8192, 1, 1 } },
+             { { 8192, 1, 2 }, { 8192, 1, 2 } },
+             { { 8192, 1, 1 }, { 8191, 1, 1 } },
+             { { 8192, 2, 1 }, { 8192, 1, 1 } },
+             { { 8192, 1, 1 }, { 262145, 1, 1 } },
+             { { 8192, 1, 1 }, { 8192, 11, 1 } },
+             { { 8192, 1, 1 }, { std::numeric_limits<std::uint32_t>::max(), 1, 1 } } }) {
         errorIs(makeSodiumPasswordHasher(bad), ErrorCode::InvalidArgument);
     }
     BOOST_REQUIRE(validateSodiumPasswordPolicy({ { 8, 1, 1 }, { 8, 1, 1 } }));
@@ -97,8 +107,10 @@ BOOST_AUTO_TEST_CASE(domain_supported_but_adapter_unsupported_salt_and_hash_leng
     auto h = hasher();
     for (bool salt : { false, true }) {
         std::string text(encoding);
-        if (salt) text.insert(text.find('$', text.find('$', 16) + 1), 2, 'A');
-        else text.append(1, 'A');
+        if (salt)
+            text.insert(text.find('$', text.find('$', 16) + 1), 2, 'A');
+        else
+            text.append(1, 'A');
         auto encoded = EncodedPasswordHash::parse(text, policy.verification);
         BOOST_REQUIRE(encoded);
         calls = 0;
@@ -121,7 +133,8 @@ BOOST_AUTO_TEST_CASE(calculation_failures_and_bad_hash_postconditions_are_intern
     errorIs(detail::hashPasswordWith(password(), policy, nullptr), ErrorCode::InternalError);
     errorIs(detail::verifyPasswordWith(password(), encoded.value(), policy, nullptr), ErrorCode::InternalError);
     auto unterminated = [](char* out, const char*, unsigned long long, unsigned long long, std::size_t) {
-        std::fill_n(out, crypto_pwhash_argon2id_STRBYTES, 'x'); return 0;
+        std::fill_n(out, crypto_pwhash_argon2id_STRBYTES, 'x');
+        return 0;
     };
     errorIs(detail::hashPasswordWith(password(), policy, unterminated), ErrorCode::InternalError);
     auto malformed = [](char*, const char*, unsigned long long, unsigned long long, std::size_t) { return 0; };

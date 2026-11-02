@@ -1,31 +1,33 @@
 #define BOOST_TEST_MODULE AnofSqliteInstanceBootstrap
-#include <boost/test/unit_test.hpp>
-#include <anof/infrastructure/persistence/sqlite/tests/BootstrapFixture.h>
-#include <anof/infrastructure/persistence/sqlite/tests/SqliteFaultVfs.h>
+#include <anof/application/maintenance/PrepareInstance.h>
+#include <anof/infrastructure/config/TomlInstanceConfiguration.h>
+#include <anof/infrastructure/config/internal/ConfigurationText.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteBootstrapInternal.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteInstanceMaintenance.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
+#include <anof/infrastructure/persistence/sqlite/tests/BootstrapFixture.h>
+#include <anof/infrastructure/persistence/sqlite/tests/SqliteFaultVfs.h>
 #include <anof/infrastructure/system/LinuxInstanceInitializer.h>
-#include <anof/infrastructure/system/internal/InitializationFiles.h>
-#include <anof/infrastructure/config/internal/ConfigurationText.h>
-#include <anof/application/maintenance/PrepareInstance.h>
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
-#include <anof/infrastructure/config/TomlInstanceConfiguration.h>
+#include <anof/infrastructure/system/internal/InitializationFiles.h>
 #include <sqlite3.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+#include <boost/test/unit_test.hpp>
 #include <fstream>
 #include <iterator>
 
 namespace anof::infrastructure::sqlite {
 namespace {
 using testing::bootstrapBudget;
+using testing::bootstrapId;
 using testing::bootstrapSeed;
 using testing::copyBootstrapSeed;
-using testing::bootstrapId;
-template <typename T> void failure(const InitResult<T>& result, InitError code, InitStage stage) {
+template <typename T>
+void failure(const InitResult<T>& result, InitError code, InitStage stage) {
     BOOST_REQUIRE(!result);
     BOOST_CHECK(result.error().code == code);
     BOOST_CHECK(result.error().stage == stage);
@@ -53,7 +55,11 @@ struct Fixture {
         bootstrap = std::move(makeSqliteInstanceBootstrap({ bootstrapBudget, { 0 } })).value();
         maintenance = std::move(makeSqliteInstanceMaintenance({ bootstrapBudget, { 0 } })).value();
     }
-    ~Fixture() { lease.reset(); std::error_code ignored; std::filesystem::remove_all(root, ignored); }
+    ~Fixture() {
+        lease.reset();
+        std::error_code ignored;
+        std::filesystem::remove_all(root, ignored);
+    }
     std::filesystem::path path(const char* name) const { return root / ".anof" / name; }
     InitResult<InitReceipt> create() { return bootstrap->createCurrent(lease->lease(), TransferBootstrapSeed{ copyBootstrapSeed(seed), contentBudget }); }
     InitResult<InitReceipt> verify() { return bootstrap->verifyComplete(lease->lease(), seed.identity); }
@@ -62,18 +68,28 @@ struct Fixture {
         BOOST_REQUIRE(db);
         return std::move(db).value();
     }
-    void finish() { BOOST_REQUIRE(verify()); BOOST_REQUIRE(lease->publishFormat()); BOOST_REQUIRE(lease->clearPending()); }
+    void finish() {
+        BOOST_REQUIRE(verify());
+        BOOST_REQUIRE(lease->publishFormat());
+        BOOST_REQUIRE(lease->clearPending());
+    }
     std::string read(const char* name) {
         std::ifstream file(path(name), std::ios::binary);
         return { std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
     }
     void write(const char* name, const std::string& text) {
-        std::ofstream file(path(name)); file << text; file.close(); BOOST_REQUIRE(file);
+        std::ofstream file(path(name));
+        file << text;
+        file.close();
+        BOOST_REQUIRE(file);
         BOOST_REQUIRE_EQUAL(::chmod(path(name).c_str(), 0600), 0);
     }
     std::int64_t scalar(const char* sql) {
-        auto db = raw(); auto statement = SqliteStatement::prepare(*db, sql); BOOST_REQUIRE(statement);
-        auto row = statement.value()->step(); BOOST_REQUIRE(row && row.value());
+        auto db = raw();
+        auto statement = SqliteStatement::prepare(*db, sql);
+        BOOST_REQUIRE(statement);
+        auto row = statement.value()->step();
+        BOOST_REQUIRE(row && row.value());
         return statement.value()->integer(0).value();
     }
 };
@@ -90,12 +106,13 @@ Result<void> inject(SqliteConnection& db, detail::BootstrapPoint point) {
     if (faultMode == 4 && point == detail::BootstrapPoint::BeforeCommit) ::_exit(0);
     return {};
 }
-}
+}  // namespace
 
 BOOST_AUTO_TEST_CASE(real_bootstrap_finish_and_prepare_preserve_lock_and_exact_billing) {
     Fixture f;
     const auto count = descriptors();
-    auto receipt = f.create(); BOOST_REQUIRE(receipt);
+    auto receipt = f.create();
+    BOOST_REQUIRE(receipt);
     BOOST_CHECK(receipt.value().adminUserId == f.seed.adminUserId);
     BOOST_CHECK(receipt.value().publicSpaceId == f.seed.publicSpaceId);
     BOOST_CHECK(receipt.value().privateSpaceId == f.seed.privateSpaceId);
@@ -118,10 +135,12 @@ BOOST_AUTO_TEST_CASE(real_bootstrap_finish_and_prepare_preserve_lock_and_exact_b
     failure(f.verify(), InitError::IncompleteInitialization, InitStage::Verify);
     BOOST_CHECK_EQUAL(descriptors(), count);
     f.lease.reset();
-    auto locks = system::makeLinuxInstanceLockProvider(); auto configs = config::makeTomlInstanceConfigurationLoader();
+    auto locks = system::makeLinuxInstanceLockProvider();
+    auto configs = config::makeTomlInstanceConfigurationLoader();
     auto prepared = prepareInstance(f.root, *locks.value(), *configs.value(), *f.maintenance);
     BOOST_REQUIRE(prepared);
-    auto store = openSqliteMetadataStore(f.path("metadata.sqlite3"), { bootstrapBudget, {} }); BOOST_REQUIRE(store);
+    auto store = openSqliteMetadataStore(f.path("metadata.sqlite3"), { bootstrapBudget, {} });
+    BOOST_REQUIRE(store);
     BOOST_CHECK(!std::filesystem::exists(f.root / "objects"));
 }
 BOOST_AUTO_TEST_CASE(options_and_invalid_seed_fail_before_database_creation) {
@@ -134,14 +153,17 @@ BOOST_AUTO_TEST_CASE(options_and_invalid_seed_fail_before_database_creation) {
 }
 BOOST_AUTO_TEST_CASE(password_budget_is_checked_before_creation_and_on_maintenance_reads) {
     Fixture f;
-    auto limited = makeSqliteInstanceBootstrap({ { 4096, 1, 1 }, {} }); BOOST_REQUIRE(limited);
+    auto limited = makeSqliteInstanceBootstrap({ { 4096, 1, 1 }, {} });
+    BOOST_REQUIRE(limited);
     failure(limited.value()->createCurrent(f.lease->lease(), TransferBootstrapSeed{ copyBootstrapSeed(f.seed), ByteCount::from(1024).value() }), InitError::InvalidInput, InitStage::Validate);
     BOOST_CHECK(!std::filesystem::exists(f.path("metadata.sqlite3")));
     BOOST_REQUIRE(f.create());
     failure(limited.value()->verifyComplete(f.lease->lease(), f.seed.identity), InitError::IntegrityError, InitStage::Verify);
     f.finish();
-    auto maintenance = makeSqliteInstanceMaintenance({ { 4096, 1, 1 }, {} }); BOOST_REQUIRE(maintenance);
-    const auto checked = maintenance.value()->verify(f.lease->lease()); BOOST_REQUIRE(!checked);
+    auto maintenance = makeSqliteInstanceMaintenance({ { 4096, 1, 1 }, {} });
+    BOOST_REQUIRE(maintenance);
+    const auto checked = maintenance.value()->verify(f.lease->lease());
+    BOOST_REQUIRE(!checked);
     BOOST_CHECK(checked.error().code == ErrorCode::IntegrityError);
 }
 BOOST_AUTO_TEST_CASE(strict_creation_permissions_and_unsafe_database_files_preserve_evidence) {
@@ -150,7 +172,8 @@ BOOST_AUTO_TEST_CASE(strict_creation_permissions_and_unsafe_database_files_prese
     auto created = f.create();
     ::umask(previous);
     failure(created, InitError::IntegrityError, InitStage::CreateDatabase);
-    struct stat status{}; BOOST_REQUIRE_EQUAL(::stat(f.path("metadata.sqlite3").c_str(), &status), 0);
+    struct stat status{};
+    BOOST_REQUIRE_EQUAL(::stat(f.path("metadata.sqlite3").c_str(), &status), 0);
     BOOST_CHECK_EQUAL(status.st_mode & 07777, 0);
     BOOST_REQUIRE_EQUAL(::chmod(f.path("metadata.sqlite3").c_str(), 0600), 0);
     std::filesystem::remove(f.path("metadata.sqlite3"));
@@ -160,62 +183,82 @@ BOOST_AUTO_TEST_CASE(strict_creation_permissions_and_unsafe_database_files_prese
 }
 BOOST_AUTO_TEST_CASE(existing_empty_database_or_orphan_sidecars_are_preserved) {
     for (const char* name : { "metadata.sqlite3", "metadata.sqlite3-wal", "metadata.sqlite3-shm", "metadata.sqlite3-journal" }) {
-        Fixture f; f.write(name, "");
+        Fixture f;
+        f.write(name, "");
         failure(f.create(), InitError::AlreadyExists, InitStage::CreateDatabase);
         BOOST_CHECK(std::filesystem::exists(f.path(name)));
         BOOST_CHECK_EQUAL(std::filesystem::file_size(f.path(name)), 0);
     }
 }
 BOOST_AUTO_TEST_CASE(unbootstrapped_database_is_not_finishable_or_servable) {
-    Fixture f; BOOST_REQUIRE(createSqliteDatabase(f.path("metadata.sqlite3")));
+    Fixture f;
+    BOOST_REQUIRE(createSqliteDatabase(f.path("metadata.sqlite3")));
     failure(f.verify(), InitError::IncompleteInitialization, InitStage::Verify);
-    BOOST_REQUIRE(f.lease->publishFormat()); BOOST_REQUIRE(f.lease->clearPending());
-    auto result = f.maintenance->verify(f.lease->lease()); BOOST_REQUIRE(!result); BOOST_CHECK(result.error().code == ErrorCode::IntegrityError);
+    BOOST_REQUIRE(f.lease->publishFormat());
+    BOOST_REQUIRE(f.lease->clearPending());
+    auto result = f.maintenance->verify(f.lease->lease());
+    BOOST_REQUIRE(!result);
+    BOOST_CHECK(result.error().code == ErrorCode::IntegrityError);
     BOOST_CHECK_EQUAL(f.scalar("SELECT count(*) FROM users"), 0);
 }
 BOOST_AUTO_TEST_CASE(finish_rejects_changed_identity_configuration_and_versions_without_repair) {
-    Fixture f; BOOST_REQUIRE(f.create());
-    auto other = f.seed.identity; other.operationId = bootstrapId<OperationId>(8);
+    Fixture f;
+    BOOST_REQUIRE(f.create());
+    auto other = f.seed.identity;
+    other.operationId = bootstrapId<OperationId>(8);
     failure(f.bootstrap->verifyComplete(f.lease->lease(), other), InitError::IntegrityError, InitStage::Verify);
     auto pending = f.read("initialization.pending");
     f.write("initialization.pending", system::detail::pendingText(other));
     failure(f.bootstrap->verifyComplete(f.lease->lease(), other), InitError::IntegrityError, InitStage::Verify);
     f.write("initialization.pending", pending);
-    auto config = f.read("config.toml"); f.write("config.toml", "development_http = true\n");
-    failure(f.verify(), InitError::InvalidInput, InitStage::Verify); f.write("config.toml", config);
-    for (int version : { 1, 2, 3, 5 }) {
+    auto config = f.read("config.toml");
+    f.write("config.toml", "development_http = true\n");
+    failure(f.verify(), InitError::InvalidInput, InitStage::Verify);
+    f.write("config.toml", config);
+    for (int version : { 1, 2, 3, 4, 6 }) {
         BOOST_REQUIRE(f.raw()->execute("UPDATE schema_info SET version=" + std::to_string(version)));
         failure(f.verify(), InitError::UnsupportedFormat, InitStage::Verify);
     }
-    BOOST_REQUIRE(f.raw()->execute("UPDATE schema_info SET version=4"));
+    BOOST_REQUIRE(f.raw()->execute("UPDATE schema_info SET version=5"));
     BOOST_REQUIRE(f.verify());
 }
 BOOST_AUTO_TEST_CASE(missing_rows_wrong_audit_and_unbilled_roots_are_not_repaired) {
     for (const char* sql : { "DELETE FROM node_accounting", "UPDATE node_accounting SET used_nodes=1", "DELETE FROM space_quotas", "DELETE FROM public_contribution_quotas", "DELETE FROM identity_audit_events",
-            "UPDATE identity_audit_events SET occurred_at=999", "UPDATE space_quotas SET used_nodes=0", "UPDATE public_contribution_quotas SET used_nodes=0",
-            "UPDATE space_quotas SET used_nodes=2" }) {
-        Fixture f; BOOST_REQUIRE(f.create()); BOOST_REQUIRE(f.raw()->execute(sql));
+                             "UPDATE identity_audit_events SET occurred_at=999", "UPDATE space_quotas SET used_nodes=0", "UPDATE public_contribution_quotas SET used_nodes=0",
+                             "UPDATE space_quotas SET used_nodes=2" }) {
+        Fixture f;
+        BOOST_REQUIRE(f.create());
+        BOOST_REQUIRE(f.raw()->execute(sql));
         failure(f.verify(), InitError::IntegrityError, InitStage::Verify);
         BOOST_CHECK(std::filesystem::exists(f.path("initialization.pending")));
         BOOST_CHECK(!std::filesystem::exists(f.path("instance.json")));
     }
 }
 BOOST_AUTO_TEST_CASE(normal_maintenance_accepts_later_revisions_and_rejects_instance_mismatch) {
-    Fixture f; BOOST_REQUIRE(f.create()); f.finish();
+    Fixture f;
+    BOOST_REQUIRE(f.create());
+    f.finish();
     BOOST_REQUIRE(f.raw()->execute("UPDATE users SET revision=2,display_name='Changed'; UPDATE space_quotas SET revision=2,used_nodes=2"));
     BOOST_REQUIRE(f.maintenance->verify(f.lease->lease()));
-    auto other = f.seed.identity; other.instanceId = bootstrapId<InstanceId>(8);
+    auto other = f.seed.identity;
+    other.instanceId = bootstrapId<InstanceId>(8);
     f.write("instance.json", system::detail::formatText(other));
-    auto checked = f.maintenance->verify(f.lease->lease()); BOOST_REQUIRE(!checked); BOOST_CHECK(checked.error().code == ErrorCode::IntegrityError);
+    auto checked = f.maintenance->verify(f.lease->lease());
+    BOOST_REQUIRE(!checked);
+    BOOST_CHECK(checked.error().code == ErrorCode::IntegrityError);
 }
 BOOST_AUTO_TEST_CASE(all_pending_types_block_startup_before_database_open) {
-    Fixture f; BOOST_REQUIRE(f.create()); f.finish();
+    Fixture f;
+    BOOST_REQUIRE(f.create());
+    f.finish();
     const auto before = f.read("metadata.sqlite3");
     for (int kind : { 0, 1, 2 }) {
         if (kind == 0) f.write("initialization.pending", "invalid");
         if (kind == 1) std::filesystem::create_symlink("missing", f.path("initialization.pending"));
         if (kind == 2) BOOST_REQUIRE_EQUAL(::mkfifo(f.path("initialization.pending").c_str(), 0600), 0);
-        auto result = f.maintenance->verify(f.lease->lease()); BOOST_REQUIRE(!result); BOOST_CHECK(result.error().code == ErrorCode::IntegrityError);
+        auto result = f.maintenance->verify(f.lease->lease());
+        BOOST_REQUIRE(!result);
+        BOOST_CHECK(result.error().code == ErrorCode::IntegrityError);
         const bool unchanged = f.read("metadata.sqlite3") == before;
         BOOST_CHECK(unchanged);
         std::filesystem::remove(f.path("initialization.pending"));
@@ -223,7 +266,8 @@ BOOST_AUTO_TEST_CASE(all_pending_types_block_startup_before_database_open) {
 }
 BOOST_AUTO_TEST_CASE(write_and_audit_failure_roll_back_all_bootstrap_rows) {
     for (int mode : { 1, 2 }) {
-        Fixture f; faultMode = mode;
+        Fixture f;
+        faultMode = mode;
         f.bootstrap = std::move(detail::makeSqliteInstanceBootstrapWith({ bootstrapBudget, {} }, inject)).value();
         failure(f.create(), mode == 1 ? InitError::StorageFull : InitError::IntegrityError, InitStage::Bootstrap);
         BOOST_CHECK_EQUAL(f.scalar("SELECT (SELECT count(*) FROM users)+(SELECT count(*) FROM instance_settings)+(SELECT count(*) FROM spaces)+(SELECT count(*) FROM nodes)+(SELECT count(*) FROM space_quotas)+(SELECT count(*) FROM public_contribution_quotas)+(SELECT count(*) FROM identity_audit_events)+(SELECT count(*) FROM storage_accounting)"), 0);
@@ -231,9 +275,14 @@ BOOST_AUTO_TEST_CASE(write_and_audit_failure_roll_back_all_bootstrap_rows) {
     }
 }
 BOOST_AUTO_TEST_CASE(wal_commit_failure_is_not_reported_as_success_or_automatic_retry) {
-    Fixture f; testing::SqliteFaultVfs vfs; faultVfs = &vfs; faultMode = 3;
+    Fixture f;
+    testing::SqliteFaultVfs vfs;
+    faultVfs = &vfs;
+    faultMode = 3;
     f.bootstrap = std::move(detail::makeSqliteInstanceBootstrapWith({ bootstrapBudget, {} }, inject)).value();
-    const auto result = f.create(); BOOST_REQUIRE(!result); BOOST_CHECK(result.error().stage == InitStage::Bootstrap);
+    const auto result = f.create();
+    BOOST_REQUIRE(!result);
+    BOOST_CHECK(result.error().stage == InitStage::Bootstrap);
     BOOST_CHECK(result.error().code == InitError::CommitOutcomeUnknown);
     BOOST_CHECK(vfs.triggered());
     BOOST_CHECK(!std::filesystem::exists(f.path("instance.json")));
@@ -257,41 +306,52 @@ BOOST_AUTO_TEST_CASE(process_exit_before_commit_and_after_commit_have_distinct_f
     for (bool committed : { false, true }) {
         Fixture f;
         f.lease.reset();
-        const pid_t child = ::fork(); BOOST_REQUIRE(child >= 0);
+        const pid_t child = ::fork();
+        BOOST_REQUIRE(child >= 0);
         if (child == 0) {
             ::alarm(5);
-            auto opened = f.initializer->openPending(f.root); if (!opened) ::_exit(11);
+            auto opened = f.initializer->openPending(f.root);
+            if (!opened) ::_exit(11);
             faultMode = 4;
             auto backend = committed ? makeSqliteInstanceBootstrap({ bootstrapBudget, {} }) : detail::makeSqliteInstanceBootstrapWith({ bootstrapBudget, {} }, inject);
             if (!backend || !backend.value()->createCurrent(opened.value()->lease(), TransferBootstrapSeed{ copyBootstrapSeed(f.seed), ByteCount::from(1024).value() })) ::_exit(12);
             ::_exit(0);
         }
-        int status = 0; BOOST_REQUIRE_EQUAL(::waitpid(child, &status, 0), child); BOOST_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-        auto opened = f.initializer->openPending(f.root); BOOST_REQUIRE(opened); f.lease = std::move(opened).value();
-        if (committed) { f.finish(); BOOST_REQUIRE(f.maintenance->verify(f.lease->lease())); }
-        else { failure(f.verify(), InitError::IncompleteInitialization, InitStage::Verify); BOOST_CHECK_EQUAL(f.scalar("SELECT count(*) FROM users"), 0); }
+        int status = 0;
+        BOOST_REQUIRE_EQUAL(::waitpid(child, &status, 0), child);
+        BOOST_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+        auto opened = f.initializer->openPending(f.root);
+        BOOST_REQUIRE(opened);
+        f.lease = std::move(opened).value();
+        if (committed) {
+            f.finish();
+            BOOST_REQUIRE(f.maintenance->verify(f.lease->lease()));
+        } else {
+            failure(f.verify(), InitError::IncompleteInitialization, InitStage::Verify);
+            BOOST_CHECK_EQUAL(f.scalar("SELECT count(*) FROM users"), 0);
+        }
     }
 }
 BOOST_AUTO_TEST_CASE(explicit_budget_current_format_and_typed_production_store) {
-    for (auto budget : {std::int64_t{0}, std::int64_t{29}, INT64_MAX}) {
+    for (auto budget : { std::int64_t{ 0 }, std::int64_t{ 29 }, INT64_MAX }) {
         Fixture f;
         f.contentBudget = ByteCount::from(budget).value();
         BOOST_REQUIRE(f.create());
-        BOOST_CHECK_EQUAL(f.scalar("SELECT version FROM schema_info"), 4);
+        BOOST_CHECK_EQUAL(f.scalar("SELECT version FROM schema_info"), 5);
         BOOST_CHECK_EQUAL(f.scalar("SELECT content_budget_bytes FROM storage_accounting"), budget);
         BOOST_CHECK_EQUAL(f.scalar("SELECT retained_bytes+reserved_bytes FROM storage_accounting"), 0);
         BOOST_CHECK_EQUAL(f.scalar("SELECT revision FROM storage_accounting"), 1);
         BOOST_CHECK(f.read("config.toml").find("content_budget") == std::string::npos);
         struct stat base{}, status{};
         BOOST_REQUIRE_EQUAL(stat(f.path("").c_str(), &base), 0);
-        for (const char* name : {"uploads", "objects", "quarantine"}) {
+        for (const char* name : { "uploads", "objects", "quarantine" }) {
             BOOST_REQUIRE_EQUAL(lstat(f.path(name).c_str(), &status), 0);
             BOOST_CHECK(S_ISDIR(status.st_mode));
             BOOST_CHECK_EQUAL(status.st_mode & 07777, 0700);
             BOOST_CHECK_EQUAL(status.st_dev, base.st_dev);
         }
         f.finish();
-        BOOST_CHECK(f.read("instance.json").find("\"format_version\":4") != std::string::npos);
+        BOOST_CHECK(f.read("instance.json").find("\"format_version\":5") != std::string::npos);
         auto store = openSqliteDriveMetadataStore(f.path("metadata.sqlite3"), { bootstrapBudget, { 0 } });
         BOOST_REQUIRE(store);
         auto snapshot = store.value()->beginTransferRead();
@@ -310,7 +370,7 @@ BOOST_AUTO_TEST_CASE(old_versions_and_missing_prerequisites_never_reset_instance
     BOOST_REQUIRE(f.create());
     auto pending = f.read("initialization.pending");
     auto old = pending;
-    old.replace(old.find("\"target_schema\":4"), 17, "\"target_schema\":2");
+    old.replace(old.find("\"target_schema\":5"), 17, "\"target_schema\":2");
     f.write("initialization.pending", old);
     failure(f.verify(), InitError::UnsupportedFormat, InitStage::Verify);
     BOOST_CHECK_EQUAL(f.scalar("SELECT count(*) FROM users"), 1);
@@ -318,9 +378,9 @@ BOOST_AUTO_TEST_CASE(old_versions_and_missing_prerequisites_never_reset_instance
     f.write("initialization.pending", pending);
     BOOST_REQUIRE(f.raw()->execute("UPDATE schema_info SET version=2"));
     failure(f.verify(), InitError::UnsupportedFormat, InitStage::Verify);
-    BOOST_CHECK(!openSqliteTransferMetadataStore(f.path("metadata.sqlite3"), {bootstrapBudget, {}}));
+    BOOST_CHECK(!openSqliteTransferMetadataStore(f.path("metadata.sqlite3"), { bootstrapBudget, {} }));
     BOOST_CHECK_EQUAL(f.scalar("SELECT version FROM schema_info"), 2);
-    BOOST_REQUIRE(f.raw()->execute("UPDATE schema_info SET version=4"));
+    BOOST_REQUIRE(f.raw()->execute("UPDATE schema_info SET version=5"));
     std::filesystem::rename(f.path("uploads"), f.path("evidence"));
     BOOST_CHECK(!f.verify());
     BOOST_CHECK(!f.lease->publishFormat());
@@ -339,22 +399,20 @@ BOOST_AUTO_TEST_CASE(maintenance_accepts_recoverable_uploads_and_over_budget_acc
     BOOST_REQUIRE(store);
     auto tx = store.value()->beginDriveWrite();
     BOOST_REQUIRE(tx);
-    UploadTarget target{f.seed.privateRootId, "pending"};
-    Upload u{bootstrapId<UploadId>(8), f.seed.adminUserId, bootstrapId<OperationId>(9),
-        {f.seed.privateSpaceId, target, FileLength::from(16).value(), {}}, target, {}, UploadState::Creating,
-        {}, {}, {}, StagingLocation::Temporary, {}, f.seed.createdAt, f.seed.createdAt,
-        uploadExpiry(f.seed.createdAt, f.seed.createdAt).value(), {}, {}};
+    UploadTarget target{ f.seed.privateRootId, "pending" };
+    Upload u{ bootstrapId<UploadId>(8), f.seed.adminUserId, bootstrapId<OperationId>(9), { f.seed.privateSpaceId, target, FileLength::from(16).value(), {} }, target, {}, UploadState::Creating, {}, {}, {}, StagingLocation::Temporary, {}, f.seed.createdAt, f.seed.createdAt, uploadExpiry(f.seed.createdAt, f.seed.createdAt).value(), {}, {} };
     BOOST_REQUIRE(tx.value()->uploads().insert(u));
     BOOST_REQUIRE(tx.value()->nodeAccounting().reserve(NodeCount::from(1).value()));
-    BOOST_REQUIRE(tx.value()->quotas().reserve(SpaceQuota{f.seed.privateSpaceId}, {ByteCount::from(16).value(), NodeCount::from(1).value()}));
+    BOOST_REQUIRE(tx.value()->quotas().reserve(SpaceQuota{ f.seed.privateSpaceId }, { ByteCount::from(16).value(), NodeCount::from(1).value() }));
     BOOST_REQUIRE(tx.value()->storage().reserve(ByteCount::from(16).value()));
     BOOST_REQUIRE(tx.value()->commit());
-    tx.value().reset(); store.value().reset();
+    tx.value().reset();
+    store.value().reset();
     BOOST_REQUIRE(f.raw()->execute("UPDATE storage_accounting SET content_budget_bytes=0"));
     BOOST_REQUIRE(f.maintenance->verify(f.lease->lease()));
     BOOST_CHECK_EQUAL(f.scalar("SELECT reserved_bytes FROM storage_accounting"), 16);
     BOOST_CHECK_EQUAL(f.scalar("SELECT count(*) FROM uploads"), 1);
-    BOOST_CHECK(!std::filesystem::exists(f.path("uploads") / (u.id.toString()+".part")));
+    BOOST_CHECK(!std::filesystem::exists(f.path("uploads") / (u.id.toString() + ".part")));
 }
 
-}
+}  // namespace anof::infrastructure::sqlite

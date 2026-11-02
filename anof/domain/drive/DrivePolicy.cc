@@ -34,7 +34,27 @@ Result<void> validateTrashEntry(const TrashEntry& entry) {
     return {};
 }
 bool trashExpired(const TrashEntry& entry, UtcTime now) noexcept { return now >= entry.expiresAt; }
+Result<void> validateUnavailableEvidence(const UnavailableEvidence& e, const Blob& b) {
+    if (e.reason == UnavailableReason::Missing)
+        return !e.file && !e.sha256 ? Result<void>{} : Result<void>{ErrorCode::IntegrityError};
+    if (!e.file) return ErrorCode::IntegrityError;
+    if (e.reason == UnavailableReason::Length)
+        return e.file->size.value() != b.size.value() && !e.sha256 ? Result<void>{} : Result<void>{ErrorCode::IntegrityError};
+    if (e.reason == UnavailableReason::Hash)
+        return e.file->size.value() == b.size.value() && e.sha256 && *e.sha256 != b.sha256
+            ? Result<void>{} : Result<void>{ErrorCode::IntegrityError};
+    return ErrorCode::IntegrityError;
+}
+Result<ByteCount> unavailableCharge(const Blob& b, const UnavailableEvidence& e) {
+    if (!validateUnavailableEvidence(e, b)) return ErrorCode::IntegrityError;
+    return ByteCount::from(std::max(b.size.value(), e.file ? e.file->size.value() : 0));
+}
 Result<void> validateBlobRecord(const BlobRecord& b) {
+    if (b.state == BlobState::Unavailable) {
+        if (!b.unavailable || b.deleteStartedAt) return ErrorCode::IntegrityError;
+        auto charge = unavailableCharge(b.content, *b.unavailable);
+        if (!charge || b.chargedBytes != charge.value()) return ErrorCode::IntegrityError;
+    } else if (b.unavailable || b.chargedBytes.value() != b.content.size.value()) return ErrorCode::IntegrityError;
     if (b.updatedAt < b.createdAt || (b.unreferencedAt && (*b.unreferencedAt < b.createdAt ||
         *b.unreferencedAt > b.updatedAt || !blobGcDeadline(*b.unreferencedAt)))) return ErrorCode::IntegrityError;
     if (b.state == BlobState::Available) {
@@ -42,13 +62,27 @@ Result<void> validateBlobRecord(const BlobRecord& b) {
     } else if (b.state == BlobState::Deleting) {
         if (!b.unreferencedAt || !b.deleteStartedAt || *b.deleteStartedAt < *b.unreferencedAt ||
             *b.deleteStartedAt > b.updatedAt || *b.deleteStartedAt < blobGcDeadline(*b.unreferencedAt).value()) return ErrorCode::IntegrityError;
-    } else return ErrorCode::IntegrityError;
+    } else if (b.state != BlobState::Unavailable) return ErrorCode::IntegrityError;
     return {};
 }
 bool blobGcEligible(const BlobRecord& b, UtcTime now, bool nodeRef, bool uploadRef) noexcept {
     if (nodeRef || uploadRef || b.state != BlobState::Available || !b.unreferencedAt || !validateBlobRecord(b)) return false;
     auto due = blobGcDeadline(*b.unreferencedAt);
     return due && now >= due.value();
+}
+Result<void> validateStorageStatistics(const GcStatistics& s, ByteCount retained) {
+    if (s.deletingBytes.value() > s.pendingBytes.value() || s.deletingObjects.value() > s.pendingObjects.value())
+        return ErrorCode::IntegrityError;
+    auto sum = s.pendingBytes.add(s.quarantinedBytes.value());
+    if (!sum) return sum.error();
+    sum = sum.value().add(s.unavailableBytes.value());
+    if (!sum || sum.value().value() > retained.value()) return ErrorCode::IntegrityError;
+    auto count = s.pendingObjects.add(s.quarantinedObjects.value());
+    if (!count || !count.value().add(s.unavailableObjects.value())) return ErrorCode::IntegrityError;
+    if ((!s.pendingObjects.value() && s.pendingBytes.value()) || (!s.deletingObjects.value() && s.deletingBytes.value()) ||
+        (!s.quarantinedObjects.value() && s.quarantinedBytes.value()) || (!s.unavailableObjects.value() && s.unavailableBytes.value()))
+        return ErrorCode::IntegrityError;
+    return {};
 }
 Result<void> validateNodeAccounting(const NodeAccounting& n) {
     if (n.used.value() > kInstanceNodeLimit || n.reserved.value() > kInstanceNodeLimit - n.used.value())

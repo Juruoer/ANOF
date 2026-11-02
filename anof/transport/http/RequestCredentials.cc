@@ -1,4 +1,6 @@
-#include <anof/transport/http/BearerCredentials.h>
+#include <anof/transport/http/RequestCredentials.h>
+#include <anof/domain/identity/IdentityValues.h>
+#include <set>
 
 namespace anof::http {
 namespace {
@@ -17,10 +19,48 @@ bool equalAscii(std::string_view a, std::string_view b) {
 }
 }  // namespace
 
-BearerCredentials readBearerCredentials(const muduox::net::HttpHeaders& headers, const SessionTokenCodec& codec) {
+CookieSession readCookieSession(const muduox::net::HttpHeaders& headers) {
+    using Single = muduox::net::HttpHeaders::SingleStatus;
+    const auto field = headers.getSingle("Cookie");
+    if (field.status == Single::Missing) return std::optional<std::string_view>{};
+    if (field.status != Single::Unique || field.value.size() > 8192) return ProtocolError::InvalidArgument;
+    std::set<std::string_view> names;
+    std::optional<std::string_view> session;
+    auto rest = field.value;
+    // OWS 可含 HTAB，但值内部及其他控制字节不可进入 Cookie。
+    for (unsigned char c : rest) if ((c < 32 && c != '\t') || c >= 127) return ProtocolError::InvalidArgument;
+    do {
+        const auto separator = rest.find(';');
+        auto pair = trim(rest.substr(0, separator));
+        const auto equals = pair.find('=');
+        if (equals == std::string_view::npos || equals == 0) return ProtocolError::InvalidArgument;
+        auto name = pair.substr(0, equals), value = pair.substr(equals + 1);
+        for (unsigned char c : name) {
+            const bool alpha = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+            if (!alpha && std::string_view("!#$%&'*+-.^_`|~").find(static_cast<char>(c)) == std::string_view::npos) return ProtocolError::InvalidArgument;
+        }
+        for (unsigned char c : value) if (c <= 32 || c >= 127) return ProtocolError::InvalidArgument;
+        if (!names.insert(name).second || names.size() > 64) return ProtocolError::InvalidArgument;
+        if (name == "__Host-anof_session") session = value;
+        if (separator == std::string_view::npos) break;
+        rest.remove_prefix(separator + 1);
+    } while (true);
+    return session;
+}
+
+std::variant<RequestCredentials, ProtocolError> readRequestCredentials(const muduox::net::HttpHeaders& headers, const SessionTokenCodec& codec) {
     using Single = muduox::net::HttpHeaders::SingleStatus;
     const auto auth = headers.getSingle("authorization");
-    if (headers.contains("cookie") || auth.status == Single::Multiple) return ProtocolError::InvalidArgument;
+    auto cookie = readCookieSession(headers);
+    if (auto* error = std::get_if<ProtocolError>(&cookie)) return *error;
+    auto session = std::get<std::optional<std::string_view>>(cookie);
+    if (auth.status == Single::Multiple || (auth.status != Single::Missing && session)) return ProtocolError::InvalidArgument;
+    if (session) {
+        if (!SecretToken::session(*session)) return ProtocolError::Unauthenticated;
+        auto digest = codec.digestBearer(*session);
+        if (!digest) return digest.error().code == ErrorCode::Unauthenticated ? ProtocolError::Unauthenticated : ProtocolError::InternalError;
+        return RequestCredentials{digest.value(), CredentialMode::Cookie};
+    }
     if (auth.status != Single::Unique) return ProtocolError::Unauthenticated;
     auto value = trim(auth.value);
     const auto split = value.find(' ');
@@ -31,7 +71,7 @@ BearerCredentials readBearerCredentials(const muduox::net::HttpHeaders& headers,
     // 编码规范与摘要算法属于注入端口；只传 token，不复制或记录凭据。
     const auto digest = codec.digestBearer(value);
     if (!digest) return digest.error().code == ErrorCode::Unauthenticated ? ProtocolError::Unauthenticated : ProtocolError::InternalError;
-    return digest.value();
+    return RequestCredentials{digest.value(), CredentialMode::Bearer};
 }
 
 std::optional<ProtocolError> validateJsonContentHeaders(const muduox::net::HttpHeaders& headers) {

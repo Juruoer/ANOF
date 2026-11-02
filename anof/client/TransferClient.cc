@@ -45,8 +45,8 @@ ClientResult<TransferReply> TransferClient::request(TransferOperation op, Method
     return decodeTransfer(op, result.value(), limit);
 }
 ClientResult<TransferReply> TransferClient::show(UploadId id) {
-    auto result=request(TransferOperation::Show, Method::Get, "/api/v1/uploads/" + id.toString());
-    if(result && result.value().data()["id"]!=id.toString()) return failure(ErrorKind::Protocol,"REMOTE_BINDING_MISMATCH");
+    auto result = request(TransferOperation::Show, Method::Get, "/api/v1/uploads/" + id.toString());
+    if (result && result.value().data()["id"] != id.toString()) return failure(ErrorKind::Protocol, "REMOTE_BINDING_MISMATCH");
     return result;
 }
 ClientResult<TransferReply> TransferClient::list(PageRequest page, std::optional<OperationId> id) {
@@ -62,8 +62,8 @@ ClientResult<TransferReply> TransferClient::complete(UploadId id,
         if (!validateDirectoryName(target->second)) return failure(ErrorKind::InvalidArgument);
         body = { { "parent_id", target->first.toString() }, { "name", target->second } };
     }
-    auto result=request(TransferOperation::Complete, Method::Post, "/api/v1/uploads/" + id.toString() + "/complete", body);
-    if(result && (result.value().data()["id"]!=id.toString() || (target && (result.value().data()["parent_id"]!=target->first.toString() || result.value().data()["name"]!=target->second)))) return failure(ErrorKind::OutcomeUnknown,"REMOTE_BINDING_MISMATCH");
+    auto result = request(TransferOperation::Complete, Method::Post, "/api/v1/uploads/" + id.toString() + "/complete", body);
+    if (result && (result.value().data()["id"] != id.toString() || (target && (result.value().data()["parent_id"] != target->first.toString() || result.value().data()["name"] != target->second)))) return failure(ErrorKind::OutcomeUnknown, "REMOTE_BINDING_MISMATCH");
     return result;
 }
 ClientResult<TransferReply> TransferClient::cancel(UploadId id) {
@@ -129,7 +129,7 @@ TransferResult TransferClient::workflow(std::optional<std::string> existing, boo
             r["target"] = target;
         }
         auto me = take(ApiClient(http_, profile_, cancel_).me());
-        check(me.data.id == p.credential->userId, "TRANSFER_BINDING_MISMATCH");
+        check(me.data.user.id == p.credential->userId, "TRANSFER_BINDING_MISMATCH");
         const auto* bearer = &p.credential->accessToken;
         auto save = [&] { record.save(); };
         auto head = [&](const std::string& path, TransferOperation op) {
@@ -139,35 +139,48 @@ TransferResult TransferClient::workflow(std::optional<std::string> existing, boo
         };
         if (!downloading) {
             Json upload;
-            if(existing) {
+            if (existing) {
                 std::string remoteId;
-                if(r.at("upload_id").is_null()) {
-                    auto key=OperationId::parse(string(r,"client_upload_id"));check(bool(key));
-                    auto found=take(list({2,{}},key.value()));
-                    if(found.data()["items"].size()!=1)fail(ErrorKind::OutcomeUnknown,"UPLOAD_CREATE_UNRESOLVED");
-                    remoteId=string(found.data()["items"][0],"id");
-                } else remoteId=string(r,"upload_id");
-                auto id=UploadId::parse(remoteId);check(bool(id));
-                auto confirmed=head("/api/v1/uploads/"+id.value().toString(),TransferOperation::UploadHead);
-                upload=take(show(id.value())).data();
-                check(confirmed.data()["length"]==upload["length"],"REMOTE_BINDING_MISMATCH");
+                if (r.at("upload_id").is_null()) {
+                    auto key = OperationId::parse(string(r, "client_upload_id"));
+                    check(bool(key));
+                    auto found = take(list({ 2, {} }, key.value()));
+                    if (found.data()["items"].size() != 1) fail(ErrorKind::OutcomeUnknown, "UPLOAD_CREATE_UNRESOLVED");
+                    remoteId = string(found.data()["items"][0], "id");
+                } else
+                    remoteId = string(r, "upload_id");
+                auto id = UploadId::parse(remoteId);
+                check(bool(id));
+                auto confirmed = head("/api/v1/uploads/" + id.value().toString(), TransferOperation::UploadHead);
+                upload = take(show(id.value())).data();
+                check(confirmed.data()["length"] == upload["length"], "REMOTE_BINDING_MISMATCH");
             }
             Fd source;
             Json evidence;
             std::string digest;
             // 终态及后台发布只查询，不要求源文件仍然存在；仍需传输时才打开并重哈希。
-            if(!existing || upload["state"]=="OPEN" || upload["state"]=="CREATING") {
-                source=Fd(open(file.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW|O_NONBLOCK));
-                evidence=identity(source.value);digest=hash(source.value,cancel_);
-                check(identity(source.value)==evidence,"SOURCE_CHANGED");
-                if(existing)check(r.at("source_identity")==evidence&&r.at("sha256")==digest,"SOURCE_CHANGED");
+            if (!existing || upload["state"] == "OPEN" || upload["state"] == "CREATING") {
+                source = Fd(open(file.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
+                evidence = identity(source.value);
+                digest = hash(source.value, cancel_);
+                check(identity(source.value) == evidence, "SOURCE_CHANGED");
+                if (existing) check(r.at("source_identity") == evidence && r.at("sha256") == digest, "SOURCE_CHANGED");
             }
-            if(!existing) {
-                r["source_identity"]=evidence;r["sha256"]=digest;r["length"]=evidence["size"];
-                r["client_upload_id"]=uuid();r["upload_id"]=nullptr;r["phase"]="CREATING";save();
-                Json body=target;body["length"]=r["length"];body["sha256"]=digest;body["client_upload_id"]=r["client_upload_id"];
-                auto result=take(request(TransferOperation::Create,Method::Post,"/api/v1/uploads",body));
-                remote=RemoteOutcome::ConfirmedSuccess;upload=result.data();
+            if (!existing) {
+                r["source_identity"] = evidence;
+                r["sha256"] = digest;
+                r["length"] = evidence["size"];
+                r["client_upload_id"] = uuid();
+                r["upload_id"] = nullptr;
+                r["phase"] = "CREATING";
+                save();
+                Json body = target;
+                body["length"] = r["length"];
+                body["sha256"] = digest;
+                body["client_upload_id"] = r["client_upload_id"];
+                auto result = take(request(TransferOperation::Create, Method::Post, "/api/v1/uploads", body));
+                remote = RemoteOutcome::ConfirmedSuccess;
+                upload = result.data();
             }
             auto bound = [&](const Json& u, bool write = false) {
                 if (u.at("client_upload_id") != r.at("client_upload_id") || u.at("space_id") != target.at("space_id") ||
@@ -177,7 +190,7 @@ TransferResult TransferClient::workflow(std::optional<std::string> existing, boo
                     (!r.at("upload_id").is_null() && u.at("id") != r.at("upload_id")))
                     fail(write ? ErrorKind::OutcomeUnknown : ErrorKind::Protocol, "REMOTE_BINDING_MISMATCH");
             };
-            bound(upload,!existing);
+            bound(upload, !existing);
             r["upload_id"] = upload["id"];
             r["instance_id"] = upload["instance_id"];
             r["phase"] = upload["state"];
@@ -233,7 +246,7 @@ TransferResult TransferClient::workflow(std::optional<std::string> existing, boo
                     save();
                 }
                 upload = take(complete(id)).data();
-                bound(upload,true);
+                bound(upload, true);
                 remote = RemoteOutcome::ConfirmedSuccess;
                 r["phase"] = upload["state"];
                 save();
@@ -252,9 +265,9 @@ TransferResult TransferClient::workflow(std::optional<std::string> existing, boo
             r["phase"] = upload["state"];
             r["result_node_id"] = upload["result_node_id"];
             save();
-            if(upload["state"]=="COMPLETED" && !upload.at("result_deleted_at").is_null()) {
-                remote=RemoteOutcome::ConfirmedSuccess;
-                fail(ErrorKind::Application,"UPLOAD_RESULT_DELETED");
+            if (upload["state"] == "COMPLETED" && !upload.at("result_deleted_at").is_null()) {
+                remote = RemoteOutcome::ConfirmedSuccess;
+                fail(ErrorKind::Application, "UPLOAD_RESULT_DELETED");
             }
             if (upload["state"] == "FAILED" || upload["state"] == "CANCELLED" || upload["state"] == "EXPIRED" ||
                 upload["state"] == "READY")

@@ -1,6 +1,6 @@
 #pragma once
-#include <anof/application/ports/DriveMetadataStore.h>
 #include <anof/application/identity/IdentityService.h>
+#include <anof/application/ports/DriveMetadataStore.h>
 #include <anof/infrastructure/config/TomlInstanceConfiguration.h>
 #include <anof/infrastructure/crypto/SodiumRequestIdentity.h>
 #include <anof/infrastructure/crypto/SodiumSessionTokenCodec.h>
@@ -35,10 +35,10 @@ struct Client {
     std::string bytes;
     bool eof = false;
     std::size_t limit = 512 * 1024;
-    explicit Client(std::uint16_t port) : fd(::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0)) {
+    explicit Client(std::uint16_t port, bool ipv6 = false) : fd(::socket(ipv6 ? AF_INET6 : AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0)) {
         if (fd < 0) throw std::runtime_error("socket failed");
-        muduox::net::InetAddress address(port, true);
-        if (::connect(fd, address.getSockAddr(), sizeof(sockaddr_in)) != 0) {
+        muduox::net::InetAddress address(port, true, ipv6);
+        if (::connect(fd, address.getSockAddr(), ipv6 ? sizeof(sockaddr_in6) : sizeof(sockaddr_in)) != 0) {
             ::close(fd);
             throw std::runtime_error("connect failed");
         }
@@ -124,8 +124,7 @@ struct UncertainTransaction final : DriveTransaction {
     std::unique_ptr<MetadataTransaction> inner;
     AuditProbe audit;
     DriveAuditProbe driveAuditProbe;
-    explicit UncertainTransaction(std::unique_ptr<MetadataTransaction> value) : inner(std::move(value)), audit(inner->identityAudit()),
-        driveAuditProbe(dynamic_cast<DriveTransaction&>(*inner).driveAudit()) {}
+    explicit UncertainTransaction(std::unique_ptr<MetadataTransaction> value) : inner(std::move(value)), audit(inner->identityAudit()), driveAuditProbe(dynamic_cast<DriveTransaction&>(*inner).driveAudit()) {}
     NodeAccountingRepository& nodeAccounting() override { return inner->nodeAccounting(); }
     TreeRepository& tree() override { return dynamic_cast<DriveTransaction&>(*inner).tree(); }
     TrashRepository& trash() override { return dynamic_cast<DriveTransaction&>(*inner).trash(); }
@@ -154,7 +153,8 @@ struct UncertainStore final : DriveMetadataStore {
     explicit UncertainStore(std::unique_ptr<MetadataStore> value) : inner(std::move(value)) {}
     Result<std::unique_ptr<DriveReadSnapshot>> beginDriveRead() override { return dynamic_cast<DriveMetadataStore&>(*inner).beginDriveRead(); }
     Result<std::unique_ptr<DriveTransaction>> beginDriveWrite() override {
-        auto tx = dynamic_cast<DriveMetadataStore&>(*inner).beginDriveWrite(); if (!tx) return tx.error();
+        auto tx = dynamic_cast<DriveMetadataStore&>(*inner).beginDriveWrite();
+        if (!tx) return tx.error();
         return std::unique_ptr<DriveTransaction>(new UncertainTransaction(std::move(tx).value()));
     }
     Result<std::unique_ptr<TransferReadSnapshot>> beginTransferRead() override {
@@ -176,7 +176,7 @@ struct UncertainStore final : DriveMetadataStore {
 struct ControlledClock final : Clock {
     std::shared_ptr<std::atomic<std::int64_t>> micros;
     explicit ControlledClock(std::shared_ptr<std::atomic<std::int64_t>> value) : micros(std::move(value)) {}
-    UtcTime now() const override { return UtcTime{std::chrono::microseconds{micros->load()}}; }
+    UtcTime now() const override { return UtcTime{ std::chrono::microseconds{ micros->load() } }; }
 };
 struct Fixture {
     std::filesystem::path root;
@@ -185,14 +185,22 @@ struct Fixture {
     std::shared_ptr<std::atomic<std::int64_t>> controlledUtc;
     anof::test::CommitFault transferFault;
     std::unique_ptr<InstanceServer> server;
-    explicit Fixture(std::int64_t budget = 1048576) {
+    explicit Fixture(std::int64_t budget = 1048576, bool browser = false, std::string listenAddress = "127.0.0.1") {
         char pattern[] = "/tmp/anof-http-identity-XXXXXX";
         auto* path = ::mkdtemp(pattern);
         BOOST_REQUIRE(path);
         root = path;
         auto options = anof::testing::testInitOptions(root);
         options.instance.configuration.shutdownGraceSeconds = 0;
+        options.instance.configuration.listenAddress = std::move(listenAddress);
         options.contentBudget = ByteCount::from(budget).value();
+        if (browser) {
+            auto& c = options.instance.configuration;
+            c.developmentHttp = false;
+            c.webEnabled = true;
+            c.publicOrigin = "https://cloud.test";
+            c.trustedProxies = { "127.0.0.1" };
+        }
         BOOST_REQUIRE(initializeInstance(options, PasswordInput::parse("fixture password only").value()));
     }
     ~Fixture() {
@@ -251,7 +259,7 @@ struct Fixture {
     Json call(std::string method, std::string path, int status, const Json& body = nullptr, std::string token = {}, std::string extra = {}) {
         auto wire = exchange(request(method, path, body, token, extra));
         BOOST_REQUIRE_MESSAGE(wire.find("HTTP/1.1 " + std::to_string(status) + " ") == 0,
-            method << " " << path.substr(0, path.find('?')) << " expected=" << status << " response=" << wire);
+                              method << " " << path.substr(0, path.find('?')) << " expected=" << status << " response=" << wire);
         BOOST_CHECK(wire.find("cache-control: no-store\r\n") != std::string::npos);
         BOOST_CHECK(wire.find("x-request-id: ") != std::string::npos);
         auto split = wire.find("\r\n\r\n");

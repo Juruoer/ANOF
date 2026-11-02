@@ -1,12 +1,10 @@
 #include <tests/support/EventLoopWait.h>
 #define BOOST_TEST_MODULE AnofMetadataExecutorIntegration
-#include <boost/test/unit_test.hpp>
-
 #include <anof/runtime/MetadataExecutor.h>
+#include <muduox/net/EventLoop.h>
 #include <tests/persistence_contract/TestMetadataBackend.h>
 
-#include <muduox/net/EventLoop.h>
-
+#include <boost/test/unit_test.hpp>
 #include <iomanip>
 #include <sstream>
 #include <thread>
@@ -43,6 +41,7 @@ public:
     }
     Result<std::unique_ptr<MetadataReadSnapshot>> beginRead() override { return inner_->beginRead(); }
     Result<std::unique_ptr<MetadataTransaction>> beginWrite() override { return inner_->beginWrite(); }
+
 private:
     std::unique_ptr<MetadataStore> inner_;
     Lifetime& lifetime_;
@@ -72,8 +71,7 @@ BOOST_AUTO_TEST_CASE(real_sqlite_worker_commits_and_closes_before_loop_stop) {
     seed.sessions.push_back({ token, owner, AuthEpoch{}, now + std::chrono::hours(1), false });
     seed.spaces.push_back({ space, SpaceKind::Private, owner, root });
     seed.nodes.push_back({ { root, space, std::nullopt, "", owner, Revision{}, now, now }, std::nullopt, false });
-    seed.quotas.push_back({ SpaceQuota{ space }, { { ByteCount{}, NodeCount::from(10).value() },
-                                                  { ByteCount{}, NodeCount::from(1).value() }, { ByteCount{}, NodeCount{} } } });
+    seed.quotas.push_back({ SpaceQuota{ space }, { { ByteCount{}, NodeCount::from(10).value() }, { ByteCount{}, NodeCount::from(1).value() }, { ByteCount{}, NodeCount{} } } });
     auto backend = makeTestMetadataBackend();
     BOOST_REQUIRE(backend->reset(seed));
     Lifetime lifetime;

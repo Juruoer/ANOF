@@ -34,7 +34,7 @@ Result<TreeMember> decode(SqliteStatement& s) {
         auto size = readQuantity<ByteCount>(s, 10);
         auto hash = s.blob(11);
         auto state = s.integer(12);
-        if (!blob || !size || !hash || hash.value().size() != 32 || !state || state.value() != 0) return ErrorCode::IntegrityError;
+        if (!blob || !size || !hash || hash.value().size() != 32 || !state || (state.value() != 0 && state.value() != 2)) return ErrorCode::IntegrityError;
         FileContentMetadata f{ size.value(), {} };
         std::copy(hash.value().begin(), hash.value().end(), f.sha256.begin());
         m.node.content = f;

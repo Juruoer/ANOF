@@ -3,3 +3,8 @@
 /cmake-build-*/
 .codex
 AGENTS.md
+
+/CMakeUserPresets.json
+
+# Python test bytecode
+__pycache__/

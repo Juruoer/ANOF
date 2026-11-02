@@ -2,17 +2,27 @@
 #include <anof/core/Page.h>
 #include <anof/domain/drive/Blob.h>
 #include <anof/domain/transfer/Upload.h>
+
 #include <memory>
 #include <variant>
 
 namespace anof {
-enum class TransferFileError { NotFound, AlreadyExists, NoSpace, Transient, Integrity, UnknownEffect };
+enum class TransferFileError { NotFound,
+                               AlreadyExists,
+                               NoSpace,
+                               Transient,
+                               Integrity,
+                               UnknownEffect };
 // UnknownEffect 包括 rename/unlink/同步结果不明；不能直接映射为已回滚。
 template <typename T>
 using FileResult = std::variant<T, TransferFileError>;
 using FileStatus = FileResult<std::monostate>;
-struct TemporaryFile { UploadId id; };
-struct ObjectFile { BlobId id; };
+struct TemporaryFile {
+    UploadId id;
+};
+struct ObjectFile {
+    BlobId id;
+};
 using TransferFileKey = std::variant<TemporaryFile, ObjectFile>;
 // 句柄由 unique_ptr 独占，不暴露 fd/path；只在有界 disk worker 使用，不跨并发任务共享。
 class TransferFileHandle {
@@ -36,12 +46,27 @@ struct TransferBlock {
     // 唯一缓冲所有权移交；有效内容为 [0,size)，构造输入必须检查 size<=capacity。
     std::size_t size = 0;
 };
-struct TransferFileStat { ByteCount size; };
-struct DiskCapacity { ByteCount free; ByteCount volume; };
-enum class InventoryArea { Uploads, Objects, Quarantine };
+struct TransferFileStat {
+    ByteCount size;
+    FileEvidence evidence{};
+};
+struct DiskCapacity {
+    ByteCount free;
+    ByteCount volume;
+};
+enum class InventoryArea { Uploads,
+                           Objects,
+                           Quarantine };
 // 枚举路径不是 IO key；未知项原样保留，无法归属则拒绝启动。游标仅同一启动扫描使用。
-struct InventoryEntry { std::string relativeName; std::optional<TransferFileKey> knownKey; ByteCount size; };
-struct InventoryCursor { std::string opaque; };
+struct InventoryEntry {
+    std::string relativeName;
+    std::optional<TransferFileKey> knownKey;
+    ByteCount size;
+    FileEvidence evidence{};
+};
+struct InventoryCursor {
+    std::string opaque;
+};
 class TransferFileStore {
 public:
     virtual ~TransferFileStore() = default;
@@ -70,7 +95,7 @@ public:
     virtual FileStatus updateHash(TransferHashState&, const TransferBlock&) = 0;
     virtual FileResult<Sha256> finishHash(OwnedTransferHash) = 0;
     virtual FileResult<Page<InventoryEntry, InventoryCursor>> inventory(InventoryArea, PageSize,
-                                                                       std::optional<InventoryCursor>) = 0;
+                                                                        std::optional<InventoryCursor>) = 0;
     virtual FileResult<DiskCapacity> capacity() = 0;
 };
 }  // namespace anof

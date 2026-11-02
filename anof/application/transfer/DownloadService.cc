@@ -32,6 +32,7 @@ Result<DownloadGrant> prepareDownload(TransferMetadataStore& store, Clock& clock
     auto record = drive->blobLifecycle().record(blob.value()->id);
     if (!record) return record.error();
     if (!record.value()) return ErrorCode::IntegrityError;
+    if (record.value()->state == BlobState::Unavailable) return ErrorCode::IntegrityError;
     if (record.value()->state != BlobState::Available) return ErrorCode::Retryable;
     const auto& content = std::get<FileContentMetadata>(node.value()->content);
     if (content.size.value() != blob.value()->size.value() || content.sha256 != blob.value()->sha256.bytes())

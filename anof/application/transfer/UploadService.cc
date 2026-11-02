@@ -495,7 +495,8 @@ Result<Upload> UploadService::commitPublish(UploadId id, UploadGeneration genera
     if (!valid) return valid.error();
     const auto publishedAt = nondecreasingEventTime(clock_.now(), u.createdAt, u.lastProgressAt);
     auto inserted = tx.blobs().insert({ { *u.pendingBlobId, u.original.length, *u.actualSha256 },
-        BlobState::Available, publishedAt, publishedAt, Revision{}, {}, {} });
+        BlobState::Available, publishedAt, publishedAt, Revision{}, {}, {},
+        ByteCount::from(u.original.length.value()).value(), {} });
     if (!inserted) return inserted.error();
     auto file = tx.nodes().insertFile(
         { { node.value(), u.original.spaceId, u.target.parentId, u.target.name, u.userId, publishedAt },
@@ -640,6 +641,8 @@ Result<StorageView> UploadService::storage(const RequestContext& ctx) {
     if (!drive) return ErrorCode::InternalError;
     auto gc = drive->blobLifecycle().gcStatistics(); if (!gc) return gc.error();
     auto nodes = drive->nodeAccounting().get(); if (!nodes) return nodes.error();
+    if (!validateStorageStatistics(gc.value(), accounting.value().retained) || !validateNodeAccounting(nodes.value()))
+        return ErrorCode::IntegrityError;
     return StorageView{ id.value(), accounting.value(), {}, gc.value(), nodes.value() };
 }
 Result<StorageView> UploadService::setBudget(const RequestContext& ctx, const SetStorageBudgetCommand& command) {
@@ -667,6 +670,8 @@ Result<StorageView> UploadService::setBudget(const RequestContext& ctx, const Se
     if (!drive) return ErrorCode::InternalError;
     auto gc = drive->blobs().gcStatistics(); if (!gc) return gc.error();
     auto nodes = drive->nodeAccounting().get(); if (!nodes) return nodes.error();
+    if (!validateStorageStatistics(gc.value(), changed.value().retained) || !validateNodeAccounting(nodes.value()))
+        return ErrorCode::IntegrityError;
     auto committed = tx.commit();
     if (!committed) return committed.error();
     return StorageView{ id.value(), changed.value(), {}, gc.value(), nodes.value() };

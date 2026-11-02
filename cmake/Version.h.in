@@ -1,0 +1,5 @@
+#pragma once
+
+namespace anof::build {
+inline constexpr char version[] = "@ANOF_VERSION@";
+}

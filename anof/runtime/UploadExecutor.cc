@@ -13,6 +13,9 @@
 
 namespace anof::runtime {
 namespace {
+bool sameEvidence(const FileEvidence& a, const FileEvidence& b) {
+    return a.device==b.device && a.inode==b.inode && a.size==b.size && a.mtimeNs==b.mtimeNs && a.ctimeNs==b.ctimeNs;
+}
 ErrorCode fileError(TransferFileError error) {
     switch (error) {
     case TransferFileError::NotFound:
@@ -239,6 +242,7 @@ struct UploadExecutor::Impl : std::enable_shared_from_this<Impl> {
     void resolve(UploadId);
     void hash(Upload u, RequestId request);
     void stop(std::function<void()> cb);
+    NodeCount quarantineSeen;
     void recover(std::function<void(Result<void>)>);
     void recoverOne(Upload, std::function<void(Result<void>)>);
     void verifyFile(TransferFileKey, FileLength, std::optional<Sha256>, std::function<void(Result<void>)>);
@@ -723,7 +727,18 @@ void UploadExecutor::Impl::inventory(InventoryArea area, std::optional<Inventory
                     if (!opened) return opened.error();
                     auto& view = *opened.value();
                     for (const auto& entry : page->value().items) {
-                        if (area == InventoryArea::Quarantine || !entry.knownKey) return ErrorCode::IntegrityError;
+                        auto* drive = dynamic_cast<DriveReadSnapshot*>(&view);
+                        if (!drive) return ErrorCode::InternalError;
+                        if (area == InventoryArea::Quarantine) {
+                            auto id=QuarantineId::parse(entry.relativeName);
+                            if (!id || id.value().toString()!=entry.relativeName) return ErrorCode::IntegrityError;
+                            auto held=drive->maintenanceState().findQuarantine(id.value());
+                            if (!held) return held.error();
+                            if (!held.value() || held.value()->state!=QuarantineState::Held ||
+                                !sameEvidence(held.value()->evidence,entry.evidence)) return ErrorCode::IntegrityError;
+                            continue;
+                        }
+                        if (!entry.knownKey) return ErrorCode::IntegrityError;
                         if (auto* temp = std::get_if<TemporaryFile>(&*entry.knownKey)) {
                             auto u = view.uploads().find(temp->id);
                             if (!u) return u.error();
@@ -735,7 +750,15 @@ void UploadExecutor::Impl::inventory(InventoryArea area, std::optional<Inventory
                             auto id = std::get<ObjectFile>(*entry.knownKey).id;
                             auto blob = view.blobs().find(id);
                             if (!blob) return blob.error();
-                            if (blob.value() && entry.size.value() != blob.value()->size.value()) return ErrorCode::IntegrityError;
+                            if (blob.value()) {
+                                auto record=drive->blobLifecycle().record(id);
+                                if (!record) return record.error();
+                                if (!record.value()) return ErrorCode::IntegrityError;
+                                if (record.value()->state==BlobState::Unavailable) {
+                                    const auto& evidence=record.value()->unavailable;
+                                    if (!evidence || !evidence->file || !sameEvidence(*evidence->file,entry.evidence)) return ErrorCode::IntegrityError;
+                                } else if (entry.size.value()!=blob.value()->size.value()) return ErrorCode::IntegrityError;
+                            }
                             if (!blob.value()) {
                                 bool owned = false;
                                 for (auto scan : { UploadScan::Active, UploadScan::CleanupPending }) {
@@ -766,14 +789,27 @@ void UploadExecutor::Impl::inventory(InventoryArea area, std::optional<Inventory
                         cb(valid);
                         return;
                     }
+                    if (area==InventoryArea::Quarantine) {
+                        auto count=self->quarantineSeen.add(static_cast<std::int64_t>(page->value().items.size()));
+                        if (!count) { cb(ErrorCode::IntegrityError); return; }
+                        self->quarantineSeen=count.value();
+                    }
                     if (page->value().next)
                         self->inventory(area, page->value().next, cb);
                     else if (area == InventoryArea::Uploads)
                         self->inventory(InventoryArea::Objects, {}, cb);
                     else if (area == InventoryArea::Objects)
                         self->inventory(InventoryArea::Quarantine, {}, cb);
-                    else
-                        cb({});
+                    else {
+                        const auto seen=self->quarantineSeen;
+                        self->meta([seen](auto& resources)->Result<void> {
+                            auto* store=dynamic_cast<DriveMetadataStore*>(resources.metadata.get());
+                            if (!store) return ErrorCode::InternalError;
+                            auto snapshot=store->beginDriveRead(); if (!snapshot) return snapshot.error();
+                            auto stats=snapshot.value()->blobLifecycle().gcStatistics(); if (!stats) return stats.error();
+                            return stats.value().quarantinedObjects==seen ? Result<void>{} : Result<void>{ErrorCode::IntegrityError};
+                        },cb);
+                    }
                 });
         });
 }
@@ -783,25 +819,25 @@ void UploadExecutor::Impl::checkBlobs(std::optional<BlobId> after, std::function
         return;
     }
     auto self = shared_from_this();
-    auto page = std::make_shared<Result<Page<Blob, BlobId>>>(ErrorCode::InternalError);
+    auto page = std::make_shared<Result<Page<BlobRecord, BlobId>>>(ErrorCode::InternalError);
     meta(
         [page, after](auto& r) -> Result<void> {
             auto* store = dynamic_cast<TransferMetadataStore*>(r.metadata.get());
             if (!store) return ErrorCode::InternalError;
             auto read = store->beginTransferRead();
             if (!read) return read.error();
-            *page = read.value()->blobs().list(PageSize::from(64).value(), after);
-            if (!*page) return page->error();
+            auto listed = read.value()->blobs().list(PageSize::from(64).value(), after);
+            if (!listed) return listed.error();
             auto* drive = dynamic_cast<DriveReadSnapshot*>(read.value().get());
             if (!drive) return ErrorCode::InternalError;
-            std::vector<Blob> available;
-            for (const auto& blob : page->value().items) {
+            std::vector<BlobRecord> available;
+            for (const auto& blob : listed.value().items) {
                 auto row = drive->blobLifecycle().record(blob.id);
                 if (!row) return row.error();
                 if (!row.value()) return ErrorCode::IntegrityError;
-                if (row.value()->state == BlobState::Available) available.push_back(blob);
+                if (row.value()->state != BlobState::Deleting) available.push_back(*row.value());
             }
-            page->value().items = std::move(available);
+            *page = Page<BlobRecord,BlobId>{std::move(available),listed.value().next};
             return {};
         },
         [self, page, cb](auto read) {
@@ -823,7 +859,26 @@ void UploadExecutor::Impl::checkBlobs(std::optional<BlobId> after, std::function
                     return;
                 }
                 const auto b = page->value().items[(*index)++];
-                self->verifyFile(ObjectFile{ b.id }, b.size, {}, [next](auto r) {
+                if (b.state==BlobState::Unavailable) {
+                    self->io([b](auto& fs)->Result<void> {
+                        if (!validateBlobRecord(b) || !b.unavailable) return ErrorCode::IntegrityError;
+                        auto opened=unwrap(fs.open(ObjectFile{b.content.id},false));
+                        if (b.unavailable->reason==UnavailableReason::Missing) {
+                            if (!opened && opened.error().code==ErrorCode::NotFound) return {};
+                            return ErrorCode::IntegrityError;
+                        }
+                        if (!opened) {
+                            if (opened.error().code==ErrorCode::NotFound) return ErrorCode::IntegrityError;
+                            return opened.error();
+                        }
+                        auto actual=unwrap(fs.stat(*opened.value()));
+                        if (!actual) return actual.error();
+                        return b.unavailable->file && sameEvidence(*b.unavailable->file,actual.value().evidence)
+                            ? Result<void>{} : Result<void>{ErrorCode::IntegrityError};
+                    },[next](auto r){ auto invoke=*next; invoke(r); });
+                    return;
+                }
+                self->verifyFile(ObjectFile{ b.content.id }, b.content.size, {}, [next](auto r) {
                     auto invoke = *next;
                     // AVAILABLE包含无引用宽限对象；缺文件是损坏，不能由GC补成功。
                     invoke(!r && r.error().code == ErrorCode::NotFound ? Result<void>{ErrorCode::IntegrityError} : r);
@@ -1072,6 +1127,7 @@ void UploadExecutor::Impl::recover(std::function<void(Result<void>)> cb) {
         return;
     }
     recovering = true;
+    quarantineSeen = {};
     ++backgrounds;
     auto self = shared_from_this();
     auto done = [self, cb](Result<void> result) {

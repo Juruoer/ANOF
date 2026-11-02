@@ -11,12 +11,9 @@ Result<Json> trashJson(const TrashView& view) {
     if (!validateTrashEntry(e)) return ErrorCode::InternalError;
     auto deleted = formatUtcTimestamp(e.deletedAt), expires = formatUtcTimestamp(e.expiresAt);
     if (!deleted || !expires) return ErrorCode::InternalError;
-    return Json{{"id", e.id.toString()}, {"instance_id", view.instanceId.toString()}, {"space_id", e.spaceId.toString()},
-        {"root_node_id", e.rootNodeId.toString()}, {"original_parent_id", e.originalParentId.toString()}, {"name", e.originalName},
-        {"kind", e.kind == NodeKind::File ? "file" : "directory"}, {"deleted_at", deleted.value()}, {"expires_at", expires.value()},
-        {"revision", std::to_string(e.revision.value())}, {"etag", tag(e)}, {"node_count", std::to_string(e.nodeCount.value())}, {"logical_bytes", std::to_string(e.logicalBytes.value())}};
+    return Json{ { "id", e.id.toString() }, { "instance_id", view.instanceId.toString() }, { "space_id", e.spaceId.toString() }, { "root_node_id", e.rootNodeId.toString() }, { "original_parent_id", e.originalParentId.toString() }, { "name", e.originalName }, { "kind", e.kind == NodeKind::File ? "file" : "directory" }, { "deleted_at", deleted.value() }, { "expires_at", expires.value() }, { "revision", std::to_string(e.revision.value()) }, { "etag", tag(e) }, { "node_count", std::to_string(e.nodeCount.value()) }, { "logical_bytes", std::to_string(e.logicalBytes.value()) } };
 }
-}
+}  // namespace
 Result<JsonResponse> restoredNodeResponse(const NodeDetails& node, RequestId id) {
     auto value = nodeResponse(node, id);
     if (value) value.value().headers.addHeader("Location", "/api/v1/nodes/" + node.metadata.id.toString());
@@ -58,7 +55,7 @@ Result<JsonResponse> searchResponse(const Page<NodeDetails, SearchCursor>& page,
         if (!cursor) return cursor.error();
         next = cursor.value();
     }
-    return internal::jsonResponse(200, "OK", id, {{"items", std::move(items)}, {"next_cursor", std::move(next)}}, kMaxIdentityResponseBytes);
+    return internal::jsonResponse(200, "OK", id, { { "items", std::move(items) }, { "next_cursor", std::move(next) } }, kMaxIdentityResponseBytes);
 }
 Result<JsonResponse> trashPageResponse(const Page<TrashView, TrashCursor>& page, RequestId id) {
     if (page.items.size() > 200 || (page.items.empty() && page.next)) return ErrorCode::InternalError;
@@ -76,6 +73,6 @@ Result<JsonResponse> trashPageResponse(const Page<TrashView, TrashCursor>& page,
         if (!cursor) return cursor.error();
         next = cursor.value();
     }
-    return internal::jsonResponse(200, "OK", id, {{"items", std::move(items)}, {"next_cursor", std::move(next)}}, kMaxIdentityResponseBytes);
+    return internal::jsonResponse(200, "OK", id, { { "items", std::move(items) }, { "next_cursor", std::move(next) } }, kMaxIdentityResponseBytes);
 }
 }  // namespace anof::http

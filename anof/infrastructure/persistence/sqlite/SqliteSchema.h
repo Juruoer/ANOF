@@ -6,7 +6,7 @@
 
 namespace anof::infrastructure::sqlite {
 
-inline constexpr std::int64_t kSqliteSchemaVersion = 4;
+inline constexpr std::int64_t kSqliteSchemaVersion = 5;
 // 仅限 SQLite 内部：在无活动事务且没有用户对象的库上原子建立当前 schema。
 // 已有当前库只校验；旧/未知/损坏布局拒绝，不升级或重置。
 Result<void> createSqliteSchema(SqliteConnection& connection);

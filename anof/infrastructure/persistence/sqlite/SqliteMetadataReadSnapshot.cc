@@ -1,3 +1,4 @@
+#include <anof/infrastructure/persistence/sqlite/SqliteMaintenanceStateReader.h>
 #include <anof/application/ports/DriveMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteAuthorizationReader.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteBlobRepository.h>
@@ -158,7 +159,7 @@ public:
 class Snapshot final : public DriveReadSnapshot {
 public:
     Snapshot(SqliteConnection& connection, bool& active, PasswordHashLimits limits)
-        : context_(connection, active), authorization_(context_), users_(context_, limits), sessions_(context_), invites_(context_), spaces_(context_), nodes_(context_), quotas_(context_), settings_(context_), uploads_(context_), blobs_(context_), storage_(context_), tree_(context_), trash_(context_), lifecycle_(context_), nodeAccounting_(context_) {}
+        : context_(connection, active), authorization_(context_), users_(context_, limits), sessions_(context_), invites_(context_), spaces_(context_), nodes_(context_), quotas_(context_), settings_(context_), uploads_(context_), blobs_(context_), storage_(context_), tree_(context_), trash_(context_), lifecycle_(context_), nodeAccounting_(context_), maintenance_(context_) {}
     Result<void> begin() { return context_.beginRead(); }
     AuthorizationReader& authorization() override { return authorization_; }
     UserReader& users() override { return users_; }
@@ -176,6 +177,7 @@ public:
     TrashReader& trash() override { return trash_; }
     BlobLifecycleReader& blobLifecycle() override { return lifecycle_; }
     NodeAccountingReader& nodeAccounting() override { return nodeAccounting_; }
+    MaintenanceStateReader& maintenanceState() override { return maintenance_; }
 
 private:
     SqliteTransactionContext context_;
@@ -194,6 +196,7 @@ private:
     TrashView trash_;
     BlobLifecycleView lifecycle_;
     NodeAccountingView nodeAccounting_;
+    SqliteMaintenanceStateReader maintenance_;
 };
 }  // namespace
 

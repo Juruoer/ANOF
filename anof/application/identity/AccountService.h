@@ -22,7 +22,8 @@ public:
     Result<PasswordChangePreparation> preparePasswordChange(const RequestContext&, const AccountCondition&);
     // hash 缺省表示旧密码验证失败；仍先最终认证，避免将已失效 Session 报为密码错误。
     Result<void> completePasswordChange(const RequestContext&, const AccountCondition&,
-        const PasswordChangePreparation&, std::optional<EncodedPasswordHash> hash);
+                                        const PasswordChangePreparation&, std::optional<EncodedPasswordHash> hash);
+
 private:
     MetadataStore& store_;
     Clock& clock_;

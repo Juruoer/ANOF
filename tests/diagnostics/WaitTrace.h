@@ -1,9 +1,10 @@
 #pragma once
 
+#include <unistd.h>
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <unistd.h>
 
 namespace anof::test {
 // 仅记录已有检查的结果；不能为诊断再次调用可能读取 socket 的 predicate。
@@ -25,6 +26,7 @@ public:
                      std::chrono::duration<double>(mono.time_since_epoch()).count(),
                      elapsed, wallElapsed, wallElapsed - elapsed, observedDone ? 1 : 0);
     }
+
 private:
     bool enabled_;
     const char* file_;

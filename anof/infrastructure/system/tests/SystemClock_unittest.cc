@@ -1,9 +1,8 @@
 #define BOOST_TEST_MODULE SystemClock
-#include <boost/test/unit_test.hpp>
-
 #include <anof/infrastructure/system/SystemClock.h>
 #include <anof/infrastructure/system/internal/UtcTimeConversion.h>
 
+#include <boost/test/unit_test.hpp>
 #include <chrono>
 #include <cstdint>
 #include <limits>
@@ -31,11 +30,22 @@ BOOST_AUTO_TEST_CASE(factory_and_production_clock) {
 }
 
 BOOST_AUTO_TEST_CASE(epoch_and_submicrosecond_floor) {
-    struct Sample { std::int64_t nanoseconds; std::int64_t microseconds; };
+    struct Sample {
+        std::int64_t nanoseconds;
+        std::int64_t microseconds;
+    };
     const Sample samples[] = {
-        { 0, 0 }, { 1, 0 }, { 999, 0 }, { 1000, 1 }, { 1001, 1 },
-        { -1, -1 }, { -999, -1 }, { -1000, -1 }, { -1001, -2 },
-        { -1999, -2 }, { -2000, -2 }
+        { 0, 0 },
+        { 1, 0 },
+        { 999, 0 },
+        { 1000, 1 },
+        { 1001, 1 },
+        { -1, -1 },
+        { -999, -1 },
+        { -1000, -1 },
+        { -1001, -2 },
+        { -1999, -2 },
+        { -2000, -2 }
     };
     for (const auto& sample : samples) {
         const auto input = NativeClock::time_point(nanoseconds(sample.nanoseconds));
@@ -44,13 +54,18 @@ BOOST_AUTO_TEST_CASE(epoch_and_submicrosecond_floor) {
 }
 
 BOOST_AUTO_TEST_CASE(unix_epoch_large_values_and_backward_inputs) {
-    struct Sample { std::int64_t nanoseconds; std::int64_t microseconds; };
+    struct Sample {
+        std::int64_t nanoseconds;
+        std::int64_t microseconds;
+    };
     const Sample samples[] = {
         { 1700000000123456789LL, 1700000000123456LL },
         { -1700000000123456789LL, -1700000000123457LL },
         { 2147483648000000000LL, 2147483648000000LL },
         { 4294967296000000000LL, 4294967296000000LL },
-        { 5000, 5 }, { 2000, 2 }, { -1, -1 }
+        { 5000, 5 },
+        { 2000, 2 },
+        { -1, -1 }
     };
     for (const auto& sample : samples) {
         const auto input = NativeClock::time_point(nanoseconds(sample.nanoseconds));

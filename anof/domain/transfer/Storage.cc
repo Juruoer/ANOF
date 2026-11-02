@@ -7,7 +7,7 @@ Result<StorageSnapshot> advance(StorageSnapshot s) {
     s.revision = revision.value();
     return s;
 }
-}
+}  // namespace
 Result<StorageSnapshot> setStorageBudget(StorageSnapshot s, Revision expected, ByteCount budget) {
     if (s.revision != expected) return ErrorCode::PreconditionFailed;
     auto total = s.retained.add(s.reserved.value());

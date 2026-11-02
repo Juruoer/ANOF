@@ -1,9 +1,8 @@
 #pragma once
 #include <anof/application/drive/DriveCommands.h>
-#include <anof/application/transfer/TransferCommands.h>
-
-#include <anof/transport/http/IdentityRequest.h>
 #include <anof/application/identity/AccountCommands.h>
+#include <anof/application/transfer/TransferCommands.h>
+#include <anof/transport/http/IdentityRequest.h>
 
 namespace anof::http {
 inline constexpr std::size_t kMaxCursorBytes = 2048;

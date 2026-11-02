@@ -22,7 +22,7 @@ Result<void> visitTrash(DriveReadSnapshot& r, const std::function<Result<void>(c
                 if (auto* file = std::get_if<FileContentMetadata>(&m.node.content)) {
                     if (!m.blobId) return ErrorCode::IntegrityError;
                     auto blob = r.blobLifecycle().record(*m.blobId); if (!blob) return blob.error();
-                    if (!blob.value() || blob.value()->state != BlobState::Available ||
+                    if (!blob.value() || blob.value()->state == BlobState::Deleting ||
                         blob.value()->content.size.value() != file->size.value() || blob.value()->content.sha256.bytes() != file->sha256)
                         return ErrorCode::IntegrityError;
                 }
@@ -126,6 +126,9 @@ Result<void> auditTransferMetadata(TransferMetadataStore& store, UtcTime now) {
     auto opened = drive->beginDriveRead();
     if (!opened) return opened.error();
     auto& r = *opened.value();
+    auto pending = r.maintenanceState().hasPendingRuns();
+    if (!pending) return pending.error();
+    if (pending.value()) return ErrorCode::IntegrityError;
     auto storage = r.storage().get();
     if (!storage) return storage.error();
     ByteCount retained, reservedBytes;
@@ -141,9 +144,10 @@ Result<void> auditTransferMetadata(TransferMetadataStore& store, UtcTime now) {
             const auto& row = *record.value();
             auto upload = r.blobs().hasUploadReference(b.id); if (!upload) return upload.error();
             // 发布持有不应与已提交Blob双重占用同一个对象key。
-            if (upload.value() || (ref.value() && (row.state != BlobState::Available || row.unreferencedAt)) ||
+            if (upload.value() || (ref.value() && (row.state == BlobState::Deleting || row.unreferencedAt)) ||
                 (!ref.value() && !row.unreferencedAt)) return ErrorCode::IntegrityError;
-            auto n = retained.add(b.size.value());
+            if (!validateBlobRecord(row)) return ErrorCode::IntegrityError;
+            auto n = retained.add(row.chargedBytes.value());
             if (!n) return ErrorCode::IntegrityError;
             retained = n.value();
         }
@@ -162,7 +166,12 @@ Result<void> auditTransferMetadata(TransferMetadataStore& store, UtcTime now) {
             after = page.value().next;
         } while (after);
     }
-    if (retained != storage.value().retained || reservedBytes != storage.value().reserved)
+    auto statistics = r.blobLifecycle().gcStatistics();
+    if (!statistics) return statistics.error();
+    if (!validateStorageStatistics(statistics.value(), storage.value().retained)) return ErrorCode::IntegrityError;
+    auto physical = retained.add(statistics.value().quarantinedBytes.value());
+    if (!physical) return ErrorCode::IntegrityError;
+    if (physical.value() != storage.value().retained || reservedBytes != storage.value().reserved)
         return ErrorCode::IntegrityError;
     std::optional<UserListPosition> userAfter;
     bool publicChecked = false;

@@ -162,7 +162,7 @@ struct MetadataExecutor::Impl {
                     }
                 }
             } catch (...) {
-                // 工厂／资源构造阶段尚未接受任务，和执行阶段的提交不确定分开。
+                // 工厂/资源构造阶段尚未接受任务，和执行阶段的提交不确定分开。
                 factory = {};
                 publishStartup(ErrorCode::InternalError);
             }

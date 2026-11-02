@@ -1,14 +1,12 @@
 #define BOOST_TEST_MODULE InstanceLock
-#include <boost/test/unit_test.hpp>
-
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
 #include <anof/infrastructure/system/internal/InstanceFiles.h>
-
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <boost/test/unit_test.hpp>
 #include <cerrno>
 #include <filesystem>
 #include <fstream>
@@ -60,7 +58,9 @@ std::size_t fdCount() {
 int waitChild(pid_t pid) {
     int status = 0;
     pid_t result;
-    do { result = ::waitpid(pid, &status, 0); } while (result < 0 && errno == EINTR);
+    do {
+        result = ::waitpid(pid, &status, 0);
+    } while (result < 0 && errno == EINTR);
     if (result != pid || !WIFEXITED(status)) return -1;
     return WEXITSTATUS(status);
 }
@@ -81,7 +81,7 @@ int execProbe(const fs::path& root, bool success, const std::vector<int>& descri
     // 子进程 alarm 对 exec 后同样生效；无无限等待的测试 helper。
     return waitChild(pid);
 }
-}
+}  // namespace
 
 BOOST_AUTO_TEST_CASE(lease_owns_lock_and_preserves_file_identity) {
     Fixture f;

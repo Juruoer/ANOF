@@ -1,0 +1,98 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 3
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Unix Makefiles",
+      "cacheVariables": {
+        "ANOF_BUILD_TESTS": "OFF",
+        "MUDUOX_BUILD_TESTS": "OFF",
+        "MUDUOX_BUILD_EXAMPLES": "OFF",
+        "ANOF_ENABLE_INSTALL": "ON",
+        "ANOF_BUNDLE_SQLITE": "ON"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/cmake-build-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "debug-tests",
+      "inherits": "debug",
+      "cacheVariables": {
+        "ANOF_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "release",
+      "inherits": "base",
+      "binaryDir": "${sourceDir}/cmake-build-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "release-tests",
+      "inherits": "release",
+      "cacheVariables": {
+        "ANOF_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "jobs": 2
+    },
+    {
+      "name": "debug-tests",
+      "configurePreset": "debug-tests",
+      "jobs": 2
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "jobs": 2
+    },
+    {
+      "name": "release-tests",
+      "configurePreset": "release-tests",
+      "jobs": 2
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "debug-tests",
+      "configurePreset": "debug-tests",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 1,
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "release-tests",
+      "configurePreset": "release-tests",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "jobs": 1,
+        "noTestsAction": "error"
+      }
+    }
+  ]
+}

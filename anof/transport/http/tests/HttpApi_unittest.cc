@@ -1,16 +1,17 @@
 #include <tests/support/EventLoopWait.h>
 #define BOOST_TEST_MODULE HttpApi
-#include <boost/test/unit_test.hpp>
 #include <anof/transport/http/HttpApi.h>
 #include <muduox/net/EventLoop.h>
-#include <nlohmann/json.hpp>
-
 #include <sys/socket.h>
 #include <unistd.h>
+
+#include <boost/test/unit_test.hpp>
 #include <cerrno>
 #include <cstdio>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <vector>
+
 #include "HttpTestSupport.h"
 
 using namespace anof;
@@ -35,17 +36,13 @@ public:
     HttpApi api;
     HttpServer server;
     explicit Fixture(std::size_t limit = 128)
-        : api(codec, identity, [this] { return ready; },
-              [this](RequestContext owned, const HttpRequest&, const auto&) {
+        : api(codec, identity, [this] { return ready; }, [this](RequestContext owned, const HttpRequest&, const auto&) {
                   ++entered;
                   context = owned;
                   HttpStreamCallbacks callbacks;
                   callbacks.body = [](auto part) { return part.size(); };
                   callbacks.cancel = [this] { ++cancelled; };
-                  return callbacks;
-              }, identityDispatcher, uploadDispatcher, driveDispatcher, {[this](auto record) { committed.push_back(std::move(record)); },
-                  [this](auto record) { finished.push_back(std::move(record)); }}, {limit, 15, 30}),
-          server(&loop, InetAddress(0, true), "anof-http-test") {
+                  return callbacks; }, identityDispatcher, uploadDispatcher, driveDispatcher, developmentConfiguration(), { [this](auto record) { committed.push_back(std::move(record)); }, [this](auto record) { finished.push_back(std::move(record)); } }, { limit, 15, 30 }), server(&loop, InetAddress(0, true), "anof-http-test") {
         api.configure(server);
         server.start();
     }
@@ -83,6 +80,8 @@ BOOST_AUTO_TEST_CASE(healthAndServerIdentity) {
     Fixture fixture;
     auto live = fixture.exchange(get("/health/live?token=secret"));
     status(live, "200 OK");
+    BOOST_REQUIRE(!fixture.finished.empty());
+    BOOST_CHECK_EQUAL(fixture.finished.back().route, "/health/live");
     BOOST_CHECK_EQUAL(jsonBody(live)["status"].get<std::string>(), "live");
     BOOST_REQUIRE_EQUAL(fixture.finished.size(), 1);
     const auto id = fixture.finished.back().requestId.toString();
@@ -104,7 +103,7 @@ BOOST_AUTO_TEST_CASE(healthAndServerIdentity) {
 BOOST_AUTO_TEST_CASE(routingAndMethodPolicy) {
     Fixture fixture;
     status(fixture.exchange(get("/unknown")), "404 Not Found");
-    for (const auto& method : {"HEAD", "OPTIONS", "POST"}) {
+    for (const auto& method : { "HEAD", "OPTIONS", "POST" }) {
         const auto response = fixture.exchange(get("/health/live", method));
         status(response, "405 Method Not Allowed");
         BOOST_CHECK(response.find("allow: GET\r\n") != std::string::npos);
@@ -119,11 +118,11 @@ BOOST_AUTO_TEST_CASE(routingAndMethodPolicy) {
 BOOST_AUTO_TEST_CASE(headRejectionDoesNotWaitForBodyOrSendContinue) {
     Fixture fixture;
     const std::pair<std::string, std::string> cases[] = {
-        {"Content-Type: application/json\r\n", "401 Unauthorized"},
-        {"Authorization: Bearer bad\r\nContent-Type: application/json\r\n", "401 Unauthorized"},
-        {"Authorization: Bearer test-token\r\nCookie: x=y\r\n", "400 Bad Request"},
-        {"Authorization: Bearer test-token\r\nAuthorization: Bearer test-token\r\n", "400 Bad Request"},
-        {"Authorization: Bearer test-token\r\nContent-Type: text/plain\r\n", "415 Unsupported Media Type"}
+        { "Content-Type: application/json\r\n", "401 Unauthorized" },
+        { "Authorization: Bearer bad\r\nContent-Type: application/json\r\n", "401 Unauthorized" },
+        { "Authorization: Bearer test-token\r\nCookie: __Host-anof_session=x\r\n", "400 Bad Request" },
+        { "Authorization: Bearer test-token\r\nAuthorization: Bearer test-token\r\n", "400 Bad Request" },
+        { "Authorization: Bearer test-token\r\nContent-Type: text/plain\r\n", "415 Unsupported Media Type" }
     };
     for (const auto& entry : cases) {
         const auto response = fixture.exchange(post(entry.first));
@@ -173,9 +172,9 @@ BOOST_AUTO_TEST_CASE(protocolErrorsAreObservedWithoutJsonEnvelope) {
 BOOST_AUTO_TEST_CASE(configurationIsValidatedAndInstalledOnce) {
     Fixture fixture;
     BOOST_CHECK_THROW(fixture.api.configure(fixture.server), std::logic_error);
-    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, {}, [](auto, const auto&, const auto&) { return HttpStreamCallbacks{}; }, fixture.identityDispatcher, fixture.uploadDispatcher, fixture.driveDispatcher), std::invalid_argument);
-    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, [] { return true; }, {}, fixture.identityDispatcher, fixture.uploadDispatcher, fixture.driveDispatcher), std::invalid_argument);
-    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, [] { return true; }, [](auto, const auto&, const auto&) { return HttpStreamCallbacks{}; }, fixture.identityDispatcher, fixture.uploadDispatcher, fixture.driveDispatcher, {}, {129, 15, 30}), std::invalid_argument);
+    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, {}, [](auto, const auto&, const auto&) { return HttpStreamCallbacks{}; }, fixture.identityDispatcher, fixture.uploadDispatcher, fixture.driveDispatcher, developmentConfiguration()), std::invalid_argument);
+    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, [] { return true; }, {}, fixture.identityDispatcher, fixture.uploadDispatcher, fixture.driveDispatcher, developmentConfiguration()), std::invalid_argument);
+    BOOST_CHECK_THROW(HttpApi(fixture.codec, fixture.identity, [] { return true; }, [](auto, const auto&, const auto&) { return HttpStreamCallbacks{}; }, fixture.identityDispatcher, fixture.uploadDispatcher, fixture.driveDispatcher, developmentConfiguration(), {}, { 129, 15, 30 }), std::invalid_argument);
 }
 
 BOOST_AUTO_TEST_CASE(keepAliveIdsArePerExchange) {
@@ -200,4 +199,13 @@ BOOST_AUTO_TEST_CASE(routeBodyLimitSurvivesEndpointBinding) {
     BOOST_CHECK_EQUAL(fixture.entered, 0);
     BOOST_REQUIRE_EQUAL(fixture.finished.size(), 1);
     BOOST_CHECK_EQUAL(*fixture.finished[0].status, 413);
+}
+
+BOOST_AUTO_TEST_CASE(trace_routes_are_static_templates_without_identifiers_or_queries) {
+    Fixture f;
+    f.exchange(get("/api/v1/nodes/secret-node?token=secret-query"));
+    BOOST_REQUIRE(!f.finished.empty());
+    BOOST_CHECK_EQUAL(f.finished.back().route, "/api/v1/nodes/:node_id");
+    f.exchange(get("/unknown-secret-path?token=secret-query"));
+    BOOST_CHECK_EQUAL(f.finished.back().route, "unmatched");
 }

@@ -2,10 +2,11 @@
 
 #include <anof/application/maintenance/PrepareInstance.h>
 #include <anof/runtime/AnofRuntime.h>
-#include <anof/runtime/IdentityExecutor.h>
+#include <anof/runtime/AuditRetentionExecutor.h>
 #include <anof/runtime/DriveExecutor.h>
-#include <anof/runtime/UploadExecutor.h>
+#include <anof/runtime/IdentityExecutor.h>
 #include <anof/runtime/MaintenanceExecutor.h>
+#include <anof/runtime/UploadExecutor.h>
 #include <anof/transport/http/CreateDirectoryHandler.h>
 
 #include <memory>
@@ -38,6 +39,7 @@ public:
     bool ready() const;
     std::optional<std::uint16_t> port() const;
     MetadataExecutorSnapshot metadataSnapshot() const;
+    bool auditRetentionPaused() const;
     std::size_t notificationExceptions() const;
     IdentityDispatcher& identityDispatcher();
     TransferDispatcher& transferDispatcher();
@@ -65,6 +67,7 @@ private:
     DiskExecutor disk_;
     UploadExecutor uploads_;
     MaintenanceExecutor maintenance_;
+    AuditRetentionExecutor auditRetention_;
     std::unique_ptr<http::HttpApi> api_;
     std::unique_ptr<muduox::net::HttpServer> server_;
     MetadataExecutor::Started onReady_;
@@ -78,9 +81,9 @@ private:
     std::size_t notificationExceptions_ = 0;
 };
 
-// 生产组合：工厂在 loop 初始化 crypto，在 worker 打开 SQLite 并构造 Clock／NodeIdGenerator。
+// 生产组合：工厂在 loop 初始化 crypto，在 worker 打开 SQLite 并构造 Clock/NodeIdGenerator。
 // 仅接纳 prepareInstance 已完成的 lease；不负责获取锁、加载配置或创建实例。
 Result<std::unique_ptr<InstanceServer>> makeInstanceServer(muduox::net::EventLoop& loop, PreparedInstance prepared,
-    http::HttpObservation httpObservation = {}, http::DirectoryTaskObserver taskObservation = {});
+                                                           http::HttpObservation httpObservation = {}, http::DirectoryTaskObserver taskObservation = {});
 
 }  // namespace anof::runtime

@@ -13,7 +13,7 @@ struct PreparedInstance {
 Result<void> validateInstanceConfiguration(const InstanceConfiguration& configuration);
 
 // 先锁、再读取配置、最后校验元数据；任何失败均释放本次获得的锁。
-// 在启动 HTTP／worker 前调用，不在服务请求回调中执行阻塞维护操作。
+// 在启动 HTTP/worker 前调用，不在服务请求回调中执行阻塞维护操作。
 Result<PreparedInstance> prepareInstance(const std::filesystem::path& root, InstanceLockProvider& locks,
                                          InstanceConfigurationLoader& configuration, InstanceMaintenance& maintenance);
 

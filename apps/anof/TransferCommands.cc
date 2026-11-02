@@ -69,7 +69,10 @@ std::optional<int> TransferCommands::run(const std::string& directory, LockedPro
         output.confirmed = value.meta;
         return output.success(value.data, value.meta);
     };
-    if (*s.storageShow) {output.notice="GC counters are subsets of retained bytes, not additional usage or immediately free space.";return emit(client.storage());}
+    if (*s.storageShow) {
+        output.notice = "GC counters are subsets of retained bytes, not additional usage or immediately free space.";
+        return emit(client.storage());
+    }
     if (*s.storageSet) {
         auto n = parseTransferDecimal(s.budget);
         if (!n) return invalid();

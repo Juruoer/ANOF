@@ -22,10 +22,11 @@ int main() {
         const auto now = std::chrono::steady_clock::now();
         const double elapsed = std::chrono::duration<double>(now - start).count();
         const double wallElapsed = std::chrono::duration<double>(std::chrono::system_clock::now() - wallStart).count();
-        std::printf("TIMER_PROBE mono=%.9f target=3 elapsed=%.9f wall_elapsed=%.9f "
-                    "offset_delta=%.9f ticks=%u max_tick_gap=%.9f\n",
-                    std::chrono::duration<double>(now.time_since_epoch()).count(),
-                    elapsed, wallElapsed, wallElapsed - elapsed, ticks, maxGap);
+        std::printf(
+            "TIMER_PROBE mono=%.9f target=3 elapsed=%.9f wall_elapsed=%.9f "
+            "offset_delta=%.9f ticks=%u max_tick_gap=%.9f\n",
+            std::chrono::duration<double>(now.time_since_epoch()).count(),
+            elapsed, wallElapsed, wallElapsed - elapsed, ticks, maxGap);
         loop.quit();
     });
     loop.loop();

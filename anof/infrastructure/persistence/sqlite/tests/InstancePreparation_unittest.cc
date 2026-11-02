@@ -1,19 +1,17 @@
 #include <anof/infrastructure/persistence/sqlite/tests/SqliteTestStore.h>
 #define BOOST_TEST_MODULE RealInstancePreparation
-#include <boost/test/unit_test.hpp>
-#include <anof/infrastructure/persistence/sqlite/tests/BootstrapFixture.h>
-
 #include <anof/application/maintenance/PrepareInstance.h>
 #include <anof/infrastructure/config/TomlInstanceConfiguration.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteInstanceMaintenance.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
+#include <anof/infrastructure/persistence/sqlite/tests/BootstrapFixture.h>
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
-
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <boost/test/unit_test.hpp>
 #include <cerrno>
 #include <cstdlib>
 #include <filesystem>
@@ -28,7 +26,7 @@
 namespace anof::infrastructure::sqlite {
 namespace {
 namespace fs = std::filesystem;
-constexpr const char* kFormat = R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":4})";
+constexpr const char* kFormat = R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":5})";
 
 template <typename T>
 void errorIs(const Result<T>& result, ErrorCode code) {
@@ -52,7 +50,9 @@ int probe(const fs::path& root, bool success) {
     }
     int status = 0;
     pid_t waited;
-    do { waited = ::waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+    do {
+        waited = ::waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
     return waited == child && WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
@@ -134,7 +134,7 @@ struct Observed : InstanceConfigurationLoader, InstanceMaintenance {
     }
     Result<PreparedInstance> prepare() { return prepareInstance(fixture.root, *fixture.locks, *this, *this); }
 };
-}
+}  // namespace
 
 BOOST_AUTO_TEST_CASE(real_preparation_transfers_lock_and_worker_opens_its_own_store) {
     Fixture fixture;
@@ -259,7 +259,7 @@ BOOST_AUTO_TEST_CASE(maintenance_failures_preserve_categories_release_resources_
     {
         auto connection = openSqliteDatabase(fixture.path("metadata.sqlite3"));
         BOOST_REQUIRE(connection);
-        BOOST_REQUIRE(connection.value()->execute("UPDATE schema_info SET version=5"));
+        BOOST_REQUIRE(connection.value()->execute("UPDATE schema_info SET version=6"));
     }
     const auto futureDatabase = fixture.read("metadata.sqlite3");
     reject(ErrorCode::IntegrityError);
@@ -268,7 +268,7 @@ BOOST_AUTO_TEST_CASE(maintenance_failures_preserve_categories_release_resources_
         // 仅测试夹具显式修复；生产准备流程不得自动修改版本。
         auto connection = SqliteConnection::open(fixture.path("metadata.sqlite3"));
         BOOST_REQUIRE(connection);
-        BOOST_REQUIRE(connection.value()->execute("UPDATE schema_info SET version=4; CREATE TABLE damaged(value INTEGER CHECK(value>0)); PRAGMA ignore_check_constraints=ON; INSERT INTO damaged VALUES(-1)"));
+        BOOST_REQUIRE(connection.value()->execute("UPDATE schema_info SET version=5; CREATE TABLE damaged(value INTEGER CHECK(value>0)); PRAGMA ignore_check_constraints=ON; INSERT INTO damaged VALUES(-1)"));
     }
     reject(ErrorCode::IntegrityError);
     {

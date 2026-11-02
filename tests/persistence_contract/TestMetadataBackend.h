@@ -27,7 +27,7 @@ struct BlobSeed {
     std::array<std::uint8_t, 32> sha256;
 };
 
-// 仅测试种子／观察值：blobId 有值即文件；无值即目录。
+// 仅测试种子/观察值：blobId 有值即文件；无值即目录。
 // trashed 表示该节点自身属于回收站条目，后代还须检查祖先。
 struct NodeSeed {
     DirectorySnapshot metadata;

@@ -50,7 +50,7 @@ def main():
                 wall = time.time_ns()
                 offset = wall - mono
                 record('sample', sample_mono_ns=mono, sample_wall_ns=wall,
-                       offset_ns=offset, offset_change_ns=0 if previous is None else offset-previous)
+                       offset_ns=offset, offset_change_ns=0 if previous is None else offset - previous)
                 previous = offset
                 stopped.wait(0.02)
 

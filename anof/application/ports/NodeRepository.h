@@ -12,7 +12,7 @@ public:
     virtual Result<std::optional<NodeDetails>> find(NodeId) = 0;
     // 调用者在同一快照先授权和检查父路径；按 UTF-8 名称字节、ID 有界 seek。
     virtual Result<Page<NodeDetails, ChildPosition>> listChildren(SpaceId, NodeId parent, PageSize,
-                                                                 std::optional<ChildPosition> after) = 0;
+                                                                  std::optional<ChildPosition> after) = 0;
 };
 class NodeRepository : public NodeReader {
 public:

@@ -6,7 +6,8 @@
 
 namespace anof {
 
-enum class SpaceKind { Private, Public };
+enum class SpaceKind { Private,
+                       Public };
 
 struct Space {
     SpaceId id;

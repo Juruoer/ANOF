@@ -1,14 +1,12 @@
 #include <anof/infrastructure/persistence/sqlite/tests/SqliteTestStore.h>
 #define BOOST_TEST_MODULE AnofSqliteMetadataTransaction
-#include <boost/test/unit_test.hpp>
-
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataStore.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataTransaction.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
-
 #include <sqlite3.h>
 
+#include <boost/test/unit_test.hpp>
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
@@ -99,10 +97,11 @@ public:
         statement.reset();
         BOOST_REQUIRE(connection->commit());
     }
+
 private:
     static void addSpace(SqliteConnection& connection, const char* space, const char* root, bool isPublic) {
         BOOST_REQUIRE(connection.execute("INSERT INTO spaces VALUES (" + quoted(space) + ", " +
-            (isPublic ? "1, NULL, " : "0, " + quoted(kUser) + ", ") + quoted(root) + ")"));
+                                         (isPublic ? "1, NULL, " : "0, " + quoted(kUser) + ", ") + quoted(root) + ")"));
         BOOST_REQUIRE(connection.execute("INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES (" + quoted(root) + ", " + quoted(space) +
                                          ", NULL, '', 0, " + quoted(kUser) + ", NULL, 1, 0, 0, 0)"));
     }
@@ -159,7 +158,11 @@ BOOST_AUTO_TEST_CASE(session_failures_are_uniform_and_failed_transactions_cannot
     for (const auto& change : changes) {
         Database database;
         database.seed();
-        { auto connection = database.raw(); BOOST_REQUIRE(connection->execute("UPDATE sessions SET user_id=" + quoted(kMember))); BOOST_REQUIRE(connection->execute(change)); }
+        {
+            auto connection = database.raw();
+            BOOST_REQUIRE(connection->execute("UPDATE sessions SET user_id=" + quoted(kMember)));
+            BOOST_REQUIRE(connection->execute(change));
+        }
         auto store = database.store();
         auto transaction = begin(*store);
         errorIs(transaction->authorization().requireActiveSession({ kDigest, CredentialMode::Bearer }, kNow), ErrorCode::Unauthenticated);
@@ -290,7 +293,11 @@ BOOST_AUTO_TEST_CASE(commit_persists_and_constraint_failure_closes_transaction) 
         BOOST_REQUIRE(connection->execute("UPDATE sessions SET user_id=" + quoted(kMember)));
         BOOST_REQUIRE(transaction.commit());
     }
-    { auto observer = database.store(); auto transaction = begin(*observer); expectIdentity(*transaction, kMember, UserRole::Member); }
+    {
+        auto observer = database.store();
+        auto transaction = begin(*observer);
+        expectIdentity(*transaction, kMember, UserRole::Member);
+    }
     SqliteMetadataTransaction failed(*connection, active, { 8192, 1, 1 });
     BOOST_REQUIRE(failed.begin());
     BOOST_REQUIRE(connection->execute("UPDATE users SET enabled=0 WHERE id=" + quoted(kMember)));
@@ -388,8 +395,12 @@ BOOST_AUTO_TEST_CASE(commit_failure_closes_repositories_and_preserves_uncertain_
         errorIs(transaction.commit(), ErrorCode::InvalidArgument);
         BOOST_REQUIRE_EQUAL(sqlite3_set_authorizer(connection->handle(), nullptr, nullptr), SQLITE_OK);
         SqliteMetadataTransaction next(*connection, active, { 8192, 1, 1 });
-        if (denyRollback) errorIs(next.begin(), ErrorCode::InternalError);
-        else { BOOST_REQUIRE(next.begin()); BOOST_REQUIRE(next.commit()); }
+        if (denyRollback)
+            errorIs(next.begin(), ErrorCode::InternalError);
+        else {
+            BOOST_REQUIRE(next.begin());
+            BOOST_REQUIRE(next.commit());
+        }
     }
 }
 
@@ -406,7 +417,8 @@ BOOST_AUTO_TEST_CASE(closed_quota_and_audit_repositories_cannot_use_a_successor_
     auto next = begin(*store);
     errorIs(quotas.chargeUsed(SpaceQuota{ space }, { ByteCount{}, NodeCount::from(1).value() }), ErrorCode::InvalidArgument);
     errorIs(audit.append({ UserId::parse(kUser).value(), space, NodeId::parse(kMissing).value(), root,
-                          RequestId::parse(kMissing).value(), kNow }), ErrorCode::InvalidArgument);
+                           RequestId::parse(kMissing).value(), kNow }),
+            ErrorCode::InvalidArgument);
     old.reset();
     BOOST_REQUIRE(next->commit());
     auto connection = database.raw();

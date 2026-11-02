@@ -1,5 +1,5 @@
 anof_add_unit_test(anof_event_loop_wait_unittest EventLoopWait_unittest.cc)
+set_tests_properties(anof_event_loop_wait_unittest PROPERTIES TIMEOUT 10 LABELS "unit;runtime;test_support")
 target_sources(anof_event_loop_wait_unittest PRIVATE EventLoopWait.h)
 target_link_libraries(anof_event_loop_wait_unittest PRIVATE muduox_net)
 target_compile_options(anof_event_loop_wait_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
-set_tests_properties(anof_event_loop_wait_unittest PROPERTIES TIMEOUT 10)

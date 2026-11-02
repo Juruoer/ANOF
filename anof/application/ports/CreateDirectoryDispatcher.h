@@ -25,7 +25,7 @@ public:
     // context/command 必须自有；callback 只弱引用 HTTP 状态，不捕获 borrowed 视图或 writer。
     // 命令及闭包须有界；当前 HTTP 调用方先执行 64 KiB 正文与 DTO 校验。
     virtual TaskSubmission trySubmit(RequestContext context, CreateDirectoryCommand command,
-                                                CreateDirectoryCallback completion) = 0;
+                                     CreateDirectoryCallback completion) = 0;
 };
 
 }  // namespace anof

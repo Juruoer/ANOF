@@ -2,8 +2,8 @@
 
 #include <anof/core/Clock.h>
 #include <anof/core/Result.h>
-#include <anof/domain/identity/Principal.h>
 #include <anof/domain/identity/IdentityValues.h>
+#include <anof/domain/identity/Principal.h>
 
 namespace anof {
 class AuthorizationReader {

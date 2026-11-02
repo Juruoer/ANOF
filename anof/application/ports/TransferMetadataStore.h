@@ -1,9 +1,9 @@
 #pragma once
-#include <anof/application/ports/MetadataStore.h>
-#include <anof/application/ports/UploadRepository.h>
 #include <anof/application/ports/BlobRepository.h>
+#include <anof/application/ports/MetadataStore.h>
 #include <anof/application/ports/StorageRepository.h>
 #include <anof/application/ports/TransferAuditRepository.h>
+#include <anof/application/ports/UploadRepository.h>
 
 namespace anof {
 struct NewFile {

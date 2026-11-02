@@ -97,7 +97,7 @@ ClientResult<TransferReply> decodeTransfer(TransferOperation op, const HttpRespo
             doc.parse(r.body.view());
             const auto& e = field(doc.root, "error");
             auto code = string(e, "code");
-            static const std::map<std::string, int> codes{ { "INVALID_ARGUMENT", 400 },
+            static const std::map<std::string, int> codes{ { "REQUEST_ORIGIN_REJECTED", 403 }, { "CSRF_REQUIRED", 403 }, { "COOKIE_MODE_DISABLED", 403 }, { "INVALID_ARGUMENT", 400 },
                                                            { "INVALID_NAME", 400 },
                                                            { "REQUEST_TOO_LARGE", 413 },
                                                            { "LENGTH_REQUIRED", 411 },
@@ -191,12 +191,17 @@ ClientResult<TransferReply> decodeTransfer(TransferOperation op, const HttpRespo
                 data["instance_id"] = id<InstanceId>(field(j, "instance_id")).toString();
                 for (auto key : { "content_budget_bytes", "retained_bytes", "reserved_bytes" })
                     data[key] = std::to_string(decimal(string(j, key)));
-                for(auto key:{"pending_gc_bytes","pending_gc_objects","deleting_bytes","deleting_objects","used_nodes","reserved_nodes","node_limit"})
+                for(auto key:{"pending_gc_bytes","pending_gc_objects","deleting_bytes","deleting_objects","quarantined_bytes","quarantined_objects","unavailable_bytes","unavailable_objects","used_nodes","reserved_nodes","node_limit"})
                     data[key]=std::to_string(decimal(string(j,key)));
                 const auto used=decimal(string(j,"used_nodes")), reserved=decimal(string(j,"reserved_nodes"));
                 require(decimal(string(j,"node_limit"))==kInstanceNodeLimit && used<=kInstanceNodeLimit && reserved<=kInstanceNodeLimit-used);
                 require(decimal(string(j,"deleting_bytes"))<=decimal(string(j,"pending_gc_bytes")) && decimal(string(j,"pending_gc_bytes"))<=decimal(string(j,"retained_bytes")));
                 require(decimal(string(j,"deleting_objects"))<=decimal(string(j,"pending_gc_objects")));
+                GcStatistics statistics{ByteCount::from(decimal(string(j,"pending_gc_bytes"))).value(),NodeCount::from(decimal(string(j,"pending_gc_objects"))).value(),
+                    ByteCount::from(decimal(string(j,"deleting_bytes"))).value(),NodeCount::from(decimal(string(j,"deleting_objects"))).value(),
+                    ByteCount::from(decimal(string(j,"quarantined_bytes"))).value(),NodeCount::from(decimal(string(j,"quarantined_objects"))).value(),
+                    ByteCount::from(decimal(string(j,"unavailable_bytes"))).value(),NodeCount::from(decimal(string(j,"unavailable_objects"))).value()};
+                require(bool(validateStorageStatistics(statistics,ByteCount::from(decimal(string(j,"retained_bytes"))).value())));
                 auto prefix = "\"storage-" + data["instance_id"].get<std::string>() + "-";
                 require(meta.etag && meta.etag->compare(0, prefix.size(), prefix) == 0 && meta.etag->back() == '"');
                 decimal(std::string_view(*meta.etag).substr(prefix.size(), meta.etag->size() - prefix.size() - 1), 1);

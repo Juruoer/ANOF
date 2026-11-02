@@ -1,16 +1,14 @@
 #define BOOST_TEST_MODULE AnofSqliteInstanceMaintenance
-#include <boost/test/unit_test.hpp>
-#include <anof/infrastructure/persistence/sqlite/tests/BootstrapFixture.h>
-
 #include <anof/infrastructure/persistence/sqlite/SqliteInstanceMaintenance.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
+#include <anof/infrastructure/persistence/sqlite/tests/BootstrapFixture.h>
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
-
 #include <sqlite3.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <boost/test/unit_test.hpp>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -20,7 +18,7 @@
 
 namespace anof::infrastructure::sqlite {
 namespace {
-constexpr const char* kFormat = R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":4})";
+constexpr const char* kFormat = R"({"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":5})";
 
 template <typename T>
 void errorIs(const Result<T>& result, ErrorCode code) {
@@ -88,7 +86,7 @@ std::int64_t scalar(SqliteConnection& connection, const char* sql) {
     BOOST_REQUIRE(value);
     return value.value();
 }
-}
+}  // namespace
 
 BOOST_AUTO_TEST_CASE(valid_instance_closes_resources_and_retains_lease) {
     Instance instance;
@@ -120,10 +118,10 @@ BOOST_AUTO_TEST_CASE(format_is_strict_and_precedes_database_open) {
              std::string(""), std::string("[]"), std::string("{}"),
              prefix + "1,\"format_version\":1}", prefix + "1,\"instance_id\":" + id + "}",
              prefix + "1,\"unknown\":0}", std::string(kFormat) + "{}", std::string("\xef\xbb\xbf") + kFormat,
-             std::string(R"({"instance_id":"00000000-0000-0000-0000-000000000000","format_version":4})"),
-             std::string(R"({"instance_id":"12345678-1234-4234-8234-123456789ABC","format_version":4})"),
-             std::string(R"({"instance_id":true,"format_version":4})"),
-             std::string(R"({"instance_id":{},"format_version":4})"),
+             std::string(R"({"instance_id":"00000000-0000-0000-0000-000000000000","format_version":5})"),
+             std::string(R"({"instance_id":"12345678-1234-4234-8234-123456789ABC","format_version":5})"),
+             std::string(R"({"instance_id":true,"format_version":5})"),
+             std::string(R"({"instance_id":{},"format_version":5})"),
              std::string("{\"instance_id\":\"\xff\",\"format_version\":1}"),
              std::string(R"({"instance_id":"12345678-1234-4234-8234-123456789abc"})") }) {
         instance.write("instance.json", text);
@@ -165,12 +163,12 @@ BOOST_AUTO_TEST_CASE(future_schema_is_not_migrated) {
     instance.database();
     {
         auto connection = instance.open();
-        BOOST_REQUIRE(connection->execute("UPDATE schema_info SET version=5"));
+        BOOST_REQUIRE(connection->execute("UPDATE schema_info SET version=6"));
     }
     errorIs(instance.verify(), ErrorCode::IntegrityError);
     auto raw = SqliteConnection::open(instance.path("metadata.sqlite3"));
     BOOST_REQUIRE(raw);
-    BOOST_CHECK_EQUAL(scalar(*raw.value(), "SELECT version FROM schema_info"), 5);
+    BOOST_CHECK_EQUAL(scalar(*raw.value(), "SELECT version FROM schema_info"), 6);
 }
 
 BOOST_AUTO_TEST_CASE(schema_and_foreign_key_damage_are_rejected) {

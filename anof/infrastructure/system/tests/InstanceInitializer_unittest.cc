@@ -1,16 +1,17 @@
 #define BOOST_TEST_MODULE AnofInstanceInitializer
-#include <boost/test/unit_test.hpp>
+#include <anof/infrastructure/config/TomlInstanceConfiguration.h>
+#include <anof/infrastructure/config/internal/ConfigurationText.h>
 #include <anof/infrastructure/system/LinuxInstanceInitializer.h>
 #include <anof/infrastructure/system/LinuxInstanceLock.h>
 #include <anof/infrastructure/system/internal/InitializationFiles.h>
 #include <anof/infrastructure/system/internal/InstanceFiles.h>
-#include <anof/infrastructure/config/TomlInstanceConfiguration.h>
-#include <anof/infrastructure/config/internal/ConfigurationText.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
 #include <algorithm>
+#include <boost/test/unit_test.hpp>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -22,8 +23,15 @@ namespace anof::infrastructure::system {
 namespace {
 const InitializationIdentity identity{
     InstanceId::parse("11111111-1111-4111-8111-111111111111").value(),
-    OperationId::parse("22222222-2222-4222-8222-222222222222").value() };
-InstanceConfiguration config() { InstanceConfiguration c; c.developmentHttp = true; c.shutdownGraceSeconds = 1.125; c.diskSafety = {ByteCount::from(17).value(), SafetyPercent::from(0).value()}; return c; }
+    OperationId::parse("22222222-2222-4222-8222-222222222222").value()
+};
+InstanceConfiguration config() {
+    InstanceConfiguration c;
+    c.developmentHttp = true;
+    c.shutdownGraceSeconds = 1.125;
+    c.diskSafety = { ByteCount::from(17).value(), SafetyPercent::from(0).value() };
+    return c;
+}
 template <typename T>
 void errorIs(const InitResult<T>& result, InitError code, InitStage stage) {
     BOOST_REQUIRE(!result);
@@ -38,7 +46,10 @@ struct Tree {
         if (!path) throw std::runtime_error("temporary directory failed");
         root = path;
     }
-    ~Tree() { std::error_code error; std::filesystem::remove_all(root, error); }
+    ~Tree() {
+        std::error_code error;
+        std::filesystem::remove_all(root, error);
+    }
     std::filesystem::path file(std::string_view name) const { return root / ".anof" / name; }
     std::string read(std::string_view name) const {
         std::ifstream input(file(name), std::ios::binary);
@@ -76,7 +87,9 @@ void probe(const Tree& tree, bool success) {
     }
     int result = 0;
     pid_t waited;
-    do { waited = ::waitpid(child, &result, 0); } while (waited < 0 && errno == EINTR);
+    do {
+        waited = ::waitpid(child, &result, 0);
+    } while (waited < 0 && errno == EINTR);
     BOOST_REQUIRE_EQUAL(waited, child);
     BOOST_REQUIRE(WIFEXITED(result));
     BOOST_CHECK_EQUAL(WEXITSTATUS(result), 0);
@@ -84,23 +97,41 @@ void probe(const Tree& tree, bool success) {
 int syncCalls = 0, failSync = 0, writeCalls = 0, writeMode = 0, renameMode = 0, unlinkMode = 0;
 ssize_t writeHook(int fd, const void* data, std::size_t size) {
     ++writeCalls;
-    if (writeMode == 1 && writeCalls == 1) { errno = EINTR; return -1; }
-    if (writeMode == 2) { errno = ENOSPC; return -1; }
+    if (writeMode == 1 && writeCalls == 1) {
+        errno = EINTR;
+        return -1;
+    }
+    if (writeMode == 2) {
+        errno = ENOSPC;
+        return -1;
+    }
     if (writeMode == 3) return 0;
     return ::write(fd, data, writeMode == 1 ? std::min<std::size_t>(3, size) : size);
 }
 int syncHook(int fd) {
-    if (++syncCalls == failSync) { errno = EIO; return -1; }
+    if (++syncCalls == failSync) {
+        errno = EIO;
+        return -1;
+    }
     return ::fsync(fd);
 }
 int renameHook(int a, const char* x, int b, const char* y) {
-    if (renameMode == 1) { errno = EACCES; return -1; }
+    if (renameMode == 1) {
+        errno = EACCES;
+        return -1;
+    }
     const int result = detail::initializationFileOps().renameNoReplace(a, x, b, y);
-    if (renameMode == 2 && result == 0) { errno = EIO; return -1; }
+    if (renameMode == 2 && result == 0) {
+        errno = EIO;
+        return -1;
+    }
     return result;
 }
 int unlinkHook(int a, const char* name, int flags) {
-    if (unlinkMode) { errno = EACCES; return -1; }
+    if (unlinkMode) {
+        errno = EACCES;
+        return -1;
+    }
     return ::unlinkat(a, name, flags);
 }
 std::unique_ptr<InstanceInitializer> faultInitializer() {
@@ -214,9 +245,9 @@ BOOST_AUTO_TEST_CASE(umask_is_not_repaired_and_incomplete_directory_is_retained)
 BOOST_AUTO_TEST_CASE(pending_json_is_bounded_exact_canonical_and_versioned) {
     const auto valid = detail::pendingText(identity);
     for (const auto& text : { std::string{}, valid + "{}", "\xef\xbb\xbf" + valid, std::string(4097, ' '),
-                             std::string("[]"), std::string("{\"version\":1,\"version\":1}"),
-                             std::string("{\"version\":1.0}"), std::string("{\"instance_id\":[]}"),
-                             std::string("{\"path\":\"../other\"}") }) {
+                              std::string("[]"), std::string("{\"version\":1,\"version\":1}"),
+                              std::string("{\"version\":1.0}"), std::string("{\"instance_id\":[]}"),
+                              std::string("{\"path\":\"../other\"}") }) {
         errorIs(detail::parsePending(text, InitStage::Verify), InitError::IntegrityError, InitStage::Verify);
     }
     for (const auto* key : { "version", "target_schema", "target_format" }) {
@@ -262,9 +293,15 @@ BOOST_AUTO_TEST_CASE(pending_and_configuration_path_types_and_bounds_fail_closed
         BOOST_REQUIRE_EQUAL(::unlink(tree.file("initialization.pending").c_str()), 0);
         if (kind == 0) std::filesystem::create_symlink("config.toml", tree.file("initialization.pending"));
         if (kind == 1) BOOST_REQUIRE_EQUAL(::mkfifo(tree.file("initialization.pending").c_str(), 0600), 0);
-        if (kind == 2) { tree.put("initialization.pending", pending); BOOST_REQUIRE_EQUAL(::link(tree.file("initialization.pending").c_str(), tree.file("alias").c_str()), 0); }
+        if (kind == 2) {
+            tree.put("initialization.pending", pending);
+            BOOST_REQUIRE_EQUAL(::link(tree.file("initialization.pending").c_str(), tree.file("alias").c_str()), 0);
+        }
         if (kind == 3) tree.put("initialization.pending", std::string(4097, 'x'));
-        if (kind == 4) { tree.put("initialization.pending", pending); BOOST_REQUIRE_EQUAL(::chmod(tree.file("initialization.pending").c_str(), 0644), 0); }
+        if (kind == 4) {
+            tree.put("initialization.pending", pending);
+            BOOST_REQUIRE_EQUAL(::chmod(tree.file("initialization.pending").c_str(), 0644), 0);
+        }
         errorIs(init->openPending(tree.root), InitError::IntegrityError, InitStage::Verify);
         BOOST_CHECK(std::filesystem::exists(tree.file("instance.lock")));
     }
@@ -289,8 +326,8 @@ BOOST_AUTO_TEST_CASE(configuration_validation_and_no_overwrite_precede_publicati
 
 BOOST_AUTO_TEST_CASE(format_mismatch_unknown_fields_and_version_never_overwrite) {
     for (const auto& marker : {
-             std::string("{\"instance_id\":\"33333333-3333-4333-8333-333333333333\",\"format_version\":4}"),
-             std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":4,\"extra\":0}"),
+             std::string("{\"instance_id\":\"33333333-3333-4333-8333-333333333333\",\"format_version\":5}"),
+             std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":5,\"extra\":0}"),
              std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":2}"),
              std::string("{\"instance_id\":\"11111111-1111-4111-8111-111111111111\",\"format_version\":1}") }) {
         Tree tree;
@@ -317,7 +354,8 @@ BOOST_AUTO_TEST_CASE(changed_pending_configuration_and_lock_are_not_trusted) {
             tree.put("replacement", detail::pendingText(identity));
             BOOST_REQUIRE_EQUAL(::rename(tree.file("replacement").c_str(), tree.file("initialization.pending").c_str()), 0);
         } else if (change == 1) {
-            auto changed = config(); changed.port = 9999;
+            auto changed = config();
+            changed.port = 9999;
             tree.put("config.toml", config::detail::serializeConfiguration(changed).value());
         } else {
             BOOST_REQUIRE_EQUAL(::unlink(tree.file("instance.lock").c_str()), 0);
@@ -370,7 +408,8 @@ BOOST_AUTO_TEST_CASE(format_sync_failures_are_explicitly_finishable_without_over
         Tree tree;
         auto init = faultInitializer();
         auto lease = create(*init, tree);
-        syncCalls = 0; failSync = point;
+        syncCalls = 0;
+        failSync = point;
         errorIs(lease->publishFormat(), point <= 4 ? InitError::IoError : InitError::PublicationOutcomeUnknown, InitStage::PublishFormat);
         BOOST_CHECK(std::filesystem::exists(tree.file("instance.json")) == (point >= 5));
         errorIs(lease->clearPending(), InitError::IncompleteInitialization, InitStage::ClearPending);
@@ -408,7 +447,9 @@ BOOST_AUTO_TEST_CASE(pending_removal_failure_and_sync_unknown_are_distinct) {
     unlinkMode = 1;
     errorIs(lease->clearPending(), InitError::IoError, InitStage::ClearPending);
     BOOST_CHECK(std::filesystem::exists(tree.file("initialization.pending")));
-    unlinkMode = 0; syncCalls = 0; failSync = 1;
+    unlinkMode = 0;
+    syncCalls = 0;
+    failSync = 1;
     errorIs(lease->clearPending(), InitError::PublicationOutcomeUnknown, InitStage::ClearPending);
     BOOST_CHECK(!std::filesystem::exists(tree.file("initialization.pending")));
     BOOST_CHECK(std::filesystem::exists(tree.file("instance.json")));
@@ -433,7 +474,8 @@ BOOST_AUTO_TEST_CASE(configuration_sync_failures_preserve_published_or_partial_s
         Tree tree;
         auto init = faultInitializer();
         auto lease = create(*init, tree, false);
-        syncCalls = 0; failSync = point;
+        syncCalls = 0;
+        failSync = point;
         errorIs(lease->writeConfiguration(config()), point == 1 ? InitError::IoError : InitError::PublicationOutcomeUnknown, InitStage::WriteConfiguration);
         BOOST_CHECK(std::filesystem::exists(tree.file("config.toml")) == (point >= 2));
         lease.reset();
@@ -492,7 +534,7 @@ BOOST_AUTO_TEST_CASE(content_directory_failures_preserve_pending_and_finish_neve
     auto named = held;
     BOOST_REQUIRE(detail::validateContentDirectory(held, named, held.st_dev));
     // 合成另一个设备号，验证生产属性检查；不声称进行了真实跨挂载点测试。
-    BOOST_CHECK(!detail::validateContentDirectory(held, named, held.st_dev ^ dev_t{1}));
+    BOOST_CHECK(!detail::validateContentDirectory(held, named, held.st_dev ^ dev_t{ 1 }));
     ++named.st_ino;
     BOOST_CHECK(!detail::validateContentDirectory(held, named, held.st_dev));
     BOOST_REQUIRE_EQUAL(chmod(tree.file("objects").c_str(), 0755), 0);

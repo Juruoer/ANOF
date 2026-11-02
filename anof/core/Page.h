@@ -1,6 +1,7 @@
 #pragma once
 
 #include <anof/core/Quantity.h>
+
 #include <optional>
 #include <vector>
 

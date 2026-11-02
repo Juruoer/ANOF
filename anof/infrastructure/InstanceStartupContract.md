@@ -1,109 +1,105 @@
-# 实例启动适配契约
+# 实例路径、初始化与启动契约
 
-本文固定 infrastructure 启动适配器的接口、文件格式与安全边界，供实现和验收使用。Linux 实例锁及安全打开工具已有实现，接口和测试说明见 system/README.md；TOML 配置加载已有实现，接口和测试见 config/README.md；实例格式和 SQLite 维护已有实现，接口和测试见 persistence/sqlite/README.md。现有 SQLite、crypto 和系统时钟行为不受此契约改动。
+一个实例把元数据、上传暂存和不可变内容放在同一私有目录中。服务启动和离线维护先取得该实例的排他锁，再读取配置和数据库；锁持续到所有文件句柄、数据库连接及使用它们的任务结束。本页是这些路径和权限规则的主要参考，供维护者修改启动、初始化及文件适配器时核对。
 
-当前格式和 schema 均为 3；事务化引导、格式发布及 M2 启动维护已实现。启动必须拒绝 pending，并核对 settings 与格式 ID、完整身份／空间／额度及初始化审计。旧开发实例只拒绝，不升级、不删除。
+普通启动由应用 [prepareInstance](../application/maintenance/PrepareInstance.cc) 依次执行 `acquire → load → validate → verify`。配置错误会在数据库打开之前返回；失败释放局部 lease，成功将锁和自有配置交给 runtime。此时完成的是启动前结构检查，[runtime](../runtime/DESIGN.md)还需执行内容恢复和对账，才允许监听。
 
-## 接口与内部组织
+## 实例布局
 
-| 位置 | 工厂 | 返回端口 |
-|---|---|---|
-| [system/LinuxInstanceLock.h](system/LinuxInstanceLock.h) | `system::makeLinuxInstanceLockProvider()` | InstanceLockProvider |
-| [config/TomlInstanceConfiguration.h](config/TomlInstanceConfiguration.h) | `config::makeTomlInstanceConfigurationLoader()` | InstanceConfigurationLoader |
-| [persistence/sqlite/SqliteInstanceMaintenance.h](persistence/sqlite/SqliteInstanceMaintenance.h) | `sqlite::makeSqliteInstanceMaintenance(options)` | InstanceMaintenance |
+以下路径相对调用者提供的实例根目录，当前实例格式和数据库 schema 均为 **5**：
 
-命名空间前缀为 `anof::infrastructure`。工厂统一返回 `Result<std::unique_ptr<端口>>`，成功值非空，可报告的分配失败为 InternalError。维护工厂显式接受 SqliteMaintenanceOptions 中的密码编码读取预算与连接选项。构造不访问实例、不获取锁、不打开数据库；实际操作发生在 acquire／load／verify。
-
-system 内部负责描述符 RAII、逐级目录打开、安全文件读取和具体 LinuxInstanceLease。lease 独占根目录、`.anof` 目录及锁描述符，公开只暴露已校验的绝对 root。config 和 sqlite 通过 infrastructure 内部访问器借用 `.anof` 描述符，不暴露 fd 到公共端口，也不另建以路径为键的全局注册表。非本适配器的 lease 返回 InvalidArgument；调用方必须保证借用期间 lease 存活，不支持并发析构。
-
-维护的格式 JSON 解析和数据库检查由 sqlite 适配器组织，所有 SQL 位于 persistence/sqlite；通用目录工具不接触 SQLite 或 TOML。内部文件随具体实现加入，不创建空实现或虚假成功路径。
-
-## 路径、权限与锁
-
-接纳非空绝对实例路径，拒绝 `..` 组件，`.` 和重复分隔符可规范化；不以 canonical 跟随符号链接。逐级从根目录使用描述符相对方式打开及核验，所有路径组件必须是真实目录。实例根与 `.anof` 必须已存在，不能自动创建。
-
-权限约定以进程有效 UID 为服务账户：
-
-- 实例根与 `.anof`：服务账户所有，权限恰好 0700，拒绝特殊权限位。
-- 实例外祖先：所有者为 root 或服务账户，拒绝 setuid／setgid 和 group／other 可写；唯一共享可写例外是 root 所有且有 sticky 位的目录，以支持 `/tmp` 中的测试专属实例。祖先无需全部 0700。
-- instance.lock、metadata.sqlite3 及存在的 `metadata.sqlite3-wal`／`metadata.sqlite3-shm`：服务账户所有，普通文件，0600，无特殊位、无硬链接别名（nlink 必须为 1）。
-- config.toml 和 instance.json：同样要求普通文件、服务账户所有、nlink=1，权限允许 0400 或 0600。
-- 拒绝符号链接、FIFO、设备、socket 等不合适类型。打开方式不得因 FIFO 等类型阻塞；不通过 chmod 修补外部数据。
-
-路径检查与打开须优先保持在目录 fd 上，打开后 fstat 核对类型／权限／身份。必须明确：目录描述符只能稳定已打开对象，不能使绝对路径免受替换。持锁期间服务账户和特权主体均不得重命名或替换实例树、锁文件及数据库文件；其他主体由私有目录权限隔离。已有 runtime 的 worker 仍使用 root 下的数据库路径，此所有权假设同样适用。
-
-锁机制固定为 Linux `flock(LOCK_EX | LOCK_NB)`，服务和离线维护共用 `.anof/instance.lock`。锁文件不存在时，仅可在已验证的 `.anof` 内以 0600 独占创建；存在时打开同一文件，不截断、不 unlink、不替换。umask 只能收紧创建权限，创建后仍按约定检查，不临时修改进程全局 umask。
-
-所有持有描述符设 close-on-exec；acquire 失败自动关闭，成功后由 lease 独占。析构关闭描述符释放本次持有的内核锁，不显式删除文件。fork 继承的描述符可能延长锁生命周期；生产启动不在持锁期间 fork，测试独立获取必须关闭继承副本或通过 exec 隔离。Stopped 不释放 lease，最终对象析构才释放；适配器不观察 runtime 状态。
-
-## 配置文件
-
-固定读取 `.anof/config.toml`，包括读取过程中增长在内最多 65536 字节，超限拒绝，不回显文件内容。仅接纳以下顶层键，不接纳表、数组或其他键：
-
-```toml
-listen_address = "127.0.0.1"
-port = 8080
-development_http = true
-metadata_queue = 256
-http_in_flight = 128
-shutdown_grace_seconds = 30
-disk_safety_min_bytes = 1073741824
-disk_safety_percent = 5
+```text
+<instance>/
+  .anof/
+    instance.lock
+    config.toml
+    instance.json
+    metadata.sqlite3
+    metadata.sqlite3-wal / metadata.sqlite3-shm  （存在时）
+    initialization.pending                     （初始化未收尾时）
+    uploads/<UploadId>.part
+    objects/<BlobId 前两位>/<BlobId>
+    quarantine/<QuarantineId>
 ```
 
-| TOML 键 | 类型及范围 | 对应公共字段 |
-|---|---|---|
-| listen_address | 字符串，仅 127.0.0.1 | listenAddress |
-| port | 整数，0～65535 | port |
-| development_http | 布尔，必须显式 true | developmentHttp |
-| metadata_queue | 整数，1～256 | metadataQueue |
-| http_in_flight | 整数，1～128 | httpInFlight |
-| disk_safety_min_bytes | 整数，0～INT64_MAX，缺省 1073741824 | diskSafety.minimum |
-| disk_safety_percent | 整数，0～100，缺省 5 | diskSafety.percent |
-| shutdown_grace_seconds | 整数或浮点数，有限 0～30 | shutdownGraceSeconds |
+业务打开和普通启动不创建缺失数据库、不升级或静默重置数据。格式不支持时拒绝打开，不能删除标记或手工改版本号来绕过检查。
 
-以 `InstanceConfiguration{}` 为唯一默认来源，缺省键不另设默认值。developmentHttp 的默认 false 故意不通过校验。整数先检查符号和范围再缩窄；宽限期接受整数和有限浮点数，拒绝 NaN／infinity。拒绝重复定义、未知键、错误类型、溢出及 TOML 语法错误。调用现有 validateInstanceConfiguration 复验公共约束，返回自有值；load 不保留 lease 或 TOML 节点。
+## 路径和权限
 
-## 最小格式元数据
+实例根必须是非空绝对路径，不含 NUL 或 `..` 组件。`.` 和重复分隔符可以规范化；逐级使用目录描述符、`openat`、`O_DIRECTORY` 和 `O_NOFOLLOW` 检查，不调用会跟随符号链接的 canonical 解析来放行路径。
 
-固定读取 `.anof/instance.json`，包括增长在内最多 4096 字节，UTF-8 JSON，顶层必须是对象且恰好含以下两项：
+“服务账户”指进程的有效 UID。权限按下表检查，不在失败后自动 chmod：
+
+| 对象 | 所有权和权限 |
+|---|---|
+| 实例根、`.anof`、内容目录及对象分片目录 | 服务账户所有，恰好 0700，无特殊权限位；内容布局要求同设备 |
+| 实例外祖先目录 | root 或服务账户所有，无 setuid/setgid，不允许 group/other 可写；root 所有且带 sticky 位的共享目录是例外，例如 `/tmp` |
+| 锁、主数据库、存在的 WAL/SHM、可写内容文件 | 服务账户所有的单链接普通文件，恰好 0600，无特殊位 |
+| 只读配置和格式文件 | 同样要求单链接普通文件，允许 0400 或 0600 |
+
+普通启动要求实例根和 `.anof` 已存在；初始化只接纳调用者已创建的空 0700 根目录。`uploads`、`objects`、`quarantine` 与 `.anof` 必须位于同一设备，防止把原子移动依赖变成跨文件系统复制。
+
+[InstanceFiles](system/internal/InstanceFiles.cc) 先用 `O_PATH|O_NOFOLLOW` 检查普通文件，再以 `O_NONBLOCK|O_NOFOLLOW` 打开并比较设备号/inode，避免打开 FIFO 或设备产生阻塞、副作用。文件名必须是单个安全组件；符号链接、硬链接别名、目录和特殊文件均拒绝。描述符设置 close-on-exec，由 RAII 关闭；Linux close 遇到 EINTR 不重试，以免误关已复用的描述符。
+
+目录描述符稳定的是已经打开的对象，并不能禁止同 UID 或特权程序替换绝对路径。整个持锁期间，服务账户及特权主体都不得重命名或替换实例树、锁和数据库。文件系统权限隔离其他账户；这里不承诺抵御绕过协议的同 UID 恶意修改，也不提供 NFS/SMB 锁行为保证。
+
+## 锁如何取得和释放
+
+[LinuxInstanceLock](system/LinuxInstanceLock.cc) 对固定的 `.anof/instance.lock` 使用 `flock(LOCK_EX|LOCK_NB)`。竞争立即返回 `Conflict`，不等待或循环重试。普通 acquire 在缺锁文件时可以独占创建；已有文件不截断、不替换、不 unlink。创建不修改进程 umask；若 umask 使权限不符合约定，保留现场并失败。
+
+初始化重开和离线 `acquireExisting` 只打开已有锁，不补建源锁文件。获锁后复验固定名称仍指向持有的 inode。lease 独占根目录、`.anof` 和锁描述符，provider 可以先销毁；lease 析构关闭资源而不删除锁文件。
+
+`flock` 是建议锁，服务与维护工具必须共同遵守。fork 会继承描述符并可能延长锁寿命，所以服务持锁期间不 fork；独立进程测试先关闭继承副本或 exec。仅收到 runtime 的 Stopped 通知不能释放锁，应等全部使用者清理完成并销毁实例资源。
+
+## 初始化文件与数据库如何衔接
+
+[LinuxInstanceInitializer](system/LinuxInstanceInitializer.cc) 创建 `.anof`、稳定锁和 pending，并创建、核验和同步三个内容目录。已有 `.anof`（包括其他类型）返回 `AlreadyExists`。InitializationLease 独占 InstanceLease，`lease()` 仅借用；析构不会删除半成品。
+
+一次初始化按以下顺序完成：
+
+1. 取得 InitializationLease，写出完整配置。新 lease 只允许成功写一次；`openPending` 重开后不能改写配置。
+2. [SqliteInstanceBootstrap](persistence/sqlite/SqliteInstanceBootstrap.cc) 独占创建 schema，再用一个业务事务写入实例身份、管理员、空间/根、额度、账本和初始化审计。
+3. 引导提交并验证完成后，关闭 SQLite 连接并同步数据库及目录。数据库成功不代替文件同步。
+4. `publishFormat` 复验配置与内容目录，发布 `instance.json`；最后 `clearPending` 核对身份并删除 pending、同步目录。
+
+schema 创建和业务引导是两个事务。引导失败保留文件和 pending，不自动重做。`verifyComplete` 用于核验同一初始化操作已经提交的精确初始状态，不重新哈希密码、不补记录、不重复计费；通过后仍需发布格式和清除 pending。不能用普通业务 Store 代替这个收尾验证。
+
+### 文件表示
+
+初始化写出 0600、单链接文件。配置最多 65536 字节，完整十三键的格式与校验见[配置说明](config/README.md#文件内容和模式)，这里不重复维护字段表。
+
+`initialization.pending` 最多 4096 字节，精确包含五个字段。下例仅说明格式，不应手工写入运行中的实例：
 
 ```json
-{"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":3}
+{"version":1,"operation_id":"12345678-1234-4234-8234-123456789ab1","instance_id":"12345678-1234-4234-8234-123456789abc","target_schema":5,"target_format":5}
 ```
 
-instance_id 必须是小写规范分组、非 nil UUID 字符串，不强制 UUID 版本；不把它当 UserId 或节点 ID，公共端口不增加字段。format_version 必须是 JSON 整数 3，布尔、浮点数及字符串均不接受。拒绝未知／重复字段、超范围数字、额外尾随 JSON、BOM 和格式错误；前后 JSON 空白允许。使用有界解析并拒绝字段值中的嵌套结构。
+`instance.json` 同样最多 4096 字节，只有两个字段：
 
-此文件是独立实例格式标记，不代替 SQLite schema 版本；不隐含校验对象目录、上传恢复、GC 状态或完整 init 工作流。初始化文件由 LinuxInstanceInitializer 创建；数据库引导由 SqliteInstanceBootstrap 完成，均使用调用方提供的 typed ID。
+```json
+{"instance_id":"12345678-1234-4234-8234-123456789abc","format_version":5}
+```
 
-## 维护与错误边界
+解析要求小写规范非 nil UUID 和整数版本，拒绝 BOM、重复/未知字段、嵌套字段值、错误类型、越界数字和尾随 JSON；允许前后 JSON 空白。初始化解析区分 `UnsupportedFormat` 与格式损坏；普通启动把不支持或不一致的格式归为 `IntegrityError`。标记只标识实例与格式，不证明数据库已经引导或内容文件完整。
 
-调用顺序使用现有 prepareInstance：acquire → load → 公共配置校验 → verify。verify 先拒绝任何类型的 initialization.pending，再检查 instance.json、metadata.sqlite3 和存在的 WAL／SHM 的安全属性，验证已有 schema／建库定义／设置及数据库结构完整性与外键，并检查 settings 的实例 ID、唯一管理员／公共空间、用户私有空间／根、必需额度和初始化审计；密码编码必须符合显式读取预算。仅复用不带 CREATE 的数据库打开路径；禁止用 createSqliteDatabase 代替验证。完整性 SQL 位于 sqlite 内，读取结果有界；数据库扫描耗时与实际数据量相关，不能把结果数量限制说成恒定耗时保证。
+文件通过同目录、带 operation ID 的临时名独占创建，完整写入并 fsync，以 `renameat2(RENAME_NOREPLACE)` 发布，再同步 `.anof` 和根目录。`publishFormat` 可复用同一操作留下的完整匹配临时文件或已有匹配格式；不覆盖不匹配或损坏文件。每次写操作复验目录、锁和 pending 身份，清除 pending 前复验配置和格式。
 
-SQLite 文件打开及伴随文件处理必须结合经过验证的目录身份实现，不假定 SQLite 可以直接接管一个已打开的普通文件 fd，也不能通过替换随机临时文件名破坏 WAL 身份。维护使用原有绝对文件名打开 SQLite，保留其 WAL／SHM 命名关系。打开前重新校验绝对目录与 lease 所持目录身份，打开前后核对主文件身份；验证用主文件 fd 持有到维护连接关闭后，避免提前 close 释放进程级 POSIX 锁。安全检查和已有树不可替换约定同时成立；不宣称抵御具有同一 UID／特权的恶意并发修改。
+rename/unlink 已发生但同步无法确认时，返回带阶段的 `PublicationOutcomeUnknown`。现场可能已经改变，不能解释为回滚，也不能以删除临时文件或标记来“重试”。数据库的 `CommitOutcomeUnknown` 则需要重新查询引导证据；两种结果分别处理。
 
-打开 SQLite 前要求主文件至少具有完整 100 字节头、SQLite 魔数及 WAL 读写格式标记（均为 2）；空文件和非 WAL 数据库返回 IntegrityError，不隐式初始化或转换日志模式。存在 metadata.sqlite3-journal 时保守返回 IntegrityError，不触发回滚 journal 恢复或自动删除。WAL／SHM 在打开前、打开后及正常关闭后检查安全属性。
+## 普通启动验证到哪里
 
-verify 返回前销毁全部维护连接、语句及事务；业务连接由 worker 后续自行打开。验证不插入业务记录、不更新应用 schema、不创建缺失主数据库；SQLite 正常打开可能涉及 WAL／SHM 管理，不能承诺验证过程是文件系统层面绝对只读。非法配置必须在进入任何数据库维护前失败。
+[SqliteInstanceMaintenance](persistence/sqlite/SqliteInstanceMaintenance.cc) 首先拒绝任何类型的 pending，再核对格式、内容目录、主数据库及伴随文件。它检查 schema 定义、完整性与外键、实例 ID、唯一启用管理员和公共空间、每用户私有空间/根、额度、密码编码读取预算及账本结构。运行后的实例允许合法用户、节点和 revision 变化；历史初始化审计可以按保留策略清理，不要求数据库一直保持初始行数。
 
-| 情况 | 分类 |
-|---|---|
-| 根参数不是绝对路径、含 `..`、不匹配的 lease | InvalidArgument |
-| 缺失实例根、`.anof` 或必需文件 | NotFound |
-| 内核锁被占用 | Conflict |
-| 配置语法、键、值或 64 KiB 上限不合法 | InvalidArgument |
-| 路径类型、所有权、权限、硬链接不符合约定 | IntegrityError |
-| 格式 JSON 损坏／超限／不支持版本、数据库完整性损坏 | IntegrityError |
-| 无权访问（EACCES／EPERM）、未分类系统调用或分配失败 | InternalError |
-| 创建锁文件时 ENOSPC／EDQUOT | StorageFull |
-| SQLite 打开／验证错误 | 保留后端现有分类，包括 Retryable、StorageFull 等 |
+安全数据库打开要求主文件有完整 SQLite 头、WAL 读写标记，拒绝空文件、非 WAL 库及存在的 rollback journal。打开前后核对主文件、WAL/SHM 属性；主文件 fd 保留到 SQLite 连接关闭以后，避免提前 close 干扰进程级 POSIX 锁。连接使用既有绝对文件名，以保持 WAL/SHM 命名关系。返回前结束语句、事务并关闭维护连接，业务 worker 后续自行打开 Store。
 
-当前 schema 3 校验对不支持的版本返回 IntegrityError；格式标记的未来版本为 IntegrityError。错误不回显配置／格式内容，也不把无法确认的提交结果转换为可安全重试。锁和普通文件系统操作不额外引入业务重试循环。
+这种检查可能触发 SQLite 的 WAL/SHM 管理，不能当作源文件字节不变的检查工具。需要保留损坏源原样时，使用[离线捕获](system/README.md#离线获取和捕获)，只在副本打开 SQLite。
 
-## 构建与验证边界
+结构维护允许可解释的待恢复上传和超预算状态。随后应用的 [TransferRecovery](../application/transfer/TransferRecovery.cc) 使用 typed 维护状态与文件证据，拒绝未完成离线维护、变化的隔离证据和不一致内容，处理可恢复上传/DELETING 对象，再核对账本。不能把 `InstanceMaintenance::verify` 成功单独解释为内容恢复完成或可以直接监听。
 
-启动与初始化适配器使用同一 anof_infrastructure 目标；TOML 依赖 `tomlplusplus::tomlplusplus`，JSON 依赖 `nlohmann_json::nlohmann_json`，均私有链接。公开头只依赖现有 application 端口和标准库。
+## 错误与实现入口
 
-锁和安全文件打开已接入局部真实进程／文件测试。TOML 配置的有界读取和解析已有局部测试；instance.json 格式校验、维护关闭、真实 schema／外键／完整性检查已有局部测试。InstancePreparation_unittest.cc 通过实际 prepareInstance 组合三个生产适配器，覆盖成功移交、配置短路、维护失败、异常释放、跨进程再取锁及另一线程独立打开业务仓储；边界注入的错误只验证分类透传，不冒充真实 OS 故障。完整 serve／信号停止组合保持在根集成范围。
+普通启动的根参数错误为 `InvalidArgument`，必需文件缺失为 `NotFound`，路径/权限/身份/格式损坏为 `IntegrityError`；内核锁竞争为 `Conflict`，SQLite 有限等待后的竞争为 `Retryable`。配置语法或值错误为 `InvalidArgument`。ENOSPC/EDQUOT 映射为 `StorageFull`，未分类系统故障为 `InternalError`；错误不携带配置、密码或 SQL 诊断内容。
 
-内容目录 uploads、objects、quarantine 由初始化创建并同步；启动维护在打开 SQLite 前检查其所有权、0700 权限、身份及同设备属性。物理预算单例必须存在，允许合法待恢复上传和超预算读／清理状态；文件归属、计量对账与恢复编排不在结构维护入口内执行。
+初始化接口使用独立的 `InitResult` 和 `InitStage`，区分 `AlreadyExists`、`Busy`、`IncompleteInitialization`、`UnsupportedFormat` 及未知结果，不能把它们机械替换成普通启动错误码。端口与所有权定义见 [InstanceInitialization](../application/ports/InstanceInitialization.h) 和 [InstancePreparation](../application/ports/InstancePreparation.h)。
+
+维护上述行为时，重点查阅[锁测试](system/tests/InstanceLock_unittest.cc)、[文件初始化测试](system/tests/InstanceInitializer_unittest.cc)、[数据库引导测试](persistence/sqlite/tests/SqliteInstanceBootstrap_unittest.cc)、[准备流程测试](persistence/sqlite/tests/InstancePreparation_unittest.cc)及[初始化中断/并发测试](persistence/sqlite/tests/SqliteM2Boundaries_unittest.cc)。它们分别检查文件、事务和持锁移交，不互相替代。

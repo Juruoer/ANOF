@@ -1,6 +1,7 @@
 #pragma once
 
 #include <anof/domain/instance/InstanceSettings.h>
+
 #include <optional>
 
 namespace anof {

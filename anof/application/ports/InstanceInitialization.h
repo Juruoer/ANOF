@@ -23,7 +23,7 @@ public:
     virtual ~InstanceInitializer() = default;
     // 原子创建 .anof、稳定锁及持久化 pending；既有目录明确拒绝，不另建替换锁。
     virtual InitResult<std::unique_ptr<InitializationLease>> create(const std::filesystem::path&,
-                                                                   const InitializationIdentity&) = 0;
+                                                                    const InitializationIdentity&) = 0;
     virtual InitResult<std::unique_ptr<InitializationLease>> openPending(const std::filesystem::path&) = 0;
 };
 class InstanceBootstrap {

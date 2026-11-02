@@ -81,7 +81,7 @@ template<class T, class Parse> Page<T> page(const Json& j, unsigned limit, Parse
     return result;
 }
 bool validError(Operation op, const std::string& code, int status) {
-    static const std::map<std::string, int> common{{"INVALID_ARGUMENT",400},{"RATE_LIMITED",429},{"INTERNAL_ERROR",500},{"TEMPORARILY_UNAVAILABLE",503}};
+    static const std::map<std::string, int> common{{"REQUEST_ORIGIN_REJECTED",403},{"CSRF_REQUIRED",403},{"COOKIE_MODE_DISABLED",403},{"INVALID_ARGUMENT",400},{"RATE_LIMITED",429},{"INTERNAL_ERROR",500},{"TEMPORARILY_UNAVAILABLE",503}};
     if (auto it = common.find(code); it != common.end()) return it->second == status;
     if (code == "UNAUTHENTICATED") return status == 401 && op != Operation::Register;
     const bool accountWrite = op == Operation::Rename || op == Operation::ChangePassword || op == Operation::SetUserEnabled || op == Operation::SetQuotaLimit;
@@ -151,7 +151,9 @@ ClientResult<Reply<Payload>> decodeResponse(Operation op, const HttpResponse& r,
         case Operation::Me: case Operation::Rename: {
             auto value = user(j);
             require(meta.etag && *meta.etag == "\"user-" + value.id.toString() + "-" + std::to_string(value.revision.value()) + "\"");
-            payload = std::move(value); break;
+            if (op == Operation::Me) payload = CurrentUser{std::move(value), id<InstanceId>(field(j, "instance_id"))};
+            else payload = std::move(value);
+            break;
         }
         case Operation::Login: {
             auto token = SecretToken::session(string(j, "access_token")); require(token && string(j, "token_type") == "Bearer");

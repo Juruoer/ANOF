@@ -1,7 +1,7 @@
 #pragma once
 
-#include <anof/domain/identity/IdentityEvent.h>
 #include <anof/core/Result.h>
+#include <anof/domain/identity/IdentityEvent.h>
 
 namespace anof {
 class IdentityAuditRepository {

@@ -8,8 +8,9 @@ public:
     Result<void> expire(TrashCondition, RequestId);
     Result<BlobRecord> mark(BlobId, Revision, RequestId);
     Result<void> finalize(BlobId, Revision, RequestId);
+
 private:
     DriveMetadataStore& store_;
     Clock& clock_;
 };
-}
+}  // namespace anof

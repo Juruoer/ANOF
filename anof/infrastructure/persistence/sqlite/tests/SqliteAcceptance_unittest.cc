@@ -1,12 +1,11 @@
 #define BOOST_TEST_MODULE AnofSqliteAcceptance
-#include <boost/test/unit_test.hpp>
-
-#include <anof/infrastructure/persistence/sqlite/tests/SqliteFaultVfs.h>
-#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteMetadataTransaction.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
+#include <anof/infrastructure/persistence/sqlite/tests/SqliteFaultVfs.h>
+#include <anof/infrastructure/persistence/sqlite/tests/SqliteTestMetadataBackend.h>
 
+#include <boost/test/unit_test.hpp>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -32,11 +31,7 @@ struct Scenario {
     QuotaScope scope = SpaceQuota{ space };
     QuotaScope contribution = PublicContributionQuota{ space, user };
     anof::testing::MetadataSeed seed{
-        { { { user, UserRole::Administrator, AuthEpoch{} }, true } }, {},
-        { { space, SpaceKind::Public, std::nullopt, root } }, {},
-        { { { root, space, std::nullopt, "", user, Revision{}, now, now }, std::nullopt, false } },
-        { { scope, { amount(10), amount(1), amount(0) } },
-          { contribution, { amount(10), amount(0), amount(0) } } }
+        { { { user, UserRole::Administrator, AuthEpoch{} }, true } }, {}, { { space, SpaceKind::Public, std::nullopt, root } }, {}, { { { root, space, std::nullopt, "", user, Revision{}, now, now }, std::nullopt, false } }, { { scope, { amount(10), amount(1), amount(0) } }, { contribution, { amount(10), amount(0), amount(0) } } }
     };
 };
 
@@ -112,8 +107,10 @@ void verifyWalFailure(SqliteFaultVfs::Failure failure, int extendedCode) {
         BOOST_CHECK(!active);
         errorIs(transaction.commit(), ErrorCode::InvalidArgument);
         errorIs(transaction.spaces().find(s.space), ErrorCode::InvalidArgument);
-        if (result.error().code == ErrorCode::CommitOutcomeUnknown) BOOST_CHECK(!connection->usable());
-        else BOOST_CHECK(!connection->inTransaction());
+        if (result.error().code == ErrorCode::CommitOutcomeUnknown)
+            BOOST_CHECK(!connection->usable());
+        else
+            BOOST_CHECK(!connection->inTransaction());
     }
     // 未自动重试。失败提交可能无法确认结果，但重开后不能出现跨仓储部分提交。
     checkConsistent(backend, s);

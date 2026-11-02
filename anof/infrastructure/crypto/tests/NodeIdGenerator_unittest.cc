@@ -1,10 +1,9 @@
 #define BOOST_TEST_MODULE NodeIdGenerator
-#include <boost/test/unit_test.hpp>
-
 #include <anof/infrastructure/crypto/SodiumNodeIdGenerator.h>
 #include <anof/infrastructure/crypto/internal/NodeUuid.h>
 
 #include <array>
+#include <boost/test/unit_test.hpp>
 #include <set>
 #include <string>
 
@@ -71,7 +70,7 @@ BOOST_AUTO_TEST_CASE(bounded_production_sample) {
         auto id = generator.value()->next();
         BOOST_REQUIRE(id);
         checkV4(id.value());
-        // 只发现明显的固定输出／复用错误，不证明无碰撞或随机源质量。
+        // 只发现明显的固定输出/复用错误，不证明无碰撞或随机源质量。
         BOOST_CHECK(seen.insert(id.value()).second);
     }
 }

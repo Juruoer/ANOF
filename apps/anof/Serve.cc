@@ -1,6 +1,9 @@
 #include <anof/runtime/internal/ShutdownTrace.h>
 #include <anof/runtime/InstancePasswordPolicy.h>
 #include <apps/anof/Serve.h>
+#include <anof/runtime/LogSink.h>
+#include <muduox/base/Logging.h>
+#include <atomic>
 #include <apps/anof/ShutdownSignals.h>
 #include <anof/application/maintenance/PrepareInstance.h>
 #include <anof/infrastructure/config/TomlInstanceConfiguration.h>
@@ -13,6 +16,18 @@
 
 namespace anof::app {
 namespace {
+std::atomic<runtime::LogSink*> activeLog{nullptr};
+struct LibraryLogging {
+    explicit LibraryLogging(runtime::LogSink& sink) {
+        activeLog.store(&sink);
+        muduox::Logger::setLogLevel(muduox::Logger::WARN);
+        muduox::Logger::setOutput([](const char*, int) {
+            if (auto* log=activeLog.load()) { runtime::LogRecord r; r.event=runtime::LogEvent::Library; r.level=runtime::LogLevel::Warning; r.code="LIBRARY_DIAGNOSTIC_REDACTED"; log->tryEmit(r); }
+        });
+        muduox::Logger::setFlush([]{});
+    }
+    ~LibraryLogging() { activeLog.store(nullptr); }
+};
 const char* errorName(ErrorCode error) {
     switch (error) {
     case ErrorCode::InvalidArgument: return "INVALID_ARGUMENT";
@@ -28,7 +43,8 @@ const char* errorName(ErrorCode error) {
 }
 int failure(const char* stage, ErrorCode error, int code) {
     // 只输出固定阶段与稳定错误分类，不包含配置、路径、凭据或底层异常文本。
-    std::fprintf(stderr, "ANOF_ERROR stage=%s code=%s\n", stage, errorName(error));
+    if (auto* log=activeLog.load()) { runtime::LogRecord r; r.event=runtime::LogEvent::Failure; r.level=runtime::LogLevel::Error; r.code=errorName(error); r.stage=stage; r.outcome=error==ErrorCode::CommitOutcomeUnknown?"unknown":"not_started"; log->tryEmit(r); }
+    else std::fprintf(stderr, "{\"event\":\"failure\",\"stage\":\"%s\",\"code\":\"%s\"}\n", stage, errorName(error));
     return code;
 }
 }
@@ -37,6 +53,8 @@ int serve(const std::filesystem::path& root) {
     auto signalFactory = ShutdownSignals::create();
     if (!signalFactory) return failure("signals", signalFactory.error().code, 4);
     auto signals = std::move(signalFactory).value();
+    runtime::LogSink logs;
+    LibraryLogging libraryLogging(logs);
     auto locks = infrastructure::system::makeLinuxInstanceLockProvider();
     auto configuration = infrastructure::config::makeTomlInstanceConfigurationLoader();
     auto maintenance = infrastructure::sqlite::makeSqliteInstanceMaintenance({ runtime::instancePasswordPolicy().verification, {} });
@@ -51,12 +69,29 @@ int serve(const std::filesystem::path& root) {
     int exitCode = 0;
     {
         muduox::net::EventLoop loop;
-        auto factory = runtime::makeInstanceServer(loop, std::move(prepared).value());
+        http::HttpObservation observation;
+        observation.finished=[&logs](http::HttpTraceRecord trace) {
+            runtime::LogRecord r; r.event=runtime::LogEvent::Access; r.requestId=trace.requestId;
+            r.route=trace.route; r.status=static_cast<unsigned>(trace.status.value_or(0));
+            r.code=trace.source==muduox::net::HttpResponseSource::HttpError?"HTTP_PROTOCOL_ERROR":r.status>=400?"HTTP_ERROR":"OK";
+            r.level=r.status>=500?runtime::LogLevel::Error:runtime::LogLevel::Info;
+            if(trace.ended) {auto us=std::chrono::duration_cast<std::chrono::microseconds>(*trace.ended-trace.started).count();r.durationUs=static_cast<std::uint64_t>(std::max<std::int64_t>(0,us));}
+            r.responseBytesSubmitted=trace.responseBodyBytes;
+            r.outcome=trace.outcome==muduox::net::HttpExchangeOutcome::Completed?"response_submitted":trace.outcome==muduox::net::HttpExchangeOutcome::EarlyResponse?"early_response":"failed";
+            logs.tryEmit(r);
+        };
+        auto factory = runtime::makeInstanceServer(loop, std::move(prepared).value(),std::move(observation));
         if (!factory) return failure("composition", factory.error().code, 4);
         auto server = std::move(factory).value();
         bool signalStop = false;
+        bool auditPausedReported = false;
         bool stopped = false;
         const auto consumeSignal = [&] {
+            if (server->auditRetentionPaused() && !auditPausedReported) {
+                runtime::LogRecord r; r.event=runtime::LogEvent::AuditRetention; r.level=runtime::LogLevel::Warning;
+                r.code="AUDIT_RETENTION_PAUSED"; r.stage="audit_retention"; r.outcome="unknown";
+                auditPausedReported=logs.tryEmit(r);
+            }
             auto request = signals->poll();
             if (!request) {
                 exitCode = failure("signals", request.error().code, 5);
@@ -64,8 +99,7 @@ int serve(const std::filesystem::path& root) {
             } else if (request.value()) {
                 if (!signalStop) {
                     runtime::internal::shutdownTrace("serve", "signal_consumed");
-                    std::puts("ANOF_STOPPING");
-                    std::fflush(stdout);
+                    runtime::LogRecord r; r.event=runtime::LogEvent::Stopping; logs.tryEmit(r);
                 }
                 signalStop = true;
                 server->requestStop();
@@ -81,8 +115,7 @@ int serve(const std::filesystem::path& root) {
             }
             consumeSignal();
             if (server->ready()) {
-                std::printf("ANOF_READY address=127.0.0.1 port=%u\n", static_cast<unsigned>(*server->port()));
-                std::fflush(stdout);
+                runtime::LogRecord r; r.event=runtime::LogEvent::Ready; r.port=*server->port(); logs.tryEmit(r);
             }
         }, [&] { runtime::internal::shutdownTrace("serve", "stop_callback_quit"); stopped = true; loop.quit(); });
         if (!started) {
@@ -98,8 +131,8 @@ int serve(const std::filesystem::path& root) {
         runtime::internal::shutdownTrace("serve", "destroy_instance");
         server.reset();  // 回调栈外释放 HTTP、worker、crypto，最后释放实例锁。
     }
-    std::puts("ANOF_STOPPED");
-    std::fflush(stdout);
+    runtime::LogRecord r; r.event=runtime::LogEvent::Stopped; logs.tryEmit(r);
+    logs.stop();
     return exitCode;
 }
 }  // namespace anof::app

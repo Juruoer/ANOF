@@ -1,5 +1,8 @@
 anof_add_unit_test(anof_directory_policy_unittest DirectoryPolicy_unittest.cc)
+set_tests_properties(anof_directory_policy_unittest PROPERTIES TIMEOUT 30 LABELS "unit;domain;drive")
 anof_add_unit_test(anof_quota_unittest Quota_unittest.cc)
+set_tests_properties(anof_quota_unittest PROPERTIES TIMEOUT 30 LABELS "unit;domain;drive")
 
 anof_add_unit_test(anof_drive_policy_unittest DrivePolicy_unittest.cc)
+set_tests_properties(anof_drive_policy_unittest PROPERTIES TIMEOUT 30 LABELS "unit;domain;drive")
 target_link_libraries(anof_drive_policy_unittest PRIVATE anof_application)

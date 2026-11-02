@@ -1,0 +1,3 @@
+anof_add_unit_test(anof_maintenance_values_unittest MaintenanceValues_unittest.cc)
+set_tests_properties(anof_maintenance_values_unittest PROPERTIES TIMEOUT 30 LABELS "unit;domain;maintenance")
+target_link_libraries(anof_maintenance_values_unittest PRIVATE anof_application)

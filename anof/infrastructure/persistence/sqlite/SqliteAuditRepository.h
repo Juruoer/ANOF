@@ -9,6 +9,7 @@ class SqliteAuditRepository final : public AuditRepository {
 public:
     explicit SqliteAuditRepository(SqliteTransactionContext& context) : context_(context) {}
     Result<void> append(const DirectoryCreatedEvent& event) override;
+
 private:
     SqliteTransactionContext& context_;
 };

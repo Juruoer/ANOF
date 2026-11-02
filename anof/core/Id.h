@@ -25,9 +25,9 @@ public:
                 continue;
             }
             const char c = text[i];
-            const int hex = c >= '0' && c <= '9' ? c - '0' :
-                            c >= 'a' && c <= 'f' ? c - 'a' + 10 :
-                            c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+            const int hex = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10
+                                                         : c >= 'A' && c <= 'F'   ? c - 'A' + 10
+                                                                                  : -1;
             if (hex < 0) return ErrorCode::InvalidArgument;
             auto& byte = bytes[digit / 2];
             byte = static_cast<std::uint8_t>(byte * 16 + hex);

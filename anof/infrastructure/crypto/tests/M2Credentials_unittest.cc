@@ -1,12 +1,13 @@
 #define BOOST_TEST_MODULE AnofM2Credentials
-#include <boost/test/unit_test.hpp>
 #include <anof/infrastructure/crypto/SodiumCredentialIssuer.h>
-#include <anof/infrastructure/crypto/SodiumInviteTokenCodec.h>
 #include <anof/infrastructure/crypto/SodiumIdentityIdGenerator.h>
+#include <anof/infrastructure/crypto/SodiumInviteTokenCodec.h>
 #include <anof/infrastructure/crypto/SodiumSessionTokenCodec.h>
 #include <anof/infrastructure/crypto/internal/RandomUuid.h>
 #include <anof/infrastructure/crypto/internal/SecretBuffer.h>
 #include <sodium.h>
+
+#include <boost/test/unit_test.hpp>
 #include <set>
 #include <type_traits>
 
@@ -52,7 +53,8 @@ BOOST_AUTO_TEST_CASE(issued_credentials_round_trip_and_hash_only_random_bytes) {
         auto payload = invite.value().text.view().substr(12);
         std::size_t size = 0;
         BOOST_REQUIRE_EQUAL(sodium_base642bin(decoded.bytes.data(), decoded.bytes.size(), payload.data(), payload.size(), nullptr, &size, nullptr,
-                                              sodium_base64_VARIANT_URLSAFE_NO_PADDING), 0);
+                                              sodium_base64_VARIANT_URLSAFE_NO_PADDING),
+                            0);
         BOOST_CHECK_EQUAL(size, 32);
         BOOST_REQUIRE_EQUAL(crypto_hash_sha256(expected.bytes.data(), decoded.bytes.data(), size), 0);
         BOOST_CHECK(expected.bytes == invite.value().digest.bytes());
@@ -71,8 +73,8 @@ BOOST_AUTO_TEST_CASE(invite_fixed_digest_excludes_prefix_and_digest_types_are_di
     auto digest = codec.value()->digest(text.value());
     BOOST_REQUIRE(digest);
     // SHA-256(32 zero bytes)，独立固定答案。
-    const InviteDigest::Bytes expected{ 0x66,0x68,0x7a,0xad,0xf8,0x62,0xbd,0x77,0x6c,0x8f,0xc1,0x8b,0x8e,0x9f,0x8e,0x20,
-        0x08,0x97,0x14,0x85,0x6e,0xe2,0x33,0xb3,0x90,0x2a,0x59,0x1d,0x0d,0x5f,0x29,0x25 };
+    const InviteDigest::Bytes expected{ 0x66, 0x68, 0x7a, 0xad, 0xf8, 0x62, 0xbd, 0x77, 0x6c, 0x8f, 0xc1, 0x8b, 0x8e, 0x9f, 0x8e, 0x20,
+                                        0x08, 0x97, 0x14, 0x85, 0x6e, 0xe2, 0x33, 0xb3, 0x90, 0x2a, 0x59, 0x1d, 0x0d, 0x5f, 0x29, 0x25 };
     BOOST_CHECK(digest.value().bytes() == expected);
 }
 
@@ -81,7 +83,7 @@ BOOST_AUTO_TEST_CASE(invite_canonical_boundaries_and_moved_from_value) {
     BOOST_REQUIRE(codec);
     const std::string valid = "anof_invite_" + std::string(43, 'A');
     for (const auto& text : { std::string{}, std::string(43, 'A'), valid + "=", valid + " ", " " + valid,
-                             valid.substr(0, 54), valid + "A", std::string("ANOF_invite_") + std::string(43, 'A') }) {
+                              valid.substr(0, 54), valid + "A", std::string("ANOF_invite_") + std::string(43, 'A') }) {
         errorIs(InviteTokenText::parse(text), ErrorCode::InvalidArgument);
     }
     for (char c : std::string("=+/ \n\0", 6)) {
@@ -94,8 +96,12 @@ BOOST_AUTO_TEST_CASE(invite_canonical_boundaries_and_moved_from_value) {
         auto text = valid;
         text.back() = alphabet[i];
         auto parsed = InviteTokenText::parse(text);
-        if (i % 4) errorIs(parsed, ErrorCode::InvalidArgument);
-        else { BOOST_REQUIRE(parsed); BOOST_REQUIRE(codec.value()->digest(parsed.value())); }
+        if (i % 4)
+            errorIs(parsed, ErrorCode::InvalidArgument);
+        else {
+            BOOST_REQUIRE(parsed);
+            BOOST_REQUIRE(codec.value()->digest(parsed.value()));
+        }
     }
     auto parsed = InviteTokenText::parse(valid);
     BOOST_REQUIRE(parsed);

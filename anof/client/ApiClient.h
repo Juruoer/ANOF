@@ -2,8 +2,14 @@
 #include <anof/client/ProfileStore.h>
 #include <anof/client/Protocol.h>
 namespace anof::client {
-struct SavedLogin { User user; std::string expiresAt; bool credentialSaved = true; };
-struct Logout { std::optional<ResponseMeta> meta; };
+struct SavedLogin {
+    User user;
+    std::string expiresAt;
+    bool credentialSaved = true;
+};
+struct Logout {
+    std::optional<ResponseMeta> meta;
+};
 // 调用者持有 LockedProfile 的整个生命周期覆盖输入、请求及本地保存。
 // 同步借用 transport/profile/cancel，不创建线程、不自动重试。
 class ApiClient {
@@ -13,7 +19,7 @@ public:
     ClientResult<Reply<User>> registerUser(const LoginName&, const DisplayName&, const PasswordInput&, const InviteTokenText&);
     ClientResult<Reply<SavedLogin>> login(const LoginName&, const PasswordInput&);
     ClientResult<Logout> logout();
-    ClientResult<Reply<User>> me();
+    ClientResult<Reply<CurrentUser>> me();
     ClientResult<Reply<CreatedInvite>> createInvite(unsigned maxUses = 1, unsigned validForSeconds = 604800);
     ClientResult<Reply<Page<Invite>>> listInvites(PageRequest page = {});
     ClientResult<Reply<Done>> revokeInvite(InviteId);
@@ -28,8 +34,10 @@ public:
     ClientResult<Reply<AdminUser>> setUserEnabled(UserId, bool, const ConditionTag&);
     ClientResult<Reply<ManagedQuota>> getQuota(QuotaTarget);
     ClientResult<Reply<ManagedQuota>> setQuotaLimit(QuotaTarget, Amount, const ConditionTag&);
+
 private:
-    template<class T> ClientResult<Reply<T>> call(Operation, Method, std::string, SecureBuffer body = {}, unsigned limit = 200, std::optional<ConditionTag> condition = {});
+    template <class T>
+    ClientResult<Reply<T>> call(Operation, Method, std::string, SecureBuffer body = {}, unsigned limit = 200, std::optional<ConditionTag> condition = {});
     HttpTransport& transport_;
     LockedProfile& profile_;
     const std::atomic_bool* cancel_;

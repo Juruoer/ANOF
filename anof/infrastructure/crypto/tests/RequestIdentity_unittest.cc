@@ -1,12 +1,10 @@
 #define BOOST_TEST_MODULE RequestIdentity
-#include <boost/test/unit_test.hpp>
-
 #include <anof/infrastructure/crypto/SodiumRequestIdentity.h>
 #include <anof/infrastructure/crypto/internal/RequestIdDerivation.h>
-
 #include <sodium.h>
 
 #include <algorithm>
+#include <boost/test/unit_test.hpp>
 #include <limits>
 #include <stdexcept>
 #include <string_view>
@@ -48,7 +46,8 @@ constexpr Vector vectors[] = {
 detail::RequestIdentitySeed seedFor(int pattern) {
     detail::RequestIdentitySeed seed{};
     for (std::size_t i = 0; i < seed.size(); ++i) {
-        seed[i] = pattern == 0 ? 0 : pattern == 1 ? static_cast<unsigned char>(i) : 255;
+        seed[i] = pattern == 0 ? 0 : pattern == 1 ? static_cast<unsigned char>(i)
+                                                  : 255;
     }
     return seed;
 }

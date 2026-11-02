@@ -14,8 +14,15 @@ struct Trash {
     NodeCount nodeCount;
     ByteCount logicalBytes;
 };
-enum class DriveOperation { Update, Copy, Remove, Search, ListTrash, ShowTrash, Restore, Purge };
+enum class DriveOperation { Update,
+                            Copy,
+                            Remove,
+                            Search,
+                            ListTrash,
+                            ShowTrash,
+                            Restore,
+                            Purge };
 using DrivePayload = std::variant<Node, Trash, Page<Node>, Page<Trash>, Done>;
 ClientResult<Reply<DrivePayload>> decodeDriveResponse(DriveOperation, const HttpResponse&, unsigned limit = 200);
 ClientResult<ConditionTag> driveCondition(std::string_view);
-} // namespace anof::client
+}  // namespace anof::client

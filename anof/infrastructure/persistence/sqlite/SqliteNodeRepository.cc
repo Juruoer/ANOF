@@ -61,7 +61,7 @@ Result<NodeDetails> decodeDetails(const SqliteStatement& statement) {
         auto size = readQuantity<ByteCount>(statement, 11);
         auto digest = statement.blob(12);
         auto state = statement.integer(13);
-        if (!size || !digest || digest.value().size() != 32 || !state || state.value() != 0) return ErrorCode::IntegrityError;
+        if (!size || !digest || digest.value().size() != 32 || !state || (state.value() != 0 && state.value() != 2)) return ErrorCode::IntegrityError;
         FileContentMetadata content{ size.value(), {} };
         std::copy(digest.value().begin(), digest.value().end(), content.sha256.begin());
         result.content = content;

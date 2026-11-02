@@ -1,17 +1,21 @@
 #pragma once
-#include <anof/transport/http/DownloadStream.h>
 #include <anof/transport/http/DownloadResponse.h>
+#include <anof/transport/http/DownloadStream.h>
 namespace anof::http::internal {
 struct DownloadStateTestAccess;
 // 每交换单独状态；所有入口仅在 writer 的 owner loop 调用。
 class DownloadState : public std::enable_shared_from_this<DownloadState> {
 public:
     DownloadState(TransferDispatcher&, RequestContext, OpenDownloadCommand, muduox::net::HttpHeaders,
-        std::function<bool()>, std::shared_ptr<muduox::net::HttpResponseWriter>);
+                  std::function<bool()>, std::shared_ptr<muduox::net::HttpResponseWriter>);
     muduox::net::HttpStreamCallbacks callbacks();
+
 private:
     friend struct DownloadStateTestAccess;
-    enum class Wait { None, Start, Write, Finish };
+    enum class Wait { None,
+                      Start,
+                      Write,
+                      Finish };
     void complete(const muduox::net::HttpRequest&);
     void open(TaskCompletion<OpenedDownload>);
     void pull();

@@ -1,14 +1,15 @@
 #define BOOST_TEST_MODULE SqliteIdentity
-#include <boost/test/unit_test.hpp>
 #include <anof/infrastructure/persistence/sqlite/SqliteAuthorizationReader.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteUserRepository.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteSessionRepository.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteInviteRepository.h>
-#include <anof/infrastructure/persistence/sqlite/SqliteSettingsRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteIdentityAuditRepository.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteInviteRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteSessionRepository.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteSettingsRepository.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteStatement.h>
+#include <anof/infrastructure/persistence/sqlite/SqliteUserRepository.h>
 #include <sqlite3.h>
+
+#include <boost/test/unit_test.hpp>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -43,7 +44,7 @@ EncodedPasswordHash hash() {
 }
 
 NewUser newUser(unsigned n, std::string_view login = "member", UserRole role = UserRole::Member) {
-    return {{id<UserId>(n), LoginName::parse(login).value(), DisplayName::parse("Member").value(), role, true, AuthEpoch{}, Revision{}, time(0), time(0) }, hash(), PasswordVersion{} };
+    return { { id<UserId>(n), LoginName::parse(login).value(), DisplayName::parse("Member").value(), role, true, AuthEpoch{}, Revision{}, time(0), time(0) }, hash(), PasswordVersion{} };
 }
 
 SessionDigest digest(unsigned n) {
@@ -59,15 +60,15 @@ InviteDigest inviteDigest(unsigned n) {
 }
 
 NewInvite newInvite(unsigned n, std::int64_t maximum = 1, std::int64_t created = 0, std::int64_t expires = 100) {
-    return {{id<InviteId>(n), id<UserId>(1), time(created), time(expires), InviteUseLimit::from(maximum).value(), InviteUseCount{}, {} }, inviteDigest(n) };
+    return { { id<InviteId>(n), id<UserId>(1), time(created), time(expires), InviteUseLimit::from(maximum).value(), InviteUseCount{}, {} }, inviteDigest(n) };
 }
 
 NewSession newSession(unsigned n, unsigned user = 2, std::int64_t epoch = 0, std::int64_t expires = 100) {
-    return {digest(n), id<UserId>(user), AuthEpoch::from(epoch).value(), CredentialMode::Bearer, time(0), time(expires) };
+    return { digest(n), id<UserId>(user), AuthEpoch::from(epoch).value(), CredentialMode::Bearer, time(0), time(expires) };
 }
 
 InstanceSettings settings(std::int64_t maxUsers = 10) {
-    return {id<InstanceId>(10), id<OperationId>(11), time(0), UserLimit::from(maxUsers).value(), {ByteCount{}, NodeCount::from(5).value() }, {ByteCount{}, NodeCount::from(5).value() }, Revision{} };
+    return { id<InstanceId>(10), id<OperationId>(11), time(0), UserLimit::from(maxUsers).value(), { ByteCount{}, NodeCount::from(5).value() }, { ByteCount{}, NodeCount::from(5).value() }, Revision{} };
 }
 
 std::int64_t scalar(SqliteConnection& c, std::string_view sql) {
@@ -99,7 +100,7 @@ struct Database {
         auto* p = mkdtemp(pattern);
         if (!p) throw std::runtime_error("temporary directory failed");
         root = p;
-        BOOST_REQUIRE(createSqliteDatabase(root/"db", {0 }));
+        BOOST_REQUIRE(createSqliteDatabase(root / "db", { 0 }));
         connection = open();
         Transaction t(*connection, active);
         BOOST_REQUIRE(t.context.begin());
@@ -112,12 +113,13 @@ struct Database {
         std::error_code error;
         std::filesystem::remove_all(root, error);
     }
-    std::unique_ptr<SqliteConnection> open() {auto c = openSqliteDatabase(root/"db", {0 });
+    std::unique_ptr<SqliteConnection> open() {
+        auto c = openSqliteDatabase(root / "db", { 0 });
         BOOST_REQUIRE(c);
         return std::move(c).value();
     }
 };
-}
+}  // namespace
 
 BOOST_AUTO_TEST_CASE(user_reads_are_owned_and_missing_is_optional) {
     Database f;
@@ -283,8 +285,8 @@ BOOST_AUTO_TEST_CASE(password_replacement_persists_hash_and_same_hash_is_still_a
             Transaction t(*f.connection, f.active);
             BOOST_REQUIRE(t.context.begin());
             auto changed = t.users.replacePassword(id<UserId>(2),
-                { PasswordVersion::from(round).value(), AuthEpoch::from(round - 1).value(), Revision::from(round).value() },
-                parsed.value(), time(round));
+                                                   { PasswordVersion::from(round).value(), AuthEpoch::from(round - 1).value(), Revision::from(round).value() },
+                                                   parsed.value(), time(round));
             BOOST_REQUIRE(changed);
             BOOST_CHECK_EQUAL(changed.value().revision.value(), round + 1);
             BOOST_CHECK_EQUAL(changed.value().authEpoch.value(), round);
@@ -449,8 +451,8 @@ BOOST_AUTO_TEST_CASE(account_audit_failure_or_abandonment_rolls_back_updates_and
             // 先通过当前 schema 校验打开观察连接，再安装测试专用触发器。
             auto observer = f.open();
             if (failure != 2) BOOST_REQUIRE(f.connection->execute(failure == 0
-                ? "CREATE TRIGGER reject_account_audit BEFORE INSERT ON identity_audit_events BEGIN SELECT RAISE(ABORT,'injected'); END"
-                : "CREATE TRIGGER ignore_account_audit BEFORE INSERT ON identity_audit_events BEGIN SELECT RAISE(IGNORE); END"));
+                                                                      ? "CREATE TRIGGER reject_account_audit BEFORE INSERT ON identity_audit_events BEGIN SELECT RAISE(ABORT,'injected'); END"
+                                                                      : "CREATE TRIGGER ignore_account_audit BEFORE INSERT ON identity_audit_events BEGIN SELECT RAISE(IGNORE); END"));
             {
                 Transaction t(*f.connection, f.active);
                 BOOST_REQUIRE(t.context.begin());
@@ -477,7 +479,8 @@ BOOST_AUTO_TEST_CASE(account_audit_failure_or_abandonment_rolls_back_updates_and
                     BOOST_CHECK_EQUAL(revoked.value().value(), 2);
                 }
                 auto audited = t.audit.append({ id<RequestId>(20), time(5), event });
-                if (failure == 2) BOOST_REQUIRE(audited); // 析构回滚包含已写入的审计。
+                if (failure == 2)
+                    BOOST_REQUIRE(audited);  // 析构回滚包含已写入的审计。
                 else {
                     errorIs(audited, ErrorCode::IntegrityError);
                     BOOST_CHECK(!t.context.commit());
@@ -541,34 +544,34 @@ BOOST_AUTO_TEST_CASE(password_change_revocation_and_audit_share_commit) {
     BOOST_REQUIRE(t.sessions.insert(newSession(1)));
     BOOST_REQUIRE(t.sessions.insert(newSession(2)));
     BOOST_REQUIRE(t.authorization.requireActiveSession({ digest(1), CredentialMode::Bearer }, time(5)));
-    auto changed = t.users.replacePassword(id<UserId>(2), {PasswordVersion{}, AuthEpoch{}, Revision{} }, hash(), time(5));
+    auto changed = t.users.replacePassword(id<UserId>(2), { PasswordVersion{}, AuthEpoch{}, Revision{} }, hash(), time(5));
     BOOST_REQUIRE(changed);
     BOOST_CHECK_EQUAL(changed.value().authEpoch.value(), 1);
     BOOST_CHECK_EQUAL(changed.value().revision.value(), 2);
     BOOST_CHECK_EQUAL(t.sessions.countActive(id<UserId>(2), time(5)).value().value(), 0);
     BOOST_CHECK_EQUAL(t.sessions.revokeAll(id<UserId>(2), time(5)).value().value(), 2);
     BOOST_CHECK_EQUAL(t.sessions.revokeAll(id<UserId>(2), time(5)).value().value(), 0);
-    BOOST_REQUIRE(t.audit.append({id<RequestId>(20), time(5), PasswordChanged{ id<UserId>(2) } }));
+    BOOST_REQUIRE(t.audit.append({ id<RequestId>(20), time(5), PasswordChanged{ id<UserId>(2) } }));
     BOOST_REQUIRE(t.context.commit());
     Transaction stale(*f.connection, f.active);
     BOOST_REQUIRE(stale.context.begin());
-    errorIs(stale.users.replacePassword(id<UserId>(2), {PasswordVersion{}, AuthEpoch{}, Revision{} }, hash(), time(6)), ErrorCode::PreconditionFailed);
+    errorIs(stale.users.replacePassword(id<UserId>(2), { PasswordVersion{}, AuthEpoch{}, Revision{} }, hash(), time(6)), ErrorCode::PreconditionFailed);
     BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT password_version FROM users WHERE login='member'"), 2);
 }
 
 BOOST_AUTO_TEST_CASE(revision_and_epoch_overflow_do_not_partially_write) {
     Database f;
-    for (const char* column : {"revision", "auth_epoch", "password_version"}) {
-        BOOST_REQUIRE(f.connection->execute(std::string("UPDATE users SET revision=1,auth_epoch=0,password_version=1,") + column+"=9223372036854775807 WHERE login='member'"));
+    for (const char* column : { "revision", "auth_epoch", "password_version" }) {
+        BOOST_REQUIRE(f.connection->execute(std::string("UPDATE users SET revision=1,auth_epoch=0,password_version=1,") + column + "=9223372036854775807 WHERE login='member'"));
         {
             Transaction t(*f.connection, f.active);
             BOOST_REQUIRE(t.context.begin());
             auto snapshot = t.users.findPasswordById(id<UserId>(2));
             BOOST_REQUIRE(snapshot && snapshot.value());
             const auto& s = *snapshot.value();
-            errorIs(t.users.replacePassword(id<UserId>(2), {s.passwordVersion, s.authEpoch, s.userRevision }, hash(), time(1)), ErrorCode::IntegrityError);
+            errorIs(t.users.replacePassword(id<UserId>(2), { s.passwordVersion, s.authEpoch, s.userRevision }, hash(), time(1)), ErrorCode::IntegrityError);
         }
-        BOOST_CHECK_EQUAL(scalar(*f.connection, std::string("SELECT ") + column+" FROM users WHERE login='member'"), std::numeric_limits<std::int64_t>::max());
+        BOOST_CHECK_EQUAL(scalar(*f.connection, std::string("SELECT ") + column + " FROM users WHERE login='member'"), std::numeric_limits<std::int64_t>::max());
     }
 }
 
@@ -580,7 +583,7 @@ BOOST_AUTO_TEST_CASE(session_authorization_modes_expiry_epoch_and_revocation) {
         BOOST_REQUIRE(t.sessions.insert(newSession(1)));
         BOOST_REQUIRE(t.context.commit());
     }
-    for (int scenario = 0;scenario != 6;++scenario) {
+    for (int scenario = 0; scenario != 6; ++scenario) {
         Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
         SessionCredential credential{ digest(1), CredentialMode::Bearer };
@@ -596,8 +599,10 @@ BOOST_AUTO_TEST_CASE(session_authorization_modes_expiry_epoch_and_revocation) {
         }
         if (scenario == 5) BOOST_REQUIRE(t.users.setEnabled(id<UserId>(2), Revision{}, false, time(1)));
         auto result = t.authorization.requireActiveSession(credential, now);
-        if (!scenario) BOOST_REQUIRE(result);
-        else errorIs(result, ErrorCode::Unauthenticated);
+        if (!scenario)
+            BOOST_REQUIRE(result);
+        else
+            errorIs(result, ErrorCode::Unauthenticated);
         // 不提交；各失效情形不影响其他情形的夹具。
     }
     {
@@ -605,7 +610,7 @@ BOOST_AUTO_TEST_CASE(session_authorization_modes_expiry_epoch_and_revocation) {
         BOOST_REQUIRE(t.context.begin());
         BOOST_REQUIRE(t.users.setEnabled(id<UserId>(2), Revision{}, false, time(1)));
         BOOST_REQUIRE(t.users.setEnabled(id<UserId>(2), Revision::from(2).value(), true, time(2)));
-        errorIs(t.authorization.requireActiveSession({digest(1), CredentialMode::Bearer }, time(3)), ErrorCode::Unauthenticated);
+        errorIs(t.authorization.requireActiveSession({ digest(1), CredentialMode::Bearer }, time(3)), ErrorCode::Unauthenticated);
     }
 }
 
@@ -613,7 +618,7 @@ BOOST_AUTO_TEST_CASE(session_cleanup_is_bounded_ordered_and_does_not_remove_acti
     Database f;
     Transaction t(*f.connection, f.active);
     BOOST_REQUIRE(t.context.begin());
-    for (unsigned n = 1;n <= 5;++n) BOOST_REQUIRE(t.sessions.insert(newSession(n, 2, 0, n == 5 ? 100:10)));
+    for (unsigned n = 1; n <= 5; ++n) BOOST_REQUIRE(t.sessions.insert(newSession(n, 2, 0, n == 5 ? 100 : 10)));
     BOOST_CHECK_EQUAL(t.sessions.countActive(id<UserId>(2), time(10)).value().value(), 1);
     auto erased = t.sessions.eraseInactive(time(10), PageSize::from(2).value());
     BOOST_REQUIRE(erased);
@@ -629,7 +634,7 @@ BOOST_AUTO_TEST_CASE(invite_consume_rollback_unavailability_and_seek_pagination)
     {
         Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
-        for(unsigned n = 3;n < 7;++n) BOOST_REQUIRE(t.invites.insert(newInvite(n)));
+        for (unsigned n = 3; n < 7; ++n) BOOST_REQUIRE(t.invites.insert(newInvite(n)));
         BOOST_REQUIRE(t.context.commit());
     }
     {
@@ -655,10 +660,10 @@ BOOST_AUTO_TEST_CASE(invite_consume_rollback_unavailability_and_seek_pagination)
         BOOST_REQUIRE(t.invites.consume(inviteDigest(3), time(1)));
         BOOST_REQUIRE(t.context.commit());
     }
-    for(unsigned n : {3U, 4U, 99U }) {
+    for (unsigned n : { 3U, 4U, 99U }) {
         Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
-        errorIs(t.invites.consume(inviteDigest(n), time(n == 4 ? 100:1)), ErrorCode::InviteUnavailable);
+        errorIs(t.invites.consume(inviteDigest(n), time(n == 4 ? 100 : 1)), ErrorCode::InviteUnavailable);
     }
     {
         Transaction t(*f.connection, f.active);
@@ -684,7 +689,7 @@ BOOST_AUTO_TEST_CASE(settings_optional_insert_duplicate_and_invalid_initial_valu
         auto empty = t.settings.get();
         BOOST_REQUIRE(empty && !empty.value());
         BOOST_REQUIRE(t.settings.insertBootstrap(settings()));
-        BOOST_REQUIRE(t.audit.append({id<RequestId>(20), time(0), InstanceInitialized{ id<UserId>(1), id<InstanceId>(10) } }));
+        BOOST_REQUIRE(t.audit.append({ id<RequestId>(20), time(0), InstanceInitialized{ id<UserId>(1), id<InstanceId>(10) } }));
         BOOST_REQUIRE(t.context.commit());
     }
     {
@@ -710,8 +715,8 @@ BOOST_AUTO_TEST_CASE(identity_audit_encodes_every_variant_without_secret_columns
     auto space = id<SpaceId>(4);
     auto root = id<NodeId>(5);
     BOOST_REQUIRE(f.connection->execute("INSERT INTO spaces VALUES('" + space.toString() + "',1,NULL,'" + root.toString() + "'); INSERT INTO nodes(id,space_id,parent_id,name,kind,created_by,blob_id,revision,trashed,created_at,updated_at) VALUES('" + root.toString() + "','" + space.toString() + "',NULL,'',0,'" + admin.toString() + "',NULL,1,0,0,0)"));
-    const IdentityAction actions[] = {InstanceInitialized{ admin, id<InstanceId>(10) }, InviteCreated{ admin, invite }, InviteRevoked{ admin, invite }, UserRegistered{ member, invite }, SessionCreated{ member }, SessionRevoked{ member }, PasswordChanged{ member }, UserEnabled{ admin, member }, UserDisabled{ admin, member }, DisplayNameChanged{ member }, QuotaChanged{ admin, SpaceQuota{ space } }, QuotaChanged{ admin, PublicContributionQuota{ space, member } } };
-    for(const auto& action:actions) BOOST_REQUIRE(t.audit.append({id<RequestId>(20), time(0), action }));
+    const IdentityAction actions[] = { InstanceInitialized{ admin, id<InstanceId>(10) }, InviteCreated{ admin, invite }, InviteRevoked{ admin, invite }, UserRegistered{ member, invite }, SessionCreated{ member }, SessionRevoked{ member }, PasswordChanged{ member }, UserEnabled{ admin, member }, UserDisabled{ admin, member }, DisplayNameChanged{ member }, QuotaChanged{ admin, SpaceQuota{ space } }, QuotaChanged{ admin, PublicContributionQuota{ space, member } } };
+    for (const auto& action : actions) BOOST_REQUIRE(t.audit.append({ id<RequestId>(20), time(0), action }));
     BOOST_REQUIRE(t.context.commit());
     BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT count(*) FROM identity_audit_events"), 12);
     BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT count(*) FROM identity_audit_events WHERE action='session_created' AND actor_id=subject_user_id"), 1);
@@ -733,7 +738,7 @@ BOOST_AUTO_TEST_CASE(audit_failure_rolls_back_user_session_and_invite_changes) {
         BOOST_REQUIRE(t.users.insert(newUser(4, "new_user")));
         BOOST_REQUIRE(t.invites.consume(inviteDigest(3), time(1)));
         BOOST_REQUIRE(t.sessions.insert(newSession(1, 4)));
-        errorIs(t.audit.append({id<RequestId>(20), time(1), UserRegistered{ id<UserId>(4), id<InviteId>(3) } }), ErrorCode::IntegrityError);
+        errorIs(t.audit.append({ id<RequestId>(20), time(1), UserRegistered{ id<UserId>(4), id<InviteId>(3) } }), ErrorCode::IntegrityError);
         BOOST_CHECK(!t.context.commit());
     }
     BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT count(*) FROM users"), 2);
@@ -788,7 +793,7 @@ BOOST_AUTO_TEST_CASE(caller_count_and_insert_limits_are_serialized_by_same_write
         Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
         BOOST_REQUIRE(t.settings.insertBootstrap(settings(3)));
-        for(unsigned n = 1;n <= 31;++n) BOOST_REQUIRE(t.sessions.insert(newSession(n)));
+        for (unsigned n = 1; n <= 31; ++n) BOOST_REQUIRE(t.sessions.insert(newSession(n)));
         BOOST_REQUIRE(t.context.commit());
     }
     {
@@ -819,7 +824,7 @@ BOOST_AUTO_TEST_CASE(caller_count_and_insert_limits_are_serialized_by_same_write
 BOOST_AUTO_TEST_CASE(corrupt_persistent_values_and_hash_budget_fail_closed) {
     Database f;
     {
-        Transaction t(*f.connection, f.active, {4096, 1, 1 });
+        Transaction t(*f.connection, f.active, { 4096, 1, 1 });
         BOOST_REQUIRE(t.context.begin());
         errorIs(t.users.findPasswordById(id<UserId>(2)), ErrorCode::IntegrityError);
     }
@@ -861,7 +866,7 @@ BOOST_AUTO_TEST_CASE(commit_failure_does_not_claim_audit_or_identity_success) {
     Transaction t(*f.connection, f.active);
     BOOST_REQUIRE(t.context.begin());
     BOOST_REQUIRE(t.users.insert(newUser(3, "uncertain")));
-    BOOST_REQUIRE(t.audit.append({id<RequestId>(20), time(1), SessionCreated{ id<UserId>(3) } }));
+    BOOST_REQUIRE(t.audit.append({ id<RequestId>(20), time(1), SessionCreated{ id<UserId>(3) } }));
     auto deny = [](void*, int operation, const char* first, const char*, const char*, const char*) {
         return operation == SQLITE_TRANSACTION && first && std::string_view(first) != "BEGIN" ? SQLITE_DENY : SQLITE_OK;
     };
@@ -874,40 +879,47 @@ BOOST_AUTO_TEST_CASE(commit_failure_does_not_claim_audit_or_identity_success) {
 
 BOOST_AUTO_TEST_CASE(invalid_inputs_and_missing_updates_do_not_report_success) {
     Database f;
-    { Transaction t(*f.connection, f.active);
+    {
+        Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
         auto s = newSession(1);
         s.mode = static_cast<CredentialMode>(9);
         errorIs(t.sessions.insert(s), ErrorCode::InvalidArgument);
     }
-    { Transaction t(*f.connection, f.active);
+    {
+        Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
         errorIs(t.sessions.insert(newSession(1, 2, 1)), ErrorCode::PreconditionFailed);
     }
-    { Transaction t(*f.connection, f.active);
+    {
+        Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
         auto i = newInvite(3);
         i.info.usedCount = InviteUseCount::from(1).value();
         errorIs(t.invites.insert(i), ErrorCode::InvalidArgument);
     }
-    { Transaction t(*f.connection, f.active);
+    {
+        Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
         auto i = newInvite(3, 1, 0, 2592000000001LL);
         errorIs(t.invites.insert(i), ErrorCode::InvalidArgument);
     }
-    { Transaction t(*f.connection, f.active);
+    {
+        Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
         auto s = settings();
         s.defaultPrivate.nodes = NodeCount{};
         errorIs(t.settings.insertBootstrap(s), ErrorCode::InvalidArgument);
     }
-    { Transaction t(*f.connection, f.active);
+    {
+        Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
         errorIs(t.users.setDisplayName(id<UserId>(99), Revision{}, DisplayName::parse("Name").value(), time(1)), ErrorCode::NotFound);
     }
-    { Transaction t(*f.connection, f.active);
+    {
+        Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
-        errorIs(t.users.replacePassword(id<UserId>(99), {PasswordVersion{}, AuthEpoch{}, Revision{} }, hash(), time(1)), ErrorCode::NotFound);
+        errorIs(t.users.replacePassword(id<UserId>(99), { PasswordVersion{}, AuthEpoch{}, Revision{} }, hash(), time(1)), ErrorCode::NotFound);
     }
     BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT count(*) FROM sessions"), 0);
     BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT count(*) FROM invites"), 0);
@@ -919,9 +931,9 @@ BOOST_AUTO_TEST_CASE(session_revoke_binds_owner_and_cleanup_includes_revoked_and
     BOOST_REQUIRE(t.context.begin());
     BOOST_REQUIRE(t.sessions.insert(newSession(1)));
     BOOST_REQUIRE(t.sessions.insert(newSession(2)));
-    auto wrongOwner = t.sessions.revoke({digest(1), CredentialMode::Bearer }, id<UserId>(1), time(1));
+    auto wrongOwner = t.sessions.revoke({ digest(1), CredentialMode::Bearer }, id<UserId>(1), time(1));
     BOOST_REQUIRE(wrongOwner && !wrongOwner.value());
-    BOOST_REQUIRE(t.sessions.revoke({digest(1), CredentialMode::Bearer }, id<UserId>(2), time(1)));
+    BOOST_REQUIRE(t.sessions.revoke({ digest(1), CredentialMode::Bearer }, id<UserId>(2), time(1)));
     BOOST_CHECK_EQUAL(t.sessions.eraseInactive(time(1), PageSize{}).value().value(), 1);
     BOOST_REQUIRE(t.users.setEnabled(id<UserId>(2), Revision{}, false, time(2)));
     BOOST_CHECK_EQUAL(t.sessions.eraseInactive(time(2), PageSize::from(200).value()).value().value(), 1);
@@ -930,18 +942,21 @@ BOOST_AUTO_TEST_CASE(session_revoke_binds_owner_and_cleanup_includes_revoked_and
 
 BOOST_AUTO_TEST_CASE(malformed_session_and_oversized_hash_are_integrity_errors) {
     Database f;
-    { Transaction t(*f.connection, f.active);
+    {
+        Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
         BOOST_REQUIRE(t.sessions.insert(newSession(1)));
         BOOST_REQUIRE(t.context.commit());
     }
-    BOOST_REQUIRE(f.connection->execute("PRAGMA ignore_check_constraints=ON; UPDATE sessions SET credential_mode='cookie'; PRAGMA ignore_check_constraints=OFF"));
-    { Transaction t(*f.connection, f.active);
+    BOOST_REQUIRE(f.connection->execute("PRAGMA ignore_check_constraints=ON; UPDATE sessions SET credential_mode='unknown'; PRAGMA ignore_check_constraints=OFF"));
+    {
+        Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
-        errorIs(t.authorization.requireActiveSession({digest(1), CredentialMode::Bearer }, time(1)), ErrorCode::IntegrityError);
+        errorIs(t.authorization.requireActiveSession({ digest(1), CredentialMode::Bearer }, time(1)), ErrorCode::IntegrityError);
     }
     BOOST_REQUIRE(f.connection->execute("PRAGMA ignore_check_constraints=ON; UPDATE users SET password_hash=CAST(zeroblob(2048) AS TEXT) WHERE login='member'; PRAGMA ignore_check_constraints=OFF"));
-    { Transaction t(*f.connection, f.active);
+    {
+        Transaction t(*f.connection, f.active);
         BOOST_REQUIRE(t.context.begin());
         errorIs(t.users.findPasswordById(id<UserId>(2)), ErrorCode::IntegrityError);
     }
@@ -1009,7 +1024,7 @@ BOOST_AUTO_TEST_CASE(account_event_times_survive_rollback_and_connection_reopen)
             f.connection = f.open();
             BOOST_CHECK_EQUAL(scalar(*f.connection, "SELECT updated_at FROM users WHERE login='clock'"), expectedTime);
         }
-        // 陈旧条件和未提交变更不得留下 revision／时间变化。
+        // 陈旧条件和未提交变更不得留下 revision/时间变化。
         {
             Transaction t(*f.connection, f.active);
             BOOST_REQUIRE(t.context.begin());
@@ -1085,4 +1100,47 @@ BOOST_AUTO_TEST_CASE(invite_revoke_event_time_is_persistent_and_expiry_uses_raw_
         errorIs(t.invites.consume(inviteDigest(1), time(99)), ErrorCode::InviteUnavailable);
     }
 }
+}  // namespace anof::infrastructure::sqlite
+
+namespace anof::infrastructure::sqlite {
+BOOST_AUTO_TEST_CASE(cookie_mode_isolation_and_combined_session_count) {
+    Database f;
+    {
+        Transaction t(*f.connection, f.active);
+        BOOST_REQUIRE(t.context.begin());
+        for (unsigned n = 1; n <= 32; ++n) {
+            auto session = newSession(n, 2, 0, 100);
+            if (n % 2) session.mode = CredentialMode::Cookie;
+            BOOST_REQUIRE(t.sessions.insert(session));
+        }
+        BOOST_CHECK_EQUAL(t.sessions.countActive(id<UserId>(2), time(1)).value().value(), 32);
+        BOOST_REQUIRE(t.context.commit());
+    }
+    for (bool cookie : { false, true }) {
+        Transaction t(*f.connection, f.active);
+        BOOST_REQUIRE(t.context.begin());
+        auto digestValue = digest(cookie ? 1 : 2);
+        auto mode = cookie ? CredentialMode::Cookie : CredentialMode::Bearer;
+        BOOST_REQUIRE(t.authorization.requireActiveSession({ digestValue, mode }, time(1)));
+        BOOST_REQUIRE(t.context.commit());
+    }
+    {
+        Transaction t(*f.connection, f.active);
+        BOOST_REQUIRE(t.context.begin());
+        errorIs(t.authorization.requireActiveSession({ digest(1), CredentialMode::Bearer }, time(1)), ErrorCode::Unauthenticated);
+        BOOST_CHECK(!t.context.commit());
+    }
+    {
+        Transaction t(*f.connection, f.active);
+        BOOST_REQUIRE(t.context.begin());
+        auto wrong = t.sessions.revoke({ digest(1), CredentialMode::Bearer }, id<UserId>(2), time(1));
+        BOOST_REQUIRE(wrong);
+        BOOST_CHECK(!wrong.value());
+        auto right = t.sessions.revoke({ digest(1), CredentialMode::Cookie }, id<UserId>(2), time(1));
+        BOOST_REQUIRE(right && right.value());
+        BOOST_CHECK_EQUAL(t.sessions.countActive(id<UserId>(2), time(1)).value().value(), 31);
+        BOOST_REQUIRE(t.context.commit());
+    }
 }
+
+}  // namespace anof::infrastructure::sqlite

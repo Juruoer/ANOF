@@ -1,7 +1,7 @@
 #pragma once
 #include <anof/application/drive/DriveCommands.h>
-#include <anof/application/ports/DriveMetadataStore.h>
 #include <anof/application/ports/DriveIdGenerator.h>
+#include <anof/application/ports/DriveMetadataStore.h>
 #include <anof/application/ports/NodeIdGenerator.h>
 namespace anof {
 // 在metadata worker调用；所有授权、修改、计费和审计共用一个短事务，不访问磁盘。
@@ -17,10 +17,11 @@ public:
     Result<TrashView> execute(const RequestContext&, const GetTrashCommand&);
     Result<Page<NodeDetails, SearchCursor>> execute(const RequestContext&, const SearchNodesCommand&);
     Result<Page<TrashView, TrashCursor>> execute(const RequestContext&, const ListTrashCommand&);
+
 private:
     DriveMetadataStore& store_;
     Clock& clock_;
     NodeIdGenerator& nodes_;
     DriveIdGenerator& ids_;
 };
-} // namespace anof
+}  // namespace anof

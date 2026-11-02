@@ -1,12 +1,13 @@
 #pragma once
 
+#include <anof/application/ports/AuditRetention.h>
 #include <anof/application/ports/CreateDirectoryDispatcher.h>
 #include <anof/application/ports/CredentialIssuer.h>
+#include <anof/application/ports/DriveIdGenerator.h>
 #include <anof/application/ports/IdentityIdGenerator.h>
 #include <anof/application/ports/InviteTokenCodec.h>
-#include <anof/application/ports/TransferMetadataStore.h>
 #include <anof/application/ports/TransferIdGenerator.h>
-#include <anof/application/ports/DriveIdGenerator.h>
+#include <anof/application/ports/TransferMetadataStore.h>
 
 #include <cstddef>
 #include <functional>
@@ -34,6 +35,7 @@ struct MetadataWorkerResources {
     // 未知提交后关闭旧连接，再通过工厂打开独立连接复核；不自动重试写入。
     std::function<Result<std::unique_ptr<TransferMetadataStore>>()> reopenTransfer{};
     std::unique_ptr<DriveIdGenerator> driveIds{};
+    std::unique_ptr<AuditRetention> auditRetention{};
 };
 
 struct MetadataExecutorOptions {
@@ -41,7 +43,11 @@ struct MetadataExecutorOptions {
     std::size_t drainBatch = 32;
 };
 
-enum class MetadataExecutorState { Created, Starting, Ready, Stopping, Stopped };
+enum class MetadataExecutorState { Created,
+                                   Starting,
+                                   Ready,
+                                   Stopping,
+                                   Stopped };
 
 struct MetadataExecutorSnapshot {
     MetadataExecutorState state;
@@ -71,7 +77,7 @@ public:
     // 同步拒绝（空工厂、重复启动、线程创建失败）不调用回调。
     Result<void> start(Factory factory, Started started = {}, Stopped stopped = {});
     TaskSubmission trySubmit(RequestContext context, CreateDirectoryCommand command,
-                                        CreateDirectoryCallback completion) override;
+                             CreateDirectoryCallback completion) override;
     // runtime 内部阶段任务，与目录任务共用队列、完成槽和 worker；不向 HTTP 暴露任意闭包。
     using Operation = std::function<Result<void>(MetadataWorkerResources&)>;
     TaskSubmission submitOperation(Operation, Completion<void>, ErrorCode exceptionCode = ErrorCode::CommitOutcomeUnknown);

@@ -20,6 +20,7 @@ public:
     Result<std::vector<DirectoryCreatedEvent>> readAudit() override;
     // SQLite 专项测试在独占 fixture 时通过该路径注入故障；不是生产工厂入口。
     std::filesystem::path databasePath() const;
+
 private:
     std::filesystem::path directory_;
 };

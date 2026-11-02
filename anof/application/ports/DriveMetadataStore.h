@@ -1,9 +1,10 @@
 #pragma once
-#include <anof/application/ports/TransferMetadataStore.h>
-#include <anof/application/ports/TreeRepository.h>
-#include <anof/application/ports/TrashRepository.h>
-#include <anof/application/ports/NodeAccountingRepository.h>
 #include <anof/application/ports/DriveAuditRepository.h>
+#include <anof/application/ports/MaintenanceStateReader.h>
+#include <anof/application/ports/NodeAccountingRepository.h>
+#include <anof/application/ports/TransferMetadataStore.h>
+#include <anof/application/ports/TrashRepository.h>
+#include <anof/application/ports/TreeRepository.h>
 namespace anof {
 class BlobLifecycleReader {
 public:
@@ -37,6 +38,7 @@ public:
 };
 class DriveReadSnapshot : public TransferReadSnapshot {
 public:
+    virtual MaintenanceStateReader& maintenanceState() = 0;
     virtual TreeReader& tree() = 0;
     virtual TrashReader& trash() = 0;
     virtual BlobLifecycleReader& blobLifecycle() = 0;

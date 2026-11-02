@@ -12,6 +12,10 @@ namespace {
 struct ErrorDescription { int status; const char* reason; const char* code; const char* message; };
 ErrorDescription describe(ProtocolError error) {
     switch (error) {
+    case ProtocolError::CookieModeDisabled: return {403, "Forbidden", "COOKIE_MODE_DISABLED", "Cookie mode disabled"};
+    case ProtocolError::RequestOriginRejected: return {403, "Forbidden", "REQUEST_ORIGIN_REJECTED", "Request origin rejected"};
+    case ProtocolError::CsrfRequired: return {403, "Forbidden", "CSRF_REQUIRED", "Request protection required"};
+    case ProtocolError::IntegrityError: return {500, "Internal Server Error", "INTEGRITY_ERROR", "Integrity error"};
     case ProtocolError::LoginConflict: return {409, "Conflict", "LOGIN_CONFLICT", "Login unavailable"};
     case ProtocolError::InviteUnavailable: return {409, "Conflict", "INVITE_UNAVAILABLE", "Invitation unavailable"};
     case ProtocolError::UserLimitReached: return {409, "Conflict", "USER_LIMIT_REACHED", "User limit reached"};
@@ -121,7 +125,8 @@ ProtocolError protocolError(ErrorCode code) {
     case ErrorCode::Retryable: return ProtocolError::TemporarilyUnavailable;
     case ErrorCode::StorageFull: return ProtocolError::StorageFull;
     case ErrorCode::CommitOutcomeUnknown: return ProtocolError::CommitOutcomeUnknown;
-    case ErrorCode::IntegrityError: case ErrorCode::InternalError: return ProtocolError::InternalError;
+    case ErrorCode::IntegrityError: return ProtocolError::InternalError;
+    case ErrorCode::InternalError: return ProtocolError::InternalError;
     }
     return ProtocolError::InternalError;
 }

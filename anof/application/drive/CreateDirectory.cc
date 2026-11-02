@@ -39,12 +39,12 @@ Result<CreateDirectoryResult> CreateDirectory::execute(const RequestContext& con
     auto counted = transaction->nodeAccounting().chargeUsed(charge.nodes);
     if (!counted) return counted.error();
     auto directory = transaction->nodes().insertDirectory({ nodeId.value(), space.id, command.parentId,
-                                                           command.name, principal.value().userId, createdAt });
+                                                            command.name, principal.value().userId, createdAt });
     if (!directory) return directory.error();
     auto revision = transaction->nodes().advanceRevision(command.parentId, path.value().back().revision, createdAt);
     if (!revision) return revision.error();
 
-    // 复验自然到期及身份一致性；账户／权限的并发修改仍由事务隔离保护。
+    // 复验自然到期及身份一致性；账户/权限的并发修改仍由事务隔离保护。
     const auto checkedAt = clock_.now();
     auto verified = transaction->authorization().requireActiveSession(context.credential, checkedAt);
     if (!verified) return verified.error();
@@ -53,7 +53,7 @@ Result<CreateDirectoryResult> CreateDirectory::execute(const RequestContext& con
         return ErrorCode::Unauthenticated;
     }
     auto audited = transaction->directoryAudit().append({ principal.value().userId, space.id, nodeId.value(),
-                                                command.parentId, context.requestId, checkedAt });
+                                                          command.parentId, context.requestId, checkedAt });
     if (!audited) return audited.error();
 
     // 在 commit 前组装返回值，避免提交成功后再分配目录名称存储。

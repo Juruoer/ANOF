@@ -1,13 +1,13 @@
 #pragma once
 
 #include <anof/application/ports/AuthorizationReader.h>
-#include <anof/application/ports/UserRepository.h>
-#include <anof/application/ports/SessionRepository.h>
+#include <anof/application/ports/InstanceSettingsRepository.h>
 #include <anof/application/ports/InviteRepository.h>
-#include <anof/application/ports/SpaceRepository.h>
 #include <anof/application/ports/NodeRepository.h>
 #include <anof/application/ports/QuotaRepository.h>
-#include <anof/application/ports/InstanceSettingsRepository.h>
+#include <anof/application/ports/SessionRepository.h>
+#include <anof/application/ports/SpaceRepository.h>
+#include <anof/application/ports/UserRepository.h>
 
 namespace anof {
 // 仓储引用仅在本快照生存期有效；不可复制/跨线程，析构结束读事务。

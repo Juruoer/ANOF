@@ -1,9 +1,9 @@
 #pragma once
 
 #include <anof/application/ports/InstancePreparation.h>
-
 #include <anof/domain/identity/Secrets.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteOptions.h>
+
 #include <memory>
 
 namespace anof::infrastructure::sqlite {

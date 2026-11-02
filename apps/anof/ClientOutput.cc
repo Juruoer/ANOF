@@ -33,6 +33,7 @@ void readable(std::string& out, const Json& j, const std::string& prefix = {}) {
 }
 }
 Json clientData(const User& u) { return {{"id",u.id.toString()},{"login",u.login.value()},{"display_name",u.displayName.value()},{"role",u.role==User::Role::Admin?"administrator":"member"},{"enabled",u.enabled},{"revision",std::to_string(u.revision.value())},{"created_at",u.createdAt},{"updated_at",u.updatedAt}}; }
+Json clientData(const CurrentUser& v) { auto data = clientData(v.user); data["instance_id"] = v.instanceId.toString(); return data; }
 Json clientData(const AdminUser& v) { return {{"user",clientData(v.user)},{"private_space_id",v.privateSpaceId.toString()}}; }
 Json clientData(const ManagedQuota& v) { return {{"space_id",v.target.spaceId.toString()},{"user_id",v.target.userId?Json(v.target.userId->toString()):Json(nullptr)},{"quota",quota(v.quota)}}; }
 Json clientData(const SavedLogin& v) { return {{"user",clientData(v.user)},{"expires_at",v.expiresAt},{"credential_saved",v.credentialSaved}}; }

@@ -1,13 +1,16 @@
 #pragma once
 
 #include <anof/core/Result.h>
+
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <variant>
 
 namespace anof {
-enum class CancelBeforeStartResult { Cancelled, AlreadyRunning, AlreadyTerminal };
+enum class CancelBeforeStartResult { Cancelled,
+                                     AlreadyRunning,
+                                     AlreadyTerminal };
 class TaskHandle {
 public:
     virtual ~TaskHandle() = default;
@@ -16,8 +19,13 @@ public:
     virtual std::uint64_t id() const noexcept = 0;
 };
 struct CancelledBeforeStart {};
-struct AcceptedTask { std::unique_ptr<TaskHandle> handle; };
-enum class SubmitError { QueueFull, Stopping, InternalError, RateLimited };
+struct AcceptedTask {
+    std::unique_ptr<TaskHandle> handle;
+};
+enum class SubmitError { QueueFull,
+                         Stopping,
+                         InternalError,
+                         RateLimited };
 using TaskSubmission = std::variant<AcceptedTask, SubmitError>;
 
 template <typename T>

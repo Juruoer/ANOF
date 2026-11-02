@@ -1,11 +1,11 @@
 #pragma once
-#include <anof/application/ports/DriveDispatcher.h>
-#include <anof/application/ports/TransferDispatcher.h>
-
-#include <anof/application/ports/SessionTokenCodec.h>
-#include <anof/application/ports/IdentityDispatcher.h>
-#include <anof/transport/http/RequestTrace.h>
 #include <anof/application/drive/CreateDirectory.h>
+#include <anof/application/ports/DriveDispatcher.h>
+#include <anof/application/ports/IdentityDispatcher.h>
+#include <anof/application/ports/InstancePreparation.h>
+#include <anof/application/ports/SessionTokenCodec.h>
+#include <anof/application/ports/TransferDispatcher.h>
+#include <anof/transport/http/RequestTrace.h>
 #include <muduox/net/http/HttpServer.h>
 
 namespace anof::http {
@@ -28,7 +28,7 @@ public:
     // ready 和 stream 必填；stream 收到自有身份上下文，但请求仍为借用。
     // 注入依赖及回调捕获资源须活过 server 的 HTTP 清理和全部外部任务完成。
     HttpApi(const SessionTokenCodec& codec, const RequestIdentity& identity,
-            std::function<bool()> ready, CreateDirectoryStream stream, IdentityDispatcher& identityDispatcher, TransferDispatcher& transferDispatcher, DriveDispatcher& driveDispatcher,
+            std::function<bool()> ready, CreateDirectoryStream stream, IdentityDispatcher& identityDispatcher, TransferDispatcher& transferDispatcher, DriveDispatcher& driveDispatcher, const InstanceConfiguration& configuration,
             HttpObservation observation = {}, HttpApiOptions options = {});
     HttpApi(const HttpApi&) = delete;
     HttpApi& operator=(const HttpApi&) = delete;

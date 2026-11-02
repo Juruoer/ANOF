@@ -20,12 +20,14 @@ public:
     TaskSubmission submit(RequestContext, GetTrashCommand, Completion<TrashView>) override;
     TaskSubmission submit(RequestContext, SearchNodesCommand, Completion<Page<NodeDetails, SearchCursor>>) override;
     TaskSubmission submit(RequestContext, ListTrashCommand, Completion<Page<TrashView, TrashCursor>>) override;
+
 private:
-    template<class C, class T> TaskSubmission enqueue(RequestContext, C, Completion<T>);
+    template <class C, class T>
+    TaskSubmission enqueue(RequestContext, C, Completion<T>);
     muduox::net::EventLoop& loop_;
     MetadataExecutor& metadata_;
     const std::size_t limit_;
     std::size_t outstanding_ = 0;
     bool stopping_ = false;
 };
-} // namespace anof::runtime
+}  // namespace anof::runtime

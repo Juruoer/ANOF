@@ -13,4 +13,4 @@ struct InstanceDatabase {
     InitResult<void> close(const InstanceLease&, bool synchronize, InitStage);
 };
 InitResult<std::unique_ptr<InstanceDatabase>> openInstanceDatabase(const InstanceLease&, SqliteOptions, bool create);
-}
+}  // namespace anof::infrastructure::sqlite::detail

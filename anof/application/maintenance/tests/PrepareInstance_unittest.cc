@@ -1,7 +1,7 @@
 #define BOOST_TEST_MODULE PrepareInstance
-#include <boost/test/unit_test.hpp>
-
 #include <anof/application/maintenance/PrepareInstance.h>
+
+#include <boost/test/unit_test.hpp>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -17,6 +17,7 @@ public:
     explicit Lease(State& state) : state_(state) { state_.held = true; }
     ~Lease() override { state_.held = false; }
     const std::filesystem::path& root() const noexcept override { return root_; }
+
 private:
     State& state_;
     std::filesystem::path root_{ "/test-owned-instance" };
@@ -125,15 +126,18 @@ BOOST_AUTO_TEST_CASE(configuration_rejects_unbounded_or_remote_settings) {
     invalid.listenAddress = "0.0.0.0";
     BOOST_CHECK(!validateInstanceConfiguration(invalid));
     for (auto count : { 0U, 257U }) {
-        invalid = valid; invalid.metadataQueue = count;
+        invalid = valid;
+        invalid.metadataQueue = count;
         BOOST_CHECK(!validateInstanceConfiguration(invalid));
     }
     for (auto count : { 0U, 129U }) {
-        invalid = valid; invalid.httpInFlight = count;
+        invalid = valid;
+        invalid.httpInFlight = count;
         BOOST_CHECK(!validateInstanceConfiguration(invalid));
     }
     for (auto seconds : { -1.0, 30.1, std::numeric_limits<double>::infinity(), std::numeric_limits<double>::quiet_NaN() }) {
-        invalid = valid; invalid.shutdownGraceSeconds = seconds;
+        invalid = valid;
+        invalid.shutdownGraceSeconds = seconds;
         BOOST_CHECK(!validateInstanceConfiguration(invalid));
     }
     valid.shutdownGraceSeconds = 0;

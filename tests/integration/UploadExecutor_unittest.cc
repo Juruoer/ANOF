@@ -240,12 +240,11 @@ Upload seedUpload(Fixture& f, UploadState desired, bool object = false, bool sho
     auto committed = service.commitPatch(*f.context, patch.value());
     const auto utcAfter = r.clock->now();
     BOOST_REQUIRE_MESSAGE(committed, "commitPatch failed: error_value=" << (committed ? -1 : static_cast<int>(committed.error().code))
-        << " created_us=" << u.createdAt.time_since_epoch().count()
-        << " previous_progress_us=" << u.lastProgressAt.time_since_epoch().count()
-        << " utc_before_us=" << utcBefore.time_since_epoch().count()
-        << " utc_after_us=" << utcAfter.time_since_epoch().count()
-        << " elapsed_us=" << std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - monotonicBefore).count());
+                                                                        << " created_us=" << u.createdAt.time_since_epoch().count()
+                                                                        << " previous_progress_us=" << u.lastProgressAt.time_since_epoch().count()
+                                                                        << " utc_before_us=" << utcBefore.time_since_epoch().count()
+                                                                        << " utc_after_us=" << utcAfter.time_since_epoch().count()
+                                                                        << " elapsed_us=" << std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - monotonicBefore).count());
     u = committed.value();
     if (shortFile || desired == UploadState::Open) return finish(u);
     auto accepted = service.acceptComplete(*f.context, { u.id, {} });
@@ -536,7 +535,7 @@ BOOST_AUTO_TEST_CASE(process_death_at_durable_boundaries_recovers_without_double
                 } while (waited < 0 && errno == EINTR);
                 BOOST_REQUIRE_EQUAL(waited, pid);
                 BOOST_REQUIRE_MESSAGE(WIFSIGNALED(status), "child failed before planned SIGKILL: wait_status=" << status
-                    << " exit_code=" << (WIFEXITED(status) ? WEXITSTATUS(status) : -1));
+                                                                                                               << " exit_code=" << (WIFEXITED(status) ? WEXITSTATUS(status) : -1));
                 BOOST_REQUIRE_EQUAL(WTERMSIG(status), SIGKILL);
                 auto resources = makeInstanceMetadataResources(fixture.root / ".anof/metadata.sqlite3");
                 BOOST_REQUIRE(resources);

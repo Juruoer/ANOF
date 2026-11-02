@@ -34,6 +34,7 @@ public:
         erase(offset_, size_ - offset_);
         offset_ = size_ = 0;
     }
+
 private:
     void erase(std::size_t start, std::size_t count) noexcept {
         volatile char* data = bytes_.get();

@@ -1,0 +1,167 @@
+:root {
+    font-family: system-ui, sans-serif;
+    color: #172b3a;
+    background: #f5f7f9;
+    color-scheme: light;
+    line-height: 1.5;
+}
+
+body {
+    margin: 0;
+}
+
+main {
+    max-width: 72rem;
+    margin-inline: auto;
+    padding: 2rem;
+}
+
+:focus-visible {
+    outline: 3px solid #0867b2;
+    outline-offset: 3px;
+}
+
+nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: center;
+    margin-block: 1rem;
+}
+
+a {
+    color: #075d9b;
+}
+
+section {
+    max-width: 34rem;
+    padding: 1.5rem;
+    background: white;
+    border: 1px solid #c8d3db;
+    border-radius: .5rem;
+}
+
+form, label {
+    display: grid;
+    gap: .5rem;
+}
+
+form {
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+input, button {
+    font: inherit;
+    padding: .6rem .8rem;
+    border: 1px solid #617889;
+    border-radius: .25rem;
+}
+
+button {
+    cursor: pointer;
+    background: #eef4f8;
+    color: #172b3a;
+}
+
+button:disabled {
+    cursor: wait;
+    opacity: .65;
+}
+
+dt {
+    font-weight: 600;
+}
+
+dd {
+    margin: .2rem 0 1rem;
+    overflow-wrap: anywhere;
+}
+
+[role="status"] {
+    max-width: 50rem;
+    white-space: pre-wrap;
+}
+
+section.drive {
+    max-width: none;
+}
+
+.drive article {
+    padding: 1rem;
+    border-bottom: 1px solid #c8d3db;
+}
+
+.drive dl {
+    display: grid;
+    grid-template-columns: 5rem 1fr;
+    gap: .3rem;
+}
+
+.drive dd {
+    margin: 0;
+}
+
+.entries {
+    padding: 0;
+    list-style: none;
+}
+
+.entries > li {
+    padding: 1rem 0;
+    border-bottom: 1px solid #c8d3db;
+    overflow-wrap: anywhere;
+}
+
+.entries h4 {
+    margin: 0;
+    white-space: pre-wrap;
+}
+
+.entries button, .drive article button {
+    margin: .25rem;
+}
+
+.actions:not(:empty) {
+    padding: 1rem;
+    border: 2px solid #617889;
+    margin-block: 1rem;
+}
+
+fieldset {
+    min-width: 0;
+}
+
+input[type="checkbox"] {
+    width: 1.3rem;
+    height: 1.3rem;
+}
+
+section.admin {
+    max-width: none;
+}
+
+.admin dl {
+    display: grid;
+    grid-template-columns: minmax(8rem, 1fr) 3fr;
+    gap: .3rem;
+}
+
+.admin dd {
+    margin: 0;
+}
+
+.admin .entries button {
+    margin: .25rem;
+}
+
+.handover {
+    padding: 1rem;
+    border: 2px solid #617889;
+    overflow-wrap: anywhere;
+}
+
+.handover input {
+    max-width: 100%;
+    box-sizing: border-box;
+}

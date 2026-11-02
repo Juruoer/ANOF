@@ -17,9 +17,10 @@ public:
     Result<UserProfile> setDisplayName(UserId, Revision, DisplayName, UtcTime) override;
     Result<UserProfile> setEnabled(UserId, Revision, bool, UtcTime) override;
     Result<UserProfile> replacePassword(UserId, const PasswordExpectation&, const EncodedPasswordHash&, UtcTime) override;
+
 private:
     SqliteTransactionContext& context_;
     Result<std::optional<PasswordSnapshot>> password(std::string_view field, std::string_view key);
     PasswordHashLimits limits_;
 };
-}
+}  // namespace anof::infrastructure::sqlite

@@ -1,6 +1,7 @@
 #pragma once
 #include <anof/application/ports/IdentityDispatcher.h>
 #include <muduox/net/EventLoop.h>
+
 #include <boost/test/unit_test.hpp>
 #include <optional>
 
@@ -8,7 +9,11 @@ namespace anof::http::testing {
 // 所有操作在同一测试 loop；门控阶段模拟密码工作，但不启动线程或访问数据库。
 class IdentityDispatcherFixture final : public IdentityDispatcher {
 public:
-    enum class Phase { Queued, Password, FinalTransaction, Ready, Delivered };
+    enum class Phase { Queued,
+                       Password,
+                       FinalTransaction,
+                       Ready,
+                       Delivered };
     struct Job {
         std::uint64_t id;
         Phase phase = Phase::Queued;
@@ -25,10 +30,12 @@ public:
         TypedJob(Context ctx, Command cmd, Completion<Value> callback)
             : context(ctx), command(std::move(cmd)), completion(std::move(callback)) {}
         void deliver() override {
-            command.reset(); // 模拟 worker 已结束，任务命令不遗留密码。
+            command.reset();  // 模拟 worker 已结束，任务命令不遗留密码。
             auto callback = std::move(completion);
-            if (this->cancelled) callback({this->id, CancelledBeforeStart{}});
-            else callback({this->id, result ? std::move(*result) : Result<Value>(ErrorCode::InternalError)});
+            if (this->cancelled)
+                callback({ this->id, CancelledBeforeStart{} });
+            else
+                callback({ this->id, result ? std::move(*result) : Result<Value>(ErrorCode::InternalError) });
             result.reset();
         }
     };
@@ -59,10 +66,12 @@ public:
         loop_.queueInLoop([this, job] {
             job->phase = Phase::Delivered;
             job->deliver();
-            ++deliveries; // 完成回调归还后才释放名额。
+            ++deliveries;  // 完成回调归还后才释放名额。
         });
     }
-    void releaseAll() { for (const auto& job : jobs) release(job); }
+    void releaseAll() {
+        for (const auto& job : jobs) release(job);
+    }
     TaskSubmission submit(RequestId context, RegisterCommand command, Completion<UserProfile> completion) override {
         return accept<RegisterCommand, UserProfile>(context, std::move(command), std::move(completion));
     }
@@ -72,8 +81,8 @@ public:
     TaskSubmission submit(RequestContext context, LogoutCommand command, Completion<void> completion) override {
         return accept<LogoutCommand, void>(context, std::move(command), std::move(completion));
     }
-    TaskSubmission submit(RequestContext context, GetMeCommand command, Completion<UserProfile> completion) override {
-        return accept<GetMeCommand, UserProfile>(context, std::move(command), std::move(completion));
+    TaskSubmission submit(RequestContext context, GetMeCommand command, Completion<CurrentUserView> completion) override {
+        return accept<GetMeCommand, CurrentUserView>(context, std::move(command), std::move(completion));
     }
     TaskSubmission submit(RequestContext context, CreateInviteCommand command, Completion<CreatedInvite> completion) override {
         return accept<CreateInviteCommand, CreatedInvite>(context, std::move(command), std::move(completion));
@@ -114,6 +123,7 @@ public:
     TaskSubmission submit(RequestContext context, SetQuotaLimitCommand command, Completion<ManagedQuota> completion) override {
         return accept<SetQuotaLimitCommand, ManagedQuota>(context, std::move(command), std::move(completion));
     }
+
 private:
     struct Handle final : TaskHandle {
         IdentityDispatcherFixture& owner;
@@ -139,7 +149,7 @@ private:
         auto job = std::make_shared<TypedJob<Command, Value, Context>>(context, std::move(command), std::move(completion));
         job->id = jobs.size() + 1;
         jobs.push_back(job);
-        return AcceptedTask{std::make_unique<Handle>(*this, job)};
+        return AcceptedTask{ std::make_unique<Handle>(*this, job) };
     }
     muduox::net::EventLoop& loop_;
 };

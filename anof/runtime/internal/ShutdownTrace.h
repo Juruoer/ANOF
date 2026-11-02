@@ -1,9 +1,10 @@
 #pragma once
 
+#include <unistd.h>
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-#include <unistd.h>
 
 namespace anof::runtime::internal {
 inline bool shutdownTraceEnabled() noexcept {

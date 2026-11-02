@@ -3,7 +3,10 @@
 #include <anof/domain/transfer/TransferPolicy.h>
 
 namespace anof {
-enum class UploadScan { Active, CleanupPending, Expired, RetentionElapsed };
+enum class UploadScan { Active,
+                        CleanupPending,
+                        Expired,
+                        RetentionElapsed };
 class UploadReader {
 public:
     virtual ~UploadReader() = default;
@@ -13,7 +16,7 @@ public:
     virtual Result<Page<Upload, UploadPosition>> list(UserId, PageSize, std::optional<UploadPosition>) = 0;
     // 全局按 created_at/id seek；Expired 排除 COMMITTING；RetentionElapsed 排除 cleanup_pending。
     virtual Result<Page<Upload, UploadPosition>> scan(UploadScan, UtcTime now, PageSize,
-                                                     std::optional<UploadPosition>) = 0;
+                                                      std::optional<UploadPosition>) = 0;
     // 活跃和终态 cleanup_pending 的 length-offset 总和，溢出为 IntegrityError。
     virtual Result<ByteCount> unwrittenCommitment() = 0;
 };

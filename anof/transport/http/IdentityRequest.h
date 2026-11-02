@@ -14,7 +14,11 @@ template <typename T>
 using Parsed = std::variant<T, ProtocolError>;
 
 // 输入是同步借用；成功命令自有数据，密码及邀请码只能移动。
-Parsed<RegisterCommand> parseRegisterJson(std::string_view body, AuthenticationSource source);
+struct RegistrationRequest {
+    RegisterCommand command;
+    CredentialMode mode;
+};
+Parsed<RegistrationRequest> parseRegisterJson(std::string_view body, AuthenticationSource source);
 Parsed<LoginCommand> parseLoginJson(std::string_view body, AuthenticationSource source);
 Parsed<CreateInviteCommand> parseCreateInviteJson(std::string_view body);
 Parsed<GetNodeCommand> parseGetNode(std::string_view id);

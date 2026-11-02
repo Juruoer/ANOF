@@ -52,11 +52,11 @@ Result<InitReceipt> verifyInitialized(SqliteConnection& connection, PasswordHash
         if (!password.value()) return ErrorCode::IntegrityError;
     }
     auto receipt = detail::query(context,
-        "SELECT u.id,p.id,s.id FROM users u JOIN spaces p ON p.kind=1 JOIN spaces s ON s.kind=0 AND s.owner_id=u.id "
-        "WHERE u.role=1 AND (SELECT count(*) FROM identity_audit_events a WHERE a.action='instance_initialized')=1 "
-        "AND EXISTS(SELECT 1 FROM identity_audit_events a WHERE a.action='instance_initialized' AND a.subject_user_id=u.id "
-        "AND a.instance_id=?1 AND a.occurred_at=?2)",
-        { stored.value()->instanceId.toString(), stored.value()->initializedAt.time_since_epoch().count() });
+                                 "SELECT u.id,p.id,s.id FROM users u JOIN spaces p ON p.kind=1 JOIN spaces s ON s.kind=0 AND s.owner_id=u.id "
+                                 "WHERE u.role=1 AND (?3=0 OR ((SELECT count(*) FROM identity_audit_events a WHERE a.action='instance_initialized')=1 "
+                                 "AND EXISTS(SELECT 1 FROM identity_audit_events a WHERE a.action='instance_initialized' AND a.subject_user_id=u.id "
+                                 "AND a.instance_id=?1 AND a.occurred_at=?2)))",
+                                 { stored.value()->instanceId.toString(), stored.value()->initializedAt.time_since_epoch().count(), std::int64_t(initial) });
     if (!receipt) return receipt.error();
     row = receipt.value()->step();
     if (!row) return row.error();
@@ -82,7 +82,7 @@ Result<InitReceipt> verifyInitialized(SqliteConnection& connection, PasswordHash
     if (!accounting) return accounting.error();
     if (initial) {
         auto exact = detail::query(context,
-                                   "SELECT NOT EXISTS(SELECT 1 FROM trash_entries) AND NOT EXISTS(SELECT 1 FROM drive_audit_events) AND EXISTS(SELECT 1 FROM node_accounting WHERE used_nodes=(SELECT count(*) FROM nodes) AND reserved_nodes=0 AND revision=1) AND NOT EXISTS(SELECT 1 FROM uploads) AND NOT EXISTS(SELECT 1 FROM transfer_audit_events) "
+                                   "SELECT NOT EXISTS(SELECT 1 FROM quarantine_entries) AND NOT EXISTS(SELECT 1 FROM maintenance_runs) AND NOT EXISTS(SELECT 1 FROM maintenance_actions) AND NOT EXISTS(SELECT 1 FROM maintenance_audit_events) AND NOT EXISTS(SELECT 1 FROM trash_entries) AND NOT EXISTS(SELECT 1 FROM drive_audit_events) AND EXISTS(SELECT 1 FROM node_accounting WHERE used_nodes=(SELECT count(*) FROM nodes) AND reserved_nodes=0 AND revision=1) AND NOT EXISTS(SELECT 1 FROM uploads) AND NOT EXISTS(SELECT 1 FROM transfer_audit_events) "
                                    "AND NOT EXISTS(SELECT 1 FROM storage_accounting WHERE retained_bytes<>0 OR reserved_bytes<>0 OR revision<>1) "
                                    "AND (SELECT count(*) FROM users)=1 AND (SELECT count(*) FROM spaces)=2 "
                                    "AND (SELECT count(*) FROM nodes)=2 AND (SELECT count(*) FROM space_quotas)=2 "
@@ -109,6 +109,6 @@ Result<InitReceipt> verifyInitialized(SqliteConnection& connection, PasswordHash
     }
     return InitReceipt{ { stored.value()->instanceId, stored.value()->bootstrapOperationId }, admin.value(), common.value(), personal.value() };
 }
-}  // namespace
+}  // namespace detail
 
-}
+}  // namespace anof::infrastructure::sqlite

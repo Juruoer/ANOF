@@ -11,6 +11,10 @@ namespace anof::http {
 
 inline constexpr std::size_t kMaxJsonBytes = 64 * 1024;
 enum class ProtocolError {
+    CookieModeDisabled,
+    RequestOriginRejected,
+    CsrfRequired,
+    IntegrityError,
     LoginConflict,
     InviteUnavailable,
     UserLimitReached,

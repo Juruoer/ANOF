@@ -1,8 +1,7 @@
 #define BOOST_TEST_MODULE AnofQuota
-#include <boost/test/unit_test.hpp>
-
 #include <anof/domain/drive/Quota.h>
 
+#include <boost/test/unit_test.hpp>
 #include <limits>
 
 using namespace anof;
@@ -11,7 +10,7 @@ namespace {
 QuotaDelta amount(std::int64_t bytes, std::int64_t nodes) {
     return { ByteCount::from(bytes).value(), NodeCount::from(nodes).value() };
 }
-}
+}  // namespace
 
 BOOST_AUTO_TEST_CASE(reserved_capacity_cannot_be_consumed_twice) {
     const QuotaState state{ amount(100, 10), amount(20, 7), amount(30, 2) };

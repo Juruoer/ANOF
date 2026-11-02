@@ -1,23 +1,38 @@
-# 上传应用用例
+# 上传与下载用例
 
-[UploadService](UploadService.h) 在 metadata worker 上使用同一 `TransferMetadataStore` 的短事务完成上传业务。服务只处理类型化值，不执行文件读写或等待网络／磁盘；跨阶段由调用方持有独占资格，并传入持久化 generation。
+传输需要同时处理数据库记录和磁盘文件。这个目录负责数据库中的业务决定，runtime 负责安排文件操作，并把完成结果交回用例。服务不会持有事务等待网络或磁盘。
 
-创建以用户和 clientUploadId 去重，先比较不可变原始参数，再验证目标和新预留。逻辑额度预留完整文件长度与一个节点，物理预算预留完整长度。CREATING 提交后由调用方创建并同步暂存文件，再确认 OPEN；重放不会重新预留，也不重新检查原目标是否可用。
+## 上传过程
 
-PATCH 准备返回已授权的上传快照及结束偏移；提交要求相同 generation、OPEN、原偏移、有效 Session 与目标权限。调用者须先确认精确长度及数据同步。完成请求保存 VERIFYING，校验后进入 READY；发布意图固定 BlobId 并进入 COMMITTING。文件发布同步完成后，最终事务复验用户、取消标志和目标，原子插入 Blob／文件节点、递增父 revision、转换逻辑预留与物理计量、追加审计并保存 COMPLETED。目标冲突保留 READY 和预留，允许在同一空间改目标。
+[UploadService](UploadService.h) 使用同一个 `TransferMetadataStore` 的短事务推进上传。每次跨阶段操作都携带 `generation`，用来拒绝基于旧状态返回的结果。
 
-取消、过期及失败释放逻辑预留，但保留 `cleanupPending` 与物理预留。只有文件删除和目录同步确认后，`confirmCleanup` 才原子清除责任并释放物理预留；重试不重复扣账。查询发现过期时不延长寿命。上传仅对创建者可见，管理员没有读取其他用户上传的特权。storage 查询及条件预算更新仅允许管理员；磁盘采样由 runtime 补充。
+1. **创建**：按用户和 `clientUploadId` 检查是否已创建过相同请求。新上传预留完整文件长度、一个节点和物理预算，提交 CREATING 后才创建并同步暂存文件，再确认 OPEN。已有记录先比较原始参数，不重复预留。
+2. **写入**：PATCH 准备返回授权快照与结束偏移。文件写入且同步后，确认事务要求 generation、OPEN 状态、原偏移、会话和目标权限仍然匹配。
+3. **校验**：完成请求进入 VERIFYING，摘要校验成功后进入 READY。目标冲突保留 READY 和预留，允许在同一空间内选择新的父目录和名称。
+4. **发布**：先固定 BlobId 并保存 COMMITTING，再发布和同步文件。最终事务复核用户、取消标志与目标，创建内容和节点，更新父目录版本、用量与审计，保存 COMPLETED。
 
-[TransferRecovery](TransferRecovery.h) 提供只读 metadata 对账和每批最多100项的终态保留清理。对账核对 Blob状态／实际引用、P/R、活动及回收站节点、空间及公共贡献额度和全局节点账本。普通分页最多64项，回收站每页16项/每树1000节点，目录深度受128层限制。COMPLETED无删除证据必须有活动或回收站结果；有证据必须无结果节点，可保留共享Blob或已GC。未知、缺失或不一致的数据返回错误，不归零修账。文件枚举、SHA-256、发布恢复和监听屏障属于 [UploadExecutor](../../runtime/UploadExecutor.h)。
+上传只对创建者可见，管理员也不能读取其他用户的上传记录。原始创建参数供去重使用，不会被后来修改的发布目标覆盖。
 
-提交返回 `CommitOutcomeUnknown` 时，调用者不能推断回滚或直接截断。runtime 使用新 Store 重读权威偏移／状态；无法确认的上传保持冻结，等待显式重新启动恢复。
+## 取消和恢复
 
-验证入口为 [上传集成测试](../../../tests/integration/UploadExecutor_unittest.cc) 和 [账户服务集成测试](../../../tests/integration/AccountService_unittest.cc)，覆盖真实 SQLite／小文件流程、发布边界恢复、提交确认丢失、禁用后不可复活及过期计量。此模块不提供 HTTP 路由或 CLI 传输；文件 IO 由 runtime 分阶段调度。
+取消、过期或失败会释放逻辑预留，但物理预留要等文件清理完成。记录保留 `cleanupPending`，只有删除文件并同步目录后，`confirmCleanup` 才清除责任并扣除物理预留。
 
+提交返回 `CommitOutcomeUnknown` 时，文件或偏移可能已经生效。runtime 会使用新连接重新读取状态，无法确认时冻结该上传，等待重新启动后的恢复，不能直接截断或重发写事务。
 
-[DownloadService](DownloadService.h) 的prepareDownload在单个只读快照完成身份、空间、活动父路径和文件授权，校验Node内容元数据与Blob一致，返回用户及不可变内容描述。目录返回NotAFile；不可见资源返回NotFound；不打开文件、不解释HTTP条件、不保留快照。运行时在返回下载流前完成文件类型／长度检查，并持有读取资格至磁盘清理退休。
+[TransferRecovery](TransferRecovery.h) 核对内容引用、物理已用和预留量、空间及贡献额度、活动和回收站节点、全局节点账本。已完成上传没有删除证据时必须仍有结果节点；有删除证据时不能再存在该节点。对账不一致会返回错误，不把用量清零来继续启动。
 
-上传进度和终态使用[记录内事件时间规则](../../core/Clock.h)：取原始 UTC、创建时间和已保存进度的最大值，允许相等。PATCH 回拨不会缩短既有到期时间；发布文件节点与上传终态共用发布事件时间。认证、到期判断及审计仍使用原始 UTC；该规则不提供全局时间顺序或防回拨认证期限。
+读取分批进行：普通分页最多 64 项，回收站每页 16 项、每树最多 1000 节点，终态保留清理每批最多 100 项。文件枚举、摘要和发布恢复由 [UploadExecutor](../../runtime/UploadExecutor.h) 执行。
 
-下载准备要求AVAILABLE内容；runtime取得共享读资格后再次调用该准备过程复验权限及关联，再打开文件。
-storage应用返回同一快照的GC派生统计及节点账本；它们不是旧storage revision的条件写保证，HTTP/客户端尚未编码这些新增字段。
+## 下载准备
+
+[DownloadService](DownloadService.h) 的 `prepareDownload` 在一个只读快照内检查身份、空间、活动父路径和文件权限，再核对节点与内容记录，返回用户和内容描述。目录返回 `NotAFile`，不可见资源返回 `NotFound`，已授权但内容不可用返回 `IntegrityError`。
+
+runtime 取得内容读取资格后再次调用准备过程，确认权限和关联没有变化，再打开文件检查类型和长度。文件关闭并处理完完成结果后才释放读取资格，避免清理任务同时删除正在读取的内容。HTTP 条件请求和 Range 解释在 transport 中完成。
+
+## 用量与时间
+
+管理员可以读取存储统计和带条件修改内容预算。返回前检查隔离、不可用和待清理子集以及节点账本；这些统计来自同一快照，但派生统计的变化不一定改变存储预算的 revision。磁盘余量由 runtime 采样。
+
+上传进度时间取原始 UTC、创建时间与已保存进度时间的最大值，允许相等。时钟回拨不会缩短已有到期时间；发布节点与上传终态使用同一发布事件时间。认证、到期判断和审计仍使用原始 UTC。
+
+[上传集成测试](../../../tests/integration/UploadExecutor_unittest.cc)覆盖实际文件流程、未知提交和重启恢复；[账户测试](../../../tests/integration/AccountService_unittest.cc)还检查禁用与上传的关系。启动恢复的文件证据和调度顺序见 [runtime 设计](../../runtime/DESIGN.md)。

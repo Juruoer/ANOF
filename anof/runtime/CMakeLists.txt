@@ -1,16 +1,18 @@
 add_library(anof_runtime STATIC
-    AuthenticationLimiter.cc
-    IdentityExecutor.cc
-    DriveExecutor.cc
-    BlobAccessRegistry.cc
-    MaintenanceExecutor.cc
-    CompletionPump.cc
-    UploadExecutor.cc
-    DiskExecutor.cc
-    MetadataExecutor.cc
-    AnofRuntime.cc
+        AuditRetentionExecutor.cc
+        LogSink.cc
+        AuthenticationLimiter.cc
+        IdentityExecutor.cc
+        DriveExecutor.cc
+        BlobAccessRegistry.cc
+        MaintenanceExecutor.cc
+        CompletionPump.cc
+        UploadExecutor.cc
+        DiskExecutor.cc
+        MetadataExecutor.cc
+        AnofRuntime.cc
 )
-target_link_libraries(anof_runtime PUBLIC anof_application muduox_net Threads::Threads)
+target_link_libraries(anof_runtime PUBLIC anof_application muduox_net Threads::Threads PRIVATE nlohmann_json::nlohmann_json)
 target_compile_options(anof_runtime PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 
 if (ANOF_BUILD_TESTS)
@@ -31,3 +33,7 @@ add_library(anof_identity_resources STATIC InstanceIdentity.cc)
 target_link_libraries(anof_identity_resources PUBLIC anof_runtime PRIVATE anof_infrastructure)
 target_compile_options(anof_identity_resources PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 target_link_libraries(anof_instance_runtime PRIVATE anof_identity_resources)
+
+add_library(anof_offline_maintenance STATIC OfflineRecovery.cc InstanceMaintenance.cc)
+target_link_libraries(anof_offline_maintenance PUBLIC anof_application PRIVATE anof_identity_resources anof_infrastructure)
+target_compile_options(anof_offline_maintenance PRIVATE -Wall -Wextra -Wconversion -Wshadow)

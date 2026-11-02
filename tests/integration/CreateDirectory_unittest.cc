@@ -1,9 +1,8 @@
 #define BOOST_TEST_MODULE AnofCreateDirectoryIntegration
-#include <boost/test/unit_test.hpp>
-
 #include <anof/application/drive/CreateDirectory.h>
 #include <tests/persistence_contract/TestMetadataBackend.h>
 
+#include <boost/test/unit_test.hpp>
 #include <functional>
 #include <iomanip>
 #include <limits>
@@ -41,8 +40,18 @@ struct TestIds final : NodeIdGenerator {
 };
 
 // 装饰真实仓储，仅在指定边界截断控制流；不模拟 SQL、提交或回滚状态。
-enum class Fault { None, Begin, FirstCharge, SecondCharge, Insert, Revision, Audit, ThrowAfterAudit,
-                   BeforeCommit, UnknownRolledBack, UnknownCommitted, ChangedIdentity };
+enum class Fault { None,
+                   Begin,
+                   FirstCharge,
+                   SecondCharge,
+                   Insert,
+                   Revision,
+                   Audit,
+                   ThrowAfterAudit,
+                   BeforeCommit,
+                   UnknownRolledBack,
+                   UnknownCommitted,
+                   ChangedIdentity };
 struct Control {
     Fault fault = Fault::None;
     int begins = 0;
@@ -51,9 +60,7 @@ struct Control {
     int commits = 0;
     std::function<void()> onFirstCharge;
 };
-class ObservedTransaction final : public MetadataTransaction, public AuthorizationReader,
-                                  public SpaceRepository, public NodeRepository, public QuotaRepository,
-                                  public AuditRepository {
+class ObservedTransaction final : public MetadataTransaction, public AuthorizationReader, public SpaceRepository, public NodeRepository, public QuotaRepository, public AuditRepository {
 public:
     ObservedTransaction(std::unique_ptr<MetadataTransaction> inner, Control& control)
         : inner_(std::move(inner)), control_(control) {}
@@ -83,7 +90,7 @@ public:
     Result<void> insert(const Space& space) override { return inner_->spaces().insert(space); }
     Result<std::optional<NodeDetails>> find(NodeId node) override { return inner_->nodes().find(node); }
     Result<Page<NodeDetails, ChildPosition>> listChildren(SpaceId space, NodeId parent, PageSize size,
-        std::optional<ChildPosition> after) override { return inner_->nodes().listChildren(space, parent, size, after); }
+                                                          std::optional<ChildPosition> after) override { return inner_->nodes().listChildren(space, parent, size, after); }
     Result<void> insertRoot(const RootDirectory& root) override { return inner_->nodes().insertRoot(root); }
     Result<QuotaSnapshot> get(const QuotaScope& scope) override { return inner_->quotas().get(scope); }
     Result<void> insert(const QuotaScope& scope, const QuotaSnapshot& value) override { return inner_->quotas().insert(scope, value); }
@@ -130,6 +137,7 @@ public:
         if (result && control_.fault == Fault::UnknownCommitted) return ErrorCode::CommitOutcomeUnknown;
         return result;
     }
+
 private:
     std::unique_ptr<MetadataTransaction> inner_;
     Control& control_;
@@ -145,6 +153,7 @@ public:
         if (!result) return result.error();
         return std::unique_ptr<MetadataTransaction>(new ObservedTransaction(std::move(result).value(), control_));
     }
+
 private:
     MetadataStore& inner_;
     Control& control_;
@@ -310,8 +319,10 @@ BOOST_AUTO_TEST_CASE(invalid_authentication_never_writes) {
 BOOST_AUTO_TEST_CASE(expiry_or_identity_change_on_second_check_rolls_back_writes) {
     for (bool expiry : { false, true }) {
         Fixture f;
-        if (expiry) f.seed.sessions[0].expiresAt = f.clock.second;
-        else f.control.fault = Fault::ChangedIdentity;
+        if (expiry)
+            f.seed.sessions[0].expiresAt = f.clock.second;
+        else
+            f.control.fault = Fault::ChangedIdentity;
         f.open();
         auto result = f.run(f.command());
         BOOST_REQUIRE(!result);
@@ -333,8 +344,8 @@ BOOST_AUTO_TEST_CASE(validation_id_generation_and_begin_fail_before_writes) {
         f.open();
         auto result = f.run(command);
         BOOST_REQUIRE(!result);
-        BOOST_CHECK(result.error().code == (scenario == 0 ? ErrorCode::InvalidName :
-                                           scenario == 1 ? ErrorCode::InternalError : ErrorCode::Retryable));
+        BOOST_CHECK(result.error().code == (scenario == 0 ? ErrorCode::InvalidName : scenario == 1 ? ErrorCode::InternalError
+                                                                                                   : ErrorCode::Retryable));
         BOOST_TEST(f.control.begins == (scenario == 2 ? 1 : 0));
         BOOST_TEST(f.ids.calls == (scenario == 0 ? 0 : 1));
         BOOST_CHECK(f.attempt.has_value() == (scenario == 2));
@@ -357,12 +368,16 @@ BOOST_AUTO_TEST_CASE(unavailable_or_file_parent_leaves_database_unchanged) {
                 f.seed.blobs.push_back({ *blob, ByteCount{}, {} });
             }
             f.seed.nodes.push_back({ { node, f.publicSpace, f.publicRoot, "parent", f.owner,
-                                      Revision{}, f.clock.first, f.clock.first }, blob, scenario == 4 });
+                                       Revision{}, f.clock.first, f.clock.first },
+                                     blob,
+                                     scenario == 4 });
             command.parentId = node;
             if (scenario == 4) {
                 const auto descendant = id<NodeId>(4);
                 f.seed.nodes.push_back({ { descendant, f.publicSpace, node, "hidden", f.owner,
-                                          Revision{}, f.clock.first, f.clock.first }, std::nullopt, false });
+                                           Revision{}, f.clock.first, f.clock.first },
+                                         std::nullopt,
+                                         false });
                 command.parentId = descendant;
             }
         }
@@ -421,7 +436,8 @@ BOOST_AUTO_TEST_CASE(unknown_commit_never_becomes_success_or_automatic_retry) {
         BOOST_TEST(f.control.commits == 1);
         BOOST_TEST(f.control.begins == 1);
         BOOST_TEST(f.ids.calls == 1);
-        if (fault == Fault::UnknownRolledBack) f.unchanged();
+        if (fault == Fault::UnknownRolledBack)
+            f.unchanged();
         else {
             auto node = f.backend->readNode(f.ids.value);
             BOOST_REQUIRE(node);
@@ -442,7 +458,9 @@ BOOST_AUTO_TEST_CASE(name_conflict_does_not_charge_or_increment_revision) {
             f.seed.blobs.push_back({ *blob, ByteCount{}, {} });
         }
         f.seed.nodes.push_back({ { id<NodeId>(3), f.publicSpace, f.publicRoot, f.command().name, f.owner,
-                                  Revision{}, f.clock.first, f.clock.first }, blob, false });
+                                   Revision{}, f.clock.first, f.clock.first },
+                                 blob,
+                                 false });
         f.open();
         auto result = f.run(f.command());
         BOOST_REQUIRE(!result);
@@ -462,7 +480,9 @@ BOOST_AUTO_TEST_CASE(depth_limit_and_revision_overflow_do_not_leave_partial_writ
             for (unsigned int i = 0; i < 128; ++i) {
                 auto node = id<NodeId>(10 + i);
                 f.seed.nodes.push_back({ { node, f.publicSpace, parent, "level", f.owner,
-                                          Revision{}, f.clock.first, f.clock.first }, std::nullopt, false });
+                                           Revision{}, f.clock.first, f.clock.first },
+                                         std::nullopt,
+                                         false });
                 parent = node;
             }
             command.parentId = parent;

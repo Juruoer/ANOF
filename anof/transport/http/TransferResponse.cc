@@ -110,8 +110,7 @@ Result<JsonResponse> uploadsResponse(const Page<UploadView, UploadCursor>& page,
     return internal::jsonResponse(200, "OK", id, {{"items", items}, {"next_cursor", next}}, kMaxIdentityResponseBytes);
 }
 Result<JsonResponse> storageResponse(const StorageView& s, RequestId id) {
-    if (!validateNodeAccounting(s.nodes) || s.gc.deletingBytes.value() > s.gc.pendingBytes.value() ||
-        s.gc.pendingBytes.value() > s.accounting.retained.value() || s.gc.deletingObjects.value() > s.gc.pendingObjects.value()) return ErrorCode::InternalError;
+    if (!validateNodeAccounting(s.nodes) || !validateStorageStatistics(s.gc,s.accounting.retained)) return ErrorCode::InternalError;
     Json free = nullptr, margin = nullptr, sampled = nullptr;
     if (s.disk) {
         auto time = formatUtcTimestamp(s.disk->sampledAt); if (!time) return time.error();
@@ -121,6 +120,8 @@ Result<JsonResponse> storageResponse(const StorageView& s, RequestId id) {
         {"retained_bytes", std::to_string(s.accounting.retained.value())}, {"reserved_bytes", std::to_string(s.accounting.reserved.value())},
         {"pending_gc_bytes", std::to_string(s.gc.pendingBytes.value())}, {"pending_gc_objects", std::to_string(s.gc.pendingObjects.value())},
         {"deleting_bytes", std::to_string(s.gc.deletingBytes.value())}, {"deleting_objects", std::to_string(s.gc.deletingObjects.value())},
+        {"quarantined_bytes", std::to_string(s.gc.quarantinedBytes.value())}, {"quarantined_objects", std::to_string(s.gc.quarantinedObjects.value())},
+        {"unavailable_bytes", std::to_string(s.gc.unavailableBytes.value())}, {"unavailable_objects", std::to_string(s.gc.unavailableObjects.value())},
         {"used_nodes", std::to_string(s.nodes.used.value())}, {"reserved_nodes", std::to_string(s.nodes.reserved.value())}, {"node_limit", std::to_string(kInstanceNodeLimit)},
         {"disk_status", s.disk ? "AVAILABLE" : "UNAVAILABLE"}, {"free_bytes", free}, {"safety_margin_bytes", margin}, {"sampled_at", sampled}});
     result.headers.addHeader("ETag", "\"storage-" + s.instanceId.toString() + "-" + std::to_string(s.accounting.revision.value()) + "\"");

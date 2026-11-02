@@ -1,19 +1,39 @@
 #pragma once
 
 #include <anof/application/ports/InstancePreparation.h>
+#include <anof/domain/drive/NodeAccounting.h>
 #include <anof/domain/identity/User.h>
 #include <anof/domain/instance/InstanceSettings.h>
+
 #include <variant>
-#include <anof/domain/drive/NodeAccounting.h>
 
 namespace anof {
 enum class InitError {
-    InvalidInput, NotFound, AlreadyExists, Busy, IncompleteInitialization, UnsupportedFormat,
-    IntegrityError, StorageFull, CommitOutcomeUnknown, PublicationOutcomeUnknown, IoError, InternalError
+    InvalidInput,
+    NotFound,
+    AlreadyExists,
+    Busy,
+    IncompleteInitialization,
+    UnsupportedFormat,
+    IntegrityError,
+    StorageFull,
+    CommitOutcomeUnknown,
+    PublicationOutcomeUnknown,
+    IoError,
+    InternalError
 };
 enum class InitStage {
-    Validate, HashPassword, CreateDirectory, AcquireLock, WritePending, WriteConfiguration,
-    CreateDatabase, Bootstrap, Verify, PublishFormat, ClearPending
+    Validate,
+    HashPassword,
+    CreateDirectory,
+    AcquireLock,
+    WritePending,
+    WriteConfiguration,
+    CreateDatabase,
+    Bootstrap,
+    Verify,
+    PublishFormat,
+    ClearPending
 };
 struct InitFailure {
     InitError code;
@@ -32,6 +52,7 @@ public:
     const T& value() const& { return std::get<T>(state_); }
     T&& value() && { return std::get<T>(std::move(state_)); }
     const InitFailure& error() const { return std::get<InitFailure>(state_); }
+
 private:
     std::variant<T, InitFailure> state_;
 };
@@ -44,6 +65,7 @@ public:
     explicit operator bool() const noexcept { return hasValue(); }
     void value() const { (void)std::get<std::monostate>(state_); }
     const InitFailure& error() const { return std::get<InitFailure>(state_); }
+
 private:
     std::variant<std::monostate, InitFailure> state_;
 };
@@ -51,8 +73,8 @@ private:
 struct InitializationIdentity {
     InstanceId instanceId;
     OperationId operationId;
-    static constexpr std::int64_t schemaVersion = 4;
-    static constexpr std::int64_t formatVersion = 4;
+    static constexpr std::int64_t schemaVersion = 5;
+    static constexpr std::int64_t formatVersion = 5;
 };
 struct InitReceipt {
     InitializationIdentity identity;

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <anof/core/Result.h>
+#include <anof/domain/identity/PublicOrigin.h>
+#include <anof/domain/maintenance/MaintenanceValues.h>
 #include <anof/domain/transfer/TransferValues.h>
 
 #include <cstddef>
@@ -11,7 +13,7 @@
 
 namespace anof {
 
-// 仅包含当前启动链路使用的配置；不引入 TOML、HTTP 或数据库实现类型。
+// 配置的公共默认值与受检范围；不引入 TOML、HTTP 或数据库实现类型。
 struct InstanceConfiguration {
     std::string listenAddress = "127.0.0.1";
     std::uint16_t port = 8080;
@@ -20,6 +22,11 @@ struct InstanceConfiguration {
     std::size_t httpInFlight = 128;
     double shutdownGraceSeconds = 30;
     DiskSafetyPolicy diskSafety;
+    bool webEnabled = false;
+    std::string publicOrigin;
+    std::vector<std::string> trustedProxies;
+    AuditRetentionDays auditRetentionDays = AuditRetentionDays::from(90).value();
+    AuditBatchSize auditBatchSize = AuditBatchSize::from(200).value();
 };
 
 // 成功取得后独占整个实例，析构释放；不得删除锁文件或以 PID 文件代替内核锁。
@@ -47,8 +54,8 @@ public:
 class InstanceMaintenance {
 public:
     virtual ~InstanceMaintenance() = default;
-    // 监听前的同步维护阶段。核对已有实例格式及元数据版本／完整性，并在返回前关闭维护连接。
-    // 不创建实例、账户或默认凭据，不静默升级／降级数据库；升级需要另行显式维护入口。
+    // 监听前的同步维护阶段。核对已有实例格式及元数据版本/完整性，并在返回前关闭维护连接。
+    // 不创建实例、账户或默认凭据，不静默升级/降级数据库；升级需要另行显式维护入口。
     virtual Result<void> verify(const InstanceLease& lease) = 0;
 };
 

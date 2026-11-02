@@ -1,10 +1,10 @@
 #pragma once
 
 #include <anof/application/ports/InstancePreparation.h>
-
-#include <utility>
-#include <array>
 #include <sys/stat.h>
+
+#include <array>
+#include <utility>
 
 namespace anof::infrastructure::system::detail {
 
@@ -17,6 +17,7 @@ public:
     OwnedFd(OwnedFd&& other) noexcept : fd_(std::exchange(other.fd_, -1)) {}
     OwnedFd& operator=(OwnedFd&& other) noexcept;
     int get() const noexcept { return fd_; }
+
 private:
     int fd_;
 };
@@ -33,6 +34,7 @@ struct InstanceDirectories {
 };
 
 ErrorCode filesystemError(int error) noexcept;
+Result<InstanceRoot> openControlledDirectory(const std::filesystem::path& root);
 Result<InstanceRoot> openInstanceRoot(const std::filesystem::path& root);
 Result<InstanceDirectories> openInstanceDirectories(const std::filesystem::path& root);
 // name 必须是单个普通路径组件；不创建。检查类型后才以读写模式打开，拒绝硬链接。

@@ -22,7 +22,8 @@ InstanceServer::InstanceServer(muduox::net::EventLoop& loop, PreparedInstance pr
       httpObservation_(std::move(httpObservation)), taskObservation_(std::move(taskObservation)),
       runtime_(loop, { prepared_.configuration.metadataQueue, 32 }), identity_(loop, runtime_.metadataExecutor()), drive_(loop, runtime_.metadataExecutor()),
       disk_(loop), uploads_(loop, runtime_.metadataExecutor(), disk_, prepared_.configuration.diskSafety),
-      maintenance_(loop, runtime_.metadataExecutor(), disk_, uploads_.blobAccess()) {
+      maintenance_(loop, runtime_.metadataExecutor(), disk_, uploads_.blobAccess()),
+      auditRetention_(loop, runtime_.metadataExecutor(), prepared_.configuration.auditRetentionDays, prepared_.configuration.auditBatchSize) {
     loop_.assertInLoopThread();
     identity_.setUserDisabledObserver([this](UserId user, bool confirmed){uploads_.notifyUserDisabled(user, confirmed);});
     if (!prepared_.lease || !prepared_.lease->root().is_absolute() || !crypto_.tokens || !crypto_.requests || !worker_ || !passwordWorker_ ||
@@ -32,7 +33,7 @@ InstanceServer::InstanceServer(muduox::net::EventLoop& loop, PreparedInstance pr
 InstanceServer::~InstanceServer() {
     loop_.assertInLoopThread();
     if (startCalled_ && !completed_) std::terminate();
-    // server／api、runtime、crypto 均先于 prepared_ 销毁；锁覆盖完整清理过程。
+    // server/api、runtime、crypto 均先于 prepared_ 销毁；锁覆盖完整清理过程。
 }
 
 Result<void> InstanceServer::start(MetadataExecutor::Started readyCallback, MetadataExecutor::Stopped stopped) {
@@ -83,6 +84,7 @@ void InstanceServer::transferInitialized(Result<void> result) {
         maintenance_.recover([this](auto restored) {
             if (!restored || stopCalled_) { requestStop(); notifyReady(restored ? Result<void>{ErrorCode::Retryable} : restored); return; }
             maintenance_.start();
+            auditRetention_.start();
             listen();
         });
     });
@@ -91,9 +93,9 @@ void InstanceServer::listen() {
     try {
         http::CreateDirectoryHandler handler(runtime_.dispatcher(), [this] { return ready(); }, taskObservation_);
         api_ = std::make_unique<http::HttpApi>(*crypto_.tokens, *crypto_.requests, [this] { return ready(); },
-            handler.stream(), identityDispatcher(), transferDispatcher(), driveDispatcher(), httpObservation_, http::HttpApiOptions{ prepared_.configuration.httpInFlight, 15, 30 });
+            handler.stream(), identityDispatcher(), transferDispatcher(), driveDispatcher(), prepared_.configuration, httpObservation_, http::HttpApiOptions{ prepared_.configuration.httpInFlight, 15, 30 });
         server_ = std::make_unique<muduox::net::HttpServer>(muduox::net::HttpServer::DeferredListen{}, &loop_,
-            muduox::net::InetAddress(prepared_.configuration.port, true), "anof");
+            muduox::net::InetAddress(prepared_.configuration.listenAddress, prepared_.configuration.port, prepared_.configuration.listenAddress == "::1"), "anof");
         api_->configure(*server_);
         const auto started = server_->tryStart();
         if (!started) {
@@ -129,6 +131,7 @@ void InstanceServer::requestStop() {
     if (stopCalled_) return;
     stopCalled_ = true;
     internal::shutdownTrace("instance", "stop_requested", this);
+    auditRetention_.requestStop([this] { stopMetadata(); });
     drive_.requestStop();
     maintenance_.requestStop([this] { stopDisk(); });
     identity_.requestStop();
@@ -155,12 +158,14 @@ void InstanceServer::stopDisk() {
 }
 void InstanceServer::stopMetadata() {
     // Drive任务由metadata停止流程退休，不能先等Drive再停止metadata形成循环等待。
-    if(!stopCalled_ || !identity_.stopped() || !uploads_.stopped() || !maintenance_.stopped() || !disk_.snapshot().stopped)return;
+    if(!stopCalled_ || !identity_.stopped() || !uploads_.stopped() || !maintenance_.stopped() || !auditRetention_.stopped() || !disk_.snapshot().stopped)return;
     internal::shutdownTrace("instance", "identity_stopped_start_metadata_stop", this);
     runtime_.requestStop();
     if (httpStarted_ && httpStopped_) (void)runtime_.markHttpStopped();
     finishIfStopped();
 }
+
+bool InstanceServer::auditRetentionPaused() const { loop_.assertInLoopThread(); return auditRetention_.paused(); }
 
 TransferDispatcher& InstanceServer::transferDispatcher() { loop_.assertInLoopThread(); return uploads_; }
 
@@ -170,7 +175,7 @@ IdentityDispatcher& InstanceServer::identityDispatcher() { loop_.assertInLoopThr
 void InstanceServer::finishIfStopped() {
     if (stopCalled_) internal::shutdownTrace("instance", "barriers", this,
         runtime_.state() == RuntimeState::Stopped, identity_.stopped(), httpStopped_);
-    if (completed_ || runtime_.state() != RuntimeState::Stopped || !identity_.stopped() || !drive_.stopped() || !uploads_.stopped() || !maintenance_.stopped() || !disk_.snapshot().stopped || !httpStopped_) return;
+    if (completed_ || runtime_.state() != RuntimeState::Stopped || !identity_.stopped() || !drive_.stopped() || !uploads_.stopped() || !maintenance_.stopped() || !auditRetention_.stopped() || !disk_.snapshot().stopped || !httpStopped_) return;
     completed_ = true;
     internal::shutdownTrace("instance", "all_stopped", this);
     auto callback = std::move(onStopped_);

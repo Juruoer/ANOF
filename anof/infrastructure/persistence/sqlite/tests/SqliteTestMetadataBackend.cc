@@ -18,7 +18,8 @@ namespace {
 
 // 绑定失败时绝不 step；所有值仍通过参数绑定进入测试库。
 Result<void> finish(SqliteStatement& statement, std::initializer_list<Result<void>> bindings) {
-    for (const auto& binding : bindings) if (!binding) return binding.error();
+    for (const auto& binding : bindings)
+        if (!binding) return binding.error();
     auto row = statement.step();
     if (!row) return row.error();
     if (row.value()) return ErrorCode::IntegrityError;
@@ -31,14 +32,15 @@ Result<void> seedDatabase(SqliteConnection& connection, const anof::testing::Met
     if (!deferred) return deferred.error();
     std::size_t userIndex = 0;
     for (const auto& user : seed.users) {
-        auto p = SqliteStatement::prepare(connection, "INSERT INTO users VALUES (?1, ?2, ?3, ?4, ?5, 'Fixture user', '"
-            "$argon2id$v=19$m=8192,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 1, 1, 0, 0)");
+        auto p = SqliteStatement::prepare(connection,
+                                          "INSERT INTO users VALUES (?1, ?2, ?3, ?4, ?5, 'Fixture user', '"
+                                          "$argon2id$v=19$m=8192,t=1,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', 1, 1, 0, 0)");
         if (!p) return p.error();
         auto& s = *p.value();
         if (user.principal.role != UserRole::Member && user.principal.role != UserRole::Administrator) return ErrorCode::IntegrityError;
         auto result = finish(s, { s.bindText(1, user.principal.userId.toString()),
-            s.bindInt64(2, user.principal.role == UserRole::Administrator ? 1 : 0), s.bindInt64(3, user.enabled ? 1 : 0),
-            s.bindInt64(4, user.principal.authEpoch.value()), s.bindText(5, "fixture_" + std::to_string(++userIndex)) });
+                                  s.bindInt64(2, user.principal.role == UserRole::Administrator ? 1 : 0), s.bindInt64(3, user.enabled ? 1 : 0),
+                                  s.bindInt64(4, user.principal.authEpoch.value()), s.bindText(5, "fixture_" + std::to_string(++userIndex)) });
         if (!result) return result.error();
     }
     for (const auto& session : seed.sessions) {
@@ -48,8 +50,8 @@ Result<void> seedDatabase(SqliteConnection& connection, const anof::testing::Met
         const auto expiry = session.expiresAt.time_since_epoch().count();
         if (expiry == std::numeric_limits<std::int64_t>::min()) return ErrorCode::IntegrityError;
         auto result = finish(s, { s.bindBlob(1, session.digest.bytes().data(), session.digest.bytes().size()),
-            s.bindText(2, session.userId.toString()), s.bindInt64(3, session.authEpoch.value()),
-            s.bindInt64(4, session.expiresAt.time_since_epoch().count()), s.bindInt64(5, session.revoked ? 1 : 0), s.bindInt64(6, expiry - 1) });
+                                  s.bindText(2, session.userId.toString()), s.bindInt64(3, session.authEpoch.value()),
+                                  s.bindInt64(4, session.expiresAt.time_since_epoch().count()), s.bindInt64(5, session.revoked ? 1 : 0), s.bindInt64(6, expiry - 1) });
         if (!result) return result.error();
     }
     for (const auto& space : seed.spaces) {
@@ -58,17 +60,17 @@ Result<void> seedDatabase(SqliteConnection& connection, const anof::testing::Met
         auto& s = *p.value();
         if (space.kind != SpaceKind::Private && space.kind != SpaceKind::Public) return ErrorCode::IntegrityError;
         auto result = finish(s, { s.bindText(1, space.id.toString()), s.bindInt64(2, space.kind == SpaceKind::Public ? 1 : 0),
-            space.ownerId ? s.bindText(3, space.ownerId->toString()) : s.bindNull(3), s.bindText(4, space.rootNodeId.toString()) });
+                                  space.ownerId ? s.bindText(3, space.ownerId->toString()) : s.bindNull(3), s.bindText(4, space.rootNodeId.toString()) });
         if (!result) return result.error();
     }
     for (const auto& blob : seed.blobs) {
-        BlobRecord record{ { blob.id, FileLength::from(blob.size.value()).value(), Sha256(blob.sha256) }, BlobState::Available, {}, {}, {}, {}, {} };
+        BlobRecord record{ { blob.id, FileLength::from(blob.size.value()).value(), Sha256(blob.sha256) }, BlobState::Available, {}, {}, {}, {}, {}, blob.size, {} };
         if (drive) {
             auto it = std::find_if(drive->blobRecords.begin(), drive->blobRecords.end(), [&](const auto& b) { return b.content.id == blob.id; });
             if (it == drive->blobRecords.end()) return ErrorCode::IntegrityError;
             record = *it;
         }
-        auto p = SqliteStatement::prepare(connection, "INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision,unreferenced_at,delete_started_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)");
+        auto p = SqliteStatement::prepare(connection, "INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision,unreferenced_at,delete_started_at,charged_bytes) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?2)");
         if (!p) return p.error();
         auto& q = *p.value();
         auto r = finish(q, { q.bindText(1, blob.id.toString()), q.bindInt64(2, blob.size.value()), q.bindBlob(3, blob.sha256.data(), 32), q.bindInt64(4, static_cast<int>(record.state)), q.bindInt64(5, record.createdAt.time_since_epoch().count()), q.bindInt64(6, record.updatedAt.time_since_epoch().count()), q.bindInt64(7, record.revision.value()), record.unreferencedAt ? q.bindInt64(8, record.unreferencedAt->time_since_epoch().count()) : q.bindNull(8), record.deleteStartedAt ? q.bindInt64(9, record.deleteStartedAt->time_since_epoch().count()) : q.bindNull(9) });
@@ -137,9 +139,7 @@ Result<void> seedDatabase(SqliteConnection& connection, const anof::testing::Met
     for (const auto& quota : seed.quotas) {
         const auto* contribution = std::get_if<PublicContributionQuota>(&quota.scope);
         const auto space = contribution ? contribution->spaceId : std::get<SpaceQuota>(quota.scope).spaceId;
-        auto p = SqliteStatement::prepare(connection, contribution ?
-            "INSERT INTO public_contribution_quotas(space_id, limit_bytes, limit_nodes, used_bytes, used_nodes, reserved_bytes, reserved_nodes, user_id, revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)" :
-            "INSERT INTO space_quotas VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)");
+        auto p = SqliteStatement::prepare(connection, contribution ? "INSERT INTO public_contribution_quotas(space_id, limit_bytes, limit_nodes, used_bytes, used_nodes, reserved_bytes, reserved_nodes, user_id, revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)" : "INSERT INTO space_quotas VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1)");
         if (!p) return p.error();
         auto& s = *p.value();
         if (contribution) {
@@ -148,8 +148,8 @@ Result<void> seedDatabase(SqliteConnection& connection, const anof::testing::Met
         }
         const auto& q = quota.state;
         auto result = finish(s, { s.bindText(1, space.toString()), s.bindInt64(2, q.limit.bytes.value()), s.bindInt64(3, q.limit.nodes.value()),
-            s.bindInt64(4, q.used.bytes.value()), s.bindInt64(5, q.used.nodes.value()),
-            s.bindInt64(6, q.reserved.bytes.value()), s.bindInt64(7, q.reserved.nodes.value()) });
+                                  s.bindInt64(4, q.used.bytes.value()), s.bindInt64(5, q.used.nodes.value()),
+                                  s.bindInt64(6, q.reserved.bytes.value()), s.bindInt64(7, q.reserved.nodes.value()) });
         if (!result) return result.error();
     }
     return connection.execute("INSERT INTO node_accounting SELECT 1,count(*),0,1 FROM nodes");
@@ -173,7 +173,7 @@ std::filesystem::path SqliteTestMetadataBackend::databasePath() const { return d
 
 Result<void> seedDriveMetadata(SqliteConnection& c, const anof::testing::DriveSeed& seed) { return seedDatabase(c, seed.transfer.metadata, &seed); }
 
-Result<void> seedTransferMetadata(SqliteConnection& c,const anof::testing::MetadataSeed& seed) {return seedDatabase(c,seed);}
+Result<void> seedTransferMetadata(SqliteConnection& c, const anof::testing::MetadataSeed& seed) { return seedDatabase(c, seed); }
 
 Result<void> SqliteTestMetadataBackend::reset(const anof::testing::MetadataSeed& seed) {
     std::error_code error;
@@ -202,7 +202,7 @@ Result<std::optional<anof::testing::NodeSeed>> SqliteTestMetadataBackend::readNo
     auto connection = SqliteConnection::open(databasePath(), { 0 }, SqliteOpenMode::Inspect);
     if (!connection) return connection.error();
     auto p = SqliteStatement::prepare(*connection.value(),
-        "SELECT id, space_id, parent_id, name, created_by, revision, created_at, updated_at, blob_id, trashed, kind FROM nodes WHERE id=?1");
+                                      "SELECT id, space_id, parent_id, name, created_by, revision, created_at, updated_at, blob_id, trashed, kind FROM nodes WHERE id=?1");
     if (!p) return p.error();
     auto& s = *p.value();
     auto bound = s.bindText(1, nodeId.toString());
@@ -243,9 +243,7 @@ Result<QuotaState> SqliteTestMetadataBackend::readQuota(const QuotaScope& scope)
     if (!connection) return connection.error();
     const auto* contribution = std::get_if<PublicContributionQuota>(&scope);
     const auto space = contribution ? contribution->spaceId : std::get<SpaceQuota>(scope).spaceId;
-    auto p = SqliteStatement::prepare(*connection.value(), contribution ?
-        "SELECT limit_bytes, limit_nodes, used_bytes, used_nodes, reserved_bytes, reserved_nodes FROM public_contribution_quotas WHERE space_id=?1 AND user_id=?2" :
-        "SELECT limit_bytes, limit_nodes, used_bytes, used_nodes, reserved_bytes, reserved_nodes FROM space_quotas WHERE space_id=?1");
+    auto p = SqliteStatement::prepare(*connection.value(), contribution ? "SELECT limit_bytes, limit_nodes, used_bytes, used_nodes, reserved_bytes, reserved_nodes FROM public_contribution_quotas WHERE space_id=?1 AND user_id=?2" : "SELECT limit_bytes, limit_nodes, used_bytes, used_nodes, reserved_bytes, reserved_nodes FROM space_quotas WHERE space_id=?1");
     if (!p) return p.error();
     auto& s = *p.value();
     auto bound = s.bindText(1, space.toString());
@@ -271,7 +269,7 @@ Result<std::vector<DirectoryCreatedEvent>> SqliteTestMetadataBackend::readAudit(
     auto connection = SqliteConnection::open(databasePath(), { 0 }, SqliteOpenMode::Inspect);
     if (!connection) return connection.error();
     auto p = SqliteStatement::prepare(*connection.value(),
-        "SELECT actor_id, space_id, node_id, parent_id, request_id, occurred_at, action FROM audit_events ORDER BY sequence");
+                                      "SELECT actor_id, space_id, node_id, parent_id, request_id, occurred_at, action FROM audit_events ORDER BY sequence");
     if (!p) return p.error();
     auto& s = *p.value();
     std::vector<DirectoryCreatedEvent> events;

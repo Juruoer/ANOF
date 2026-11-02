@@ -29,7 +29,7 @@ Result<AdminUserView> adminView(UserReader& users, SpaceReader& spaces, UserId i
     if (!space) return space.error();
     if (!space.value() || space.value()->kind != SpaceKind::Private || space.value()->ownerId != id)
         return ErrorCode::IntegrityError;
-    return AdminUserView{std::move(user).value(), space.value()->id};
+    return AdminUserView{ std::move(user).value(), space.value()->id };
 }
 Result<void> match(const AccountCondition& expected, const UserProfile& user) {
     auto value = std::get_if<UserCondition>(&expected);
@@ -48,7 +48,7 @@ Result<ManagedQuota> quota(UserReader& users, SpaceReader& spaces, QuotaReader& 
     }
     auto found = quotas.get(scope);
     if (!found) return found.error();
-    return ManagedQuota{scope, found.value()};
+    return ManagedQuota{ scope, found.value() };
 }
 }  // namespace
 Result<UserProfile> AccountService::execute(const RequestContext& context, UpdateDisplayNameCommand command) {
@@ -64,7 +64,7 @@ Result<UserProfile> AccountService::execute(const RequestContext& context, Updat
     auto changed = tx->users().setDisplayName(before.value().id, before.value().revision, std::move(command.displayName), clock_.now());
     if (!changed) return changed.error();
     if (changed.value().revision != before.value().revision) {
-        if (auto audited = tx->identityAudit().append({context.requestId, clock_.now(), DisplayNameChanged{before.value().id}}); !audited) return audited.error();
+        if (auto audited = tx->identityAudit().append({ context.requestId, clock_.now(), DisplayNameChanged{ before.value().id } }); !audited) return audited.error();
     }
     if (auto valid = recheck(*tx, context, clock_, actor.value()); !valid) return valid.error();
     if (auto committed = tx->commit(); !committed) return committed.error();
@@ -78,10 +78,9 @@ Result<Page<UserProfile, UserCursor>> AccountService::execute(const RequestConte
     auto actor = authorize(read->authorization(), context, clock_, true);
     if (!actor) return actor.error();
     if (command.after && command.after->userId != actor.value().userId) return ErrorCode::InvalidArgument;
-    auto page = read->users().list(command.size, command.after ? std::optional<UserListPosition>{command.after->position} : std::nullopt);
+    auto page = read->users().list(command.size, command.after ? std::optional<UserListPosition>{ command.after->position } : std::nullopt);
     if (!page) return page.error();
-    return Page<UserProfile, UserCursor>{std::move(page.value().items), page.value().next ?
-        std::optional<UserCursor>{{actor.value().userId, *page.value().next}} : std::nullopt};
+    return Page<UserProfile, UserCursor>{ std::move(page.value().items), page.value().next ? std::optional<UserCursor>{ { actor.value().userId, *page.value().next } } : std::nullopt };
 }
 Result<AdminUserView> AccountService::execute(const RequestContext& context, GetUserCommand command) {
     auto opened = store_.beginRead();
@@ -114,13 +113,12 @@ Result<AdminUserView> AccountService::execute(const RequestContext& context, Set
             auto revoked = tx->sessions().revokeAll(command.id, clock_.now());
             if (!revoked) return revoked.error();
         }
-        IdentityAction event = command.enabled ? IdentityAction{UserEnabled{actor.value().userId, command.id}} :
-            IdentityAction{UserDisabled{actor.value().userId, command.id}};
-        if (auto audited = tx->identityAudit().append({context.requestId, clock_.now(), event}); !audited) return audited.error();
+        IdentityAction event = command.enabled ? IdentityAction{ UserEnabled{ actor.value().userId, command.id } } : IdentityAction{ UserDisabled{ actor.value().userId, command.id } };
+        if (auto audited = tx->identityAudit().append({ context.requestId, clock_.now(), event }); !audited) return audited.error();
     }
     if (auto valid = recheck(*tx, context, clock_, actor.value()); !valid) return valid.error();
     if (auto committed = tx->commit(); !committed) return committed.error();
-    return AdminUserView{std::move(changed).value(), before.value().privateSpaceId};
+    return AdminUserView{ std::move(changed).value(), before.value().privateSpaceId };
 }
 Result<ManagedQuota> AccountService::execute(const RequestContext& context, GetQuotaCommand command) {
     auto opened = store_.beginRead();
@@ -146,11 +144,11 @@ Result<ManagedQuota> AccountService::execute(const RequestContext& context, SetQ
     auto changed = tx->quotas().setLimit(command.scope, expected->revision, command.limit);
     if (!changed) return changed.error();
     if (changed.value().revision != before.value().quota.revision) {
-        if (auto audited = tx->identityAudit().append({context.requestId, clock_.now(), QuotaChanged{actor.value().userId, command.scope}}); !audited) return audited.error();
+        if (auto audited = tx->identityAudit().append({ context.requestId, clock_.now(), QuotaChanged{ actor.value().userId, command.scope } }); !audited) return audited.error();
     }
     if (auto valid = recheck(*tx, context, clock_, actor.value()); !valid) return valid.error();
     if (auto committed = tx->commit(); !committed) return committed.error();
-    return ManagedQuota{command.scope, changed.value()};
+    return ManagedQuota{ command.scope, changed.value() };
 }
 Result<PasswordChangePreparation> AccountService::preparePasswordChange(const RequestContext& context, const AccountCondition& expected) {
     auto opened = store_.beginRead();
@@ -165,10 +163,10 @@ Result<PasswordChangePreparation> AccountService::preparePasswordChange(const Re
     auto password = read->users().findPasswordById(user.value().id);
     if (!password) return password.error();
     if (!password.value()) return ErrorCode::IntegrityError;
-    return PasswordChangePreparation{std::move(user.value().login), std::move(*password.value())};
+    return PasswordChangePreparation{ std::move(user.value().login), std::move(*password.value()) };
 }
 Result<void> AccountService::completePasswordChange(const RequestContext& context, const AccountCondition& expected,
-    const PasswordChangePreparation& prepared, std::optional<EncodedPasswordHash> hash) {
+                                                    const PasswordChangePreparation& prepared, std::optional<EncodedPasswordHash> hash) {
     auto opened = store_.beginWrite();
     if (!opened) return opened.error();
     auto tx = std::move(opened).value();
@@ -191,11 +189,11 @@ Result<void> AccountService::completePasswordChange(const RequestContext& contex
     // 最后一次调用方认证必须早于本操作递增 epoch 和撤销自身 Session。
     if (auto valid = recheck(*tx, context, clock_, actor.value()); !valid) return valid.error();
     auto changed = tx->users().replacePassword(actor.value().userId,
-        {prior.passwordVersion, prior.authEpoch, prior.userRevision}, *hash, clock_.now());
+                                               { prior.passwordVersion, prior.authEpoch, prior.userRevision }, *hash, clock_.now());
     if (!changed) return changed.error();
     auto revoked = tx->sessions().revokeAll(actor.value().userId, clock_.now());
     if (!revoked) return revoked.error();
-    if (auto audited = tx->identityAudit().append({context.requestId, clock_.now(), PasswordChanged{actor.value().userId}}); !audited) return audited.error();
+    if (auto audited = tx->identityAudit().append({ context.requestId, clock_.now(), PasswordChanged{ actor.value().userId } }); !audited) return audited.error();
     return tx->commit();
 }
 }  // namespace anof

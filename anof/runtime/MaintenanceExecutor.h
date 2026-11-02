@@ -10,13 +10,14 @@ public:
     ~MaintenanceExecutor();
     void recover(std::function<void(Result<void>)>);
     void start();
-    void tick(); // 与60秒单调定时器相同的有界入口，也供确定性测试调用。
+    void tick();  // 与60秒单调定时器相同的有界入口，也供确定性测试调用。
     void requestStop(std::function<void()>);
     bool stopped() const;
     bool busy() const;
     bool paused() const;
+
 private:
     struct Impl;
     std::shared_ptr<Impl> impl_;
 };
-}
+}  // namespace anof::runtime

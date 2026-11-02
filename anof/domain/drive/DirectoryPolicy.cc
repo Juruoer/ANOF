@@ -13,11 +13,17 @@ Result<void> validateDirectoryName(std::string_view name) {
         std::size_t extra = 0;
         std::uint32_t minimum = 0;
         if (first >= 0xc2 && first <= 0xdf) {
-            codepoint = first & 0x1f; extra = 1; minimum = 0x80;
+            codepoint = first & 0x1f;
+            extra = 1;
+            minimum = 0x80;
         } else if (first >= 0xe0 && first <= 0xef) {
-            codepoint = first & 0x0f; extra = 2; minimum = 0x800;
+            codepoint = first & 0x0f;
+            extra = 2;
+            minimum = 0x800;
         } else if (first >= 0xf0 && first <= 0xf4) {
-            codepoint = first & 0x07; extra = 3; minimum = 0x10000;
+            codepoint = first & 0x07;
+            extra = 3;
+            minimum = 0x10000;
         } else if (first >= 0x80) {
             return ErrorCode::InvalidName;
         }

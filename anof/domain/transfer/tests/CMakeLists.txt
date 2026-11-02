@@ -1,1 +1,2 @@
 anof_add_unit_test(anof_transfer_values_unittest TransferValues_unittest.cc)
+set_tests_properties(anof_transfer_values_unittest PROPERTIES TIMEOUT 30 LABELS "unit;domain;transfer")

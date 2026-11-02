@@ -1,17 +1,22 @@
-# 只编译契约案例，未接入真实后端时不注册为通过的 CTest。
+# 共享案例编译为对象库，由具体后端工厂链接并注册 CTest。
 add_library(anof_persistence_contract_cases OBJECT MetadataContract_unittest.cc)
 target_link_libraries(anof_persistence_contract_cases PUBLIC anof_application Boost::unit_test_framework)
 target_compile_definitions(anof_persistence_contract_cases PUBLIC BOOST_TEST_DYN_LINK)
 target_compile_options(anof_persistence_contract_cases PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 
-# 真实传输后端工厂接入前只编译，不注册虚假的通过结果。
+# 传输契约与后端工厂分开编译。
 add_library(anof_transfer_contract_cases OBJECT TransferContract_unittest.cc)
 target_link_libraries(anof_transfer_contract_cases PUBLIC anof_application Boost::unit_test_framework)
 target_compile_definitions(anof_transfer_contract_cases PUBLIC BOOST_TEST_DYN_LINK)
 target_compile_options(anof_transfer_contract_cases PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 
-# 第四步真实Drive后端接入前只编译，不注册为通过的CTest。
+# 文件树契约复用同一组跨后端语义断言。
 add_library(anof_drive_contract_cases OBJECT DriveContract_unittest.cc)
 target_link_libraries(anof_drive_contract_cases PUBLIC anof_application Boost::unit_test_framework)
 target_compile_definitions(anof_drive_contract_cases PUBLIC BOOST_TEST_DYN_LINK)
 target_compile_options(anof_drive_contract_cases PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+add_library(anof_maintenance_contract_cases OBJECT MaintenanceContract_unittest.cc)
+target_link_libraries(anof_maintenance_contract_cases PUBLIC anof_application Boost::unit_test_framework)
+target_compile_definitions(anof_maintenance_contract_cases PUBLIC BOOST_TEST_DYN_LINK)
+target_compile_options(anof_maintenance_contract_cases PRIVATE -Wall -Wextra -Wconversion -Wshadow)

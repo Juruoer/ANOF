@@ -121,7 +121,7 @@ BOOST_AUTO_TEST_CASE(real_disk_writer_backpressure_recovery_and_disable_cleanup)
             auto response = f.exchange("PATCH " + url + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nAuthorization: Bearer " + token +
                                        "\r\nContent-Type: application/offset+octet-stream\r\nContent-Length: 65536\r\nUpload-Offset: " + std::to_string(offset) + "\r\n\r\n" + chunk);
             BOOST_REQUIRE_MESSAGE(response.find("HTTP/1.1 204 ") == 0,
-                "PATCH " << url << " offset=" << offset << " length=" << chunk.size() << " response=" << response);
+                                  "PATCH " << url << " offset=" << offset << " length=" << chunk.size() << " response=" << response);
         }
         f.call("POST", url + "/complete", 202, Json::object(), token);
         for (unsigned i = 0; i < 300; ++i) {

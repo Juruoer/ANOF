@@ -21,8 +21,9 @@ bool integer(const toml::node& node, T& destination) {
 }  // namespace
 Result<InstanceConfiguration> parseConfiguration(std::string_view text, bool requireComplete) {
     try {
+        if (text.size() > 65536) return ErrorCode::InvalidArgument;
         const auto table = toml::parse(text);
-        if (requireComplete && table.size() != 8) return ErrorCode::InvalidArgument;
+        if (requireComplete && table.size() != 13) return ErrorCode::InvalidArgument;
         InstanceConfiguration configuration;
         for (const auto& [key, node] : table) {
             const auto name = key.str();
@@ -34,6 +35,34 @@ Result<InstanceConfiguration> parseConfiguration(std::string_view text, bool req
                 const auto value = node.value_exact<bool>();
                 if (!value) return ErrorCode::InvalidArgument;
                 configuration.developmentHttp = *value;
+            } else if (name == "web_enabled") {
+                const auto value = node.value_exact<bool>();
+                if (!value) return ErrorCode::InvalidArgument;
+                configuration.webEnabled = *value;
+            } else if (name == "public_origin") {
+                const auto value = node.value_exact<std::string>();
+                if (!value) return ErrorCode::InvalidArgument;
+                configuration.publicOrigin = *value;
+            } else if (name == "trusted_proxies") {
+                const auto* values = node.as_array();
+                if (!values || values->size() > 2) return ErrorCode::InvalidArgument;
+                for (const auto& item : *values) {
+                    const auto value = item.value_exact<std::string>();
+                    if (!value) return ErrorCode::InvalidArgument;
+                    configuration.trustedProxies.push_back(*value);
+                }
+            } else if (name == "audit_retention_days") {
+                const auto value = node.value_exact<std::int64_t>();
+                if (!value) return ErrorCode::InvalidArgument;
+                auto parsed = AuditRetentionDays::from(*value);
+                if (!parsed) return parsed.error();
+                configuration.auditRetentionDays = parsed.value();
+            } else if (name == "audit_batch_size") {
+                const auto value = node.value_exact<std::int64_t>();
+                if (!value) return ErrorCode::InvalidArgument;
+                auto parsed = AuditBatchSize::from(*value);
+                if (!parsed) return parsed.error();
+                configuration.auditBatchSize = parsed.value();
             } else if (name == "port") {
                 if (!integer(node, configuration.port)) return ErrorCode::InvalidArgument;
             } else if (name == "metadata_queue") {
@@ -75,9 +104,19 @@ Result<std::string> serializeConfiguration(const InstanceConfiguration& configur
     try {
         std::ostringstream text;
         text.imbue(std::locale::classic());
-        text << "listen_address = \"127.0.0.1\"\n";
+        text << "listen_address = " << std::quoted(configuration.listenAddress) << '\n';
         text << "port = " << configuration.port << '\n';
-        text << "development_http = true\n";
+        text << "development_http = " << (configuration.developmentHttp ? "true" : "false") << '\n';
+        text << "web_enabled = " << (configuration.webEnabled ? "true" : "false") << '\n';
+        text << "public_origin = " << std::quoted(configuration.publicOrigin) << '\n';
+        text << "trusted_proxies = [";
+        for (std::size_t i = 0; i < configuration.trustedProxies.size(); ++i) {
+            if (i) text << ", ";
+            text << std::quoted(configuration.trustedProxies[i]);
+        }
+        text << "]\n";
+        text << "audit_retention_days = " << configuration.auditRetentionDays.value() << '\n';
+        text << "audit_batch_size = " << configuration.auditBatchSize.value() << '\n';
         text << "metadata_queue = " << configuration.metadataQueue << '\n';
         text << "http_in_flight = " << configuration.httpInFlight << '\n';
         text << "shutdown_grace_seconds = " << std::setprecision(std::numeric_limits<double>::max_digits10) << configuration.shutdownGraceSeconds << '\n';
@@ -89,6 +128,8 @@ Result<std::string> serializeConfiguration(const InstanceConfiguration& configur
 bool sameConfiguration(const InstanceConfiguration& a, const InstanceConfiguration& b) {
     return a.listenAddress == b.listenAddress && a.port == b.port && a.developmentHttp == b.developmentHttp &&
            a.metadataQueue == b.metadataQueue && a.httpInFlight == b.httpInFlight && a.shutdownGraceSeconds == b.shutdownGraceSeconds &&
-           a.diskSafety.minimum == b.diskSafety.minimum && a.diskSafety.percent == b.diskSafety.percent;
+           a.diskSafety.minimum == b.diskSafety.minimum && a.diskSafety.percent == b.diskSafety.percent &&
+           a.webEnabled == b.webEnabled && a.publicOrigin == b.publicOrigin && a.trustedProxies == b.trustedProxies &&
+           a.auditRetentionDays == b.auditRetentionDays && a.auditBatchSize == b.auditBatchSize;
 }
 }  // namespace anof::infrastructure::config::detail

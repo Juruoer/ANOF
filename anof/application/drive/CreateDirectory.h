@@ -1,7 +1,7 @@
 #pragma once
 
-#include <anof/application/ports/MetadataStore.h>
 #include <anof/application/RequestContext.h>
+#include <anof/application/ports/MetadataStore.h>
 #include <anof/application/ports/NodeIdGenerator.h>
 
 namespace anof {
@@ -17,7 +17,7 @@ struct CreateDirectoryResult {
     Revision parentRevision;
 };
 
-// 仅供可信调用方记录／核对失败；候选 ID 不代表提交成功，也不是幂等键。
+// 仅供可信调用方记录/核对失败；候选 ID 不代表提交成功，也不是幂等键。
 struct CreateDirectoryAttempt {
     NodeId candidateNodeId;
     RequestId requestId;

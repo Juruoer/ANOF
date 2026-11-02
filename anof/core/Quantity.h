@@ -11,6 +11,7 @@ namespace anof {
 template <typename Tag, std::int64_t Minimum = 0, std::int64_t Maximum = std::numeric_limits<std::int64_t>::max()>
 class Quantity {
     static_assert(0 <= Minimum && Minimum <= Maximum);
+
 public:
     Quantity() = default;
     static Result<Quantity> from(std::int64_t value) {

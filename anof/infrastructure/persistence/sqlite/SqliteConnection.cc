@@ -66,7 +66,8 @@ Result<void> SqliteConnection::configure(SqliteOptions options, SqliteOpenMode m
     if (code != SQLITE_OK) return recordError(code, SqliteOperation::Configure);
     auto functions = registerSqliteFunctions(handle_);
     if (!functions) return functions.error();
-    auto configured = execute(mode == SqliteOpenMode::Inspect
+    maintenanceCopy_ = mode == SqliteOpenMode::MaintenanceCopy;
+    auto configured = execute((mode == SqliteOpenMode::Inspect || maintenanceCopy_)
         ? "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;"
         : "PRAGMA foreign_keys=ON; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
     if (!configured) return configured.error();
@@ -87,7 +88,7 @@ Result<void> SqliteConnection::verifySettings() {
     if (!row.value()) return ErrorCode::InternalError;
     auto mode = statement.text(0);
     if (!mode) return mode.error();
-    if (mode.value() != "wal") return ErrorCode::InternalError;
+    if (mode.value() != "wal" && !(maintenanceCopy_ && mode.value() == "delete")) return ErrorCode::InternalError;
     return {};
 }
 

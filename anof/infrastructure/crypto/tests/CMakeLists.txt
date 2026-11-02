@@ -1,40 +1,39 @@
-add_executable(anof_session_token_codec_unittest SessionTokenCodec_unittest.cc)
-target_link_libraries(anof_session_token_codec_unittest PRIVATE
-    anof_infrastructure PkgConfig::Sodium Boost::unit_test_framework
-)
-target_compile_definitions(anof_session_token_codec_unittest PRIVATE BOOST_TEST_DYN_LINK)
-target_compile_options(anof_session_token_codec_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
-add_test(NAME anof_session_token_codec_unittest COMMAND anof_session_token_codec_unittest)
+anof_add_unit_test(anof_session_token_codec_unittest SessionTokenCodec_unittest.cc)
 set_tests_properties(anof_session_token_codec_unittest PROPERTIES TIMEOUT 15 LABELS "unit;crypto")
-
-add_executable(anof_request_identity_unittest RequestIdentity_unittest.cc)
-target_link_libraries(anof_request_identity_unittest PRIVATE
-    anof_infrastructure PkgConfig::Sodium Boost::unit_test_framework
+target_link_libraries(anof_session_token_codec_unittest PRIVATE
+        anof_infrastructure PkgConfig::Sodium
 )
-target_compile_definitions(anof_request_identity_unittest PRIVATE BOOST_TEST_DYN_LINK)
-target_compile_options(anof_request_identity_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
-add_test(NAME anof_request_identity_unittest COMMAND anof_request_identity_unittest)
+target_compile_options(anof_session_token_codec_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+anof_add_unit_test(anof_request_identity_unittest RequestIdentity_unittest.cc)
 set_tests_properties(anof_request_identity_unittest PROPERTIES TIMEOUT 15 LABELS "unit;crypto")
-
-add_executable(anof_node_id_generator_unittest NodeIdGenerator_unittest.cc)
-target_link_libraries(anof_node_id_generator_unittest PRIVATE
-    anof_infrastructure Boost::unit_test_framework
+target_link_libraries(anof_request_identity_unittest PRIVATE
+        anof_infrastructure PkgConfig::Sodium
 )
-target_compile_definitions(anof_node_id_generator_unittest PRIVATE BOOST_TEST_DYN_LINK)
-target_compile_options(anof_node_id_generator_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
-add_test(NAME anof_node_id_generator_unittest COMMAND anof_node_id_generator_unittest)
+target_compile_options(anof_request_identity_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+anof_add_unit_test(anof_node_id_generator_unittest NodeIdGenerator_unittest.cc)
 set_tests_properties(anof_node_id_generator_unittest PROPERTIES TIMEOUT 15 LABELS "unit;crypto")
+target_link_libraries(anof_node_id_generator_unittest PRIVATE
+        anof_infrastructure
+)
+target_compile_options(anof_node_id_generator_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 
-add_executable(anof_password_hasher_unittest PasswordHasher_unittest.cc)
-target_link_libraries(anof_password_hasher_unittest PRIVATE anof_infrastructure PkgConfig::Sodium Boost::unit_test_framework)
-target_compile_definitions(anof_password_hasher_unittest PRIVATE BOOST_TEST_DYN_LINK)
-target_compile_options(anof_password_hasher_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
-add_test(NAME anof_password_hasher_unittest COMMAND anof_password_hasher_unittest)
+anof_add_unit_test(anof_password_hasher_unittest PasswordHasher_unittest.cc)
 set_tests_properties(anof_password_hasher_unittest PROPERTIES TIMEOUT 30 LABELS "unit;crypto")
+target_link_libraries(anof_password_hasher_unittest PRIVATE anof_infrastructure PkgConfig::Sodium)
+target_compile_options(anof_password_hasher_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 
-add_executable(anof_m2_credentials_unittest M2Credentials_unittest.cc)
-target_link_libraries(anof_m2_credentials_unittest PRIVATE anof_infrastructure PkgConfig::Sodium Boost::unit_test_framework)
-target_compile_definitions(anof_m2_credentials_unittest PRIVATE BOOST_TEST_DYN_LINK)
-target_compile_options(anof_m2_credentials_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
-add_test(NAME anof_m2_credentials_unittest COMMAND anof_m2_credentials_unittest)
+anof_add_unit_test(anof_m2_credentials_unittest M2Credentials_unittest.cc)
 set_tests_properties(anof_m2_credentials_unittest PROPERTIES TIMEOUT 15 LABELS "unit;crypto")
+target_link_libraries(anof_m2_credentials_unittest PRIVATE anof_infrastructure PkgConfig::Sodium)
+target_compile_options(anof_m2_credentials_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
+
+anof_add_unit_test(anof_maintenance_id_unittest MaintenanceId_unittest.cc)
+set_tests_properties(anof_maintenance_id_unittest PROPERTIES TIMEOUT 15 LABELS "unit;crypto")
+target_sources(anof_maintenance_id_unittest PRIVATE
+        ../SodiumTransferIdGenerator.cc
+        ../internal/SodiumSupport.cc
+)
+target_link_libraries(anof_maintenance_id_unittest PRIVATE anof_application PkgConfig::Sodium)
+target_compile_options(anof_maintenance_id_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)

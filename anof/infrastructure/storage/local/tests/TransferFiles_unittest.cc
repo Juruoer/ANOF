@@ -161,7 +161,10 @@ public:
     int sync(int fd, bool data) override {
         ++syncCalls;
         synced.push_back(std::filesystem::read_symlink("/proc/self/fd/" + std::to_string(fd)).string());
-        if (failSyncAt == syncCalls) { errno = EIO; return -1; }
+        if (failSyncAt == syncCalls) {
+            errno = EIO;
+            return -1;
+        }
         if (mode == SyncFailure || (mode == DirectorySyncFailure && !data)) {
             errno = EIO;
             return -1;
@@ -263,7 +266,6 @@ BOOST_AUTO_TEST_CASE(post_publish_sync_failure_and_handle_cleanup_preserve_evide
     BOOST_CHECK_EQUAL(count(), before);
 }
 
-
 BOOST_AUTO_TEST_CASE(publication_recovery_syncs_every_required_entry_and_retries) {
     Fixture f;
     auto faults = std::make_shared<Faults>();
@@ -271,7 +273,9 @@ BOOST_AUTO_TEST_CASE(publication_recovery_syncs_every_required_entry_and_retries
     auto source = take(f.store->create(id<UploadId>()));
     TransferBlock block;
     block.size = 3;
-    block.bytes[0] = 'a'; block.bytes[1] = 'b'; block.bytes[2] = 'c';
+    block.bytes[0] = 'a';
+    block.bytes[1] = 'b';
+    block.bytes[2] = 'c';
     ok(f.store->write(*source, {}, block));
     faults->mode = Faults::AfterPublishSync;
     BOOST_CHECK(std::get<TransferFileError>(f.store->publish(id<UploadId>(), id<BlobId>())) == TransferFileError::UnknownEffect);
@@ -286,7 +290,8 @@ BOOST_AUTO_TEST_CASE(publication_recovery_syncs_every_required_entry_and_retries
     ok(f.store->updateHash(*hash, block));
     BOOST_CHECK_EQUAL(take(f.store->finishHash(std::move(hash))).toString(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     for (unsigned point = 1; point <= 4; ++point) {
-        faults->syncCalls = 0; faults->failSyncAt = point;
+        faults->syncCalls = 0;
+        faults->failSyncAt = point;
         BOOST_CHECK(std::get<TransferFileError>(f.store->syncPublication(id<UploadId>(), id<BlobId>())) == TransferFileError::UnknownEffect);
     }
     faults->failSyncAt = 0;
@@ -296,8 +301,8 @@ BOOST_AUTO_TEST_CASE(publication_recovery_syncs_every_required_entry_and_retries
     for (int i = 0; i < 2; ++i) {
         faults->synced.clear();
         ok(f.store->syncPublication(id<UploadId>(), id<BlobId>()));
-        const std::vector<std::string> expected{objectPath.string(), (f.root/".anof/objects/12").string(),
-            (f.root/".anof/uploads").string(), (f.root/".anof/objects").string()};
+        const std::vector<std::string> expected{ objectPath.string(), (f.root / ".anof/objects/12").string(),
+                                                 (f.root / ".anof/uploads").string(), (f.root / ".anof/objects").string() };
         BOOST_CHECK_EQUAL_COLLECTIONS(faults->synced.begin(), faults->synced.end(), expected.begin(), expected.end());
     }
     BOOST_REQUIRE_EQUAL(lstat(objectPath.c_str(), &after), 0);

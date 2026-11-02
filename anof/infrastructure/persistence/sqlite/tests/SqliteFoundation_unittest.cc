@@ -1,11 +1,9 @@
 #define BOOST_TEST_MODULE AnofSqliteFoundation
-#include <boost/test/unit_test.hpp>
-
 #include <anof/infrastructure/persistence/sqlite/SqliteSchema.h>
 #include <anof/infrastructure/persistence/sqlite/SqliteValue.h>
-
 #include <sqlite3.h>
 
+#include <boost/test/unit_test.hpp>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -43,6 +41,7 @@ public:
         BOOST_REQUIRE(result);
         return std::move(result).value();
     }
+
 private:
     std::filesystem::path directory_;
 };
@@ -81,17 +80,21 @@ std::string quoted(const char* value) { return "'" + std::string(value) + "'"; }
 Result<void> insertNode(SqliteConnection& connection, const char* id, std::string_view name,
                         bool file = false, bool trashed = false, const char* parent = kRoot) {
     auto statement = prepare(connection,
-        "INSERT INTO nodes(id, space_id, parent_id, name, kind, created_by, blob_id, revision, trashed, created_at, updated_at) "
-        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, 0, 0)");
+                             "INSERT INTO nodes(id, space_id, parent_id, name, kind, created_by, blob_id, revision, trashed, created_at, updated_at) "
+                             "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 1, ?8, 0, 0)");
     BOOST_REQUIRE(statement->bindText(1, id));
     BOOST_REQUIRE(statement->bindText(2, kSpace));
-    if (parent) BOOST_REQUIRE(statement->bindText(3, parent));
-    else BOOST_REQUIRE(statement->bindNull(3));
+    if (parent)
+        BOOST_REQUIRE(statement->bindText(3, parent));
+    else
+        BOOST_REQUIRE(statement->bindNull(3));
     BOOST_REQUIRE(statement->bindText(4, name));
     BOOST_REQUIRE(statement->bindInt64(5, file ? 1 : 0));
     BOOST_REQUIRE(statement->bindText(6, kUser));
-    if (file) BOOST_REQUIRE(statement->bindText(7, kBlob));
-    else BOOST_REQUIRE(statement->bindNull(7));
+    if (file)
+        BOOST_REQUIRE(statement->bindText(7, kBlob));
+    else
+        BOOST_REQUIRE(statement->bindNull(7));
     BOOST_REQUIRE(statement->bindInt64(8, trashed ? 1 : 0));
     auto row = statement->step();
     if (!row) return row.error();
@@ -104,7 +107,7 @@ void seed(SqliteConnection& connection) {
     BOOST_REQUIRE(connection.execute("INSERT INTO users VALUES (" + quoted(kUser) + ", 1, 1, 0, 'admin', 'Administrator', '" + std::string(kHash) + "', 1, 1, 0, 0)"));
     BOOST_REQUIRE(connection.execute("INSERT INTO spaces VALUES (" + quoted(kSpace) + ", 1, NULL, " + quoted(kRoot) + ")"));
     BOOST_REQUIRE(insertNode(connection, kRoot, "", false, false, nullptr));
-    BOOST_REQUIRE(connection.execute("INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision) VALUES (" + quoted(kBlob) + ", 0, zeroblob(32),0,0,0,1)"));
+    BOOST_REQUIRE(connection.execute("INSERT INTO blobs(id,size,sha256,state,created_at,updated_at,revision,charged_bytes) VALUES (" + quoted(kBlob) + ", 0, zeroblob(32),0,0,0,1,0)"));
     BOOST_REQUIRE(connection.commit());
 }
 
@@ -188,9 +191,9 @@ BOOST_AUTO_TEST_CASE(value_decoding_rejects_corrupt_persistent_values) {
     Database database;
     auto connection = database.raw();
     auto statement = prepare(*connection,
-        "SELECT '00000000-0000-4000-8000-00000000000a', '00000000-0000-4000-8000-00000000000A', "
-        "'00000000-0000-0000-0000-000000000000', -1, 0, 2, zeroblob(32), zeroblob(31), "
-        "1099511627776, 9223372036854775807, 1.5, -9223372036854775808");
+                             "SELECT '00000000-0000-4000-8000-00000000000a', '00000000-0000-4000-8000-00000000000A', "
+                             "'00000000-0000-0000-0000-000000000000', -1, 0, 2, zeroblob(32), zeroblob(31), "
+                             "1099511627776, 9223372036854775807, 1.5, -9223372036854775808");
     BOOST_REQUIRE(statement->step());
     BOOST_REQUIRE(readId<NodeId>(*statement, 0));
     errorIs(readId<NodeId>(*statement, 1), ErrorCode::IntegrityError);
@@ -210,7 +213,8 @@ BOOST_AUTO_TEST_CASE(value_decoding_rejects_corrupt_persistent_values) {
 
 BOOST_AUTO_TEST_CASE(schema_rejects_unknown_definition_and_missing_objects) {
     const std::pair<const char*, ErrorCode> changes[] = {
-        { "UPDATE schema_info SET version=5", ErrorCode::IntegrityError },
+        { "UPDATE schema_info SET version=6", ErrorCode::IntegrityError },
+        { "UPDATE schema_info SET version=4", ErrorCode::IntegrityError },
         { "UPDATE schema_info SET version=1", ErrorCode::IntegrityError },
         { "UPDATE schema_info SET definition='changed'", ErrorCode::IntegrityError },
         { "DELETE FROM schema_info", ErrorCode::IntegrityError },
@@ -316,7 +320,7 @@ BOOST_AUTO_TEST_CASE(schema_types_quota_and_blob_constraints_reject_invalid_data
     errorIs(connection->execute("UPDATE nodes SET revision=0"), ErrorCode::IntegrityError);
     errorIs(connection->execute("UPDATE nodes SET blob_id=" + quoted(kBlob)), ErrorCode::IntegrityError);
     BOOST_REQUIRE(connection->execute("INSERT INTO space_quotas VALUES (" + quoted(kSpace) +
-        ", 9223372036854775807, 10, 1099511627776, 1, 0, 9, 1)"));
+                                      ", 9223372036854775807, 10, 1099511627776, 1, 0, 9, 1)"));
     errorIs(connection->execute("UPDATE space_quotas SET used_nodes=2"), ErrorCode::IntegrityError);
     errorIs(connection->execute("UPDATE space_quotas SET used_bytes=9223372036854775807, reserved_bytes=1"), ErrorCode::IntegrityError);
     BOOST_REQUIRE(connection->execute("UPDATE space_quotas SET used_bytes=9223372036854775807"));
@@ -389,7 +393,7 @@ BOOST_AUTO_TEST_CASE(schema2_identity_values_reject_invalid_encodings_and_ranges
     Database database;
     auto connection = database.current();
     seed(*connection);
-    BOOST_TEST(scalar(*connection, "SELECT version FROM schema_info") == 4);
+    BOOST_TEST(scalar(*connection, "SELECT version FROM schema_info") == 5);
     BOOST_TEST(scalar(*connection, "SELECT count(*) FROM instance_settings") == 0);
     // 未引导库仅供 schema 层测试；没有管理员空间完整性的生产通过结论。
     for (const char* change : {
@@ -407,7 +411,7 @@ BOOST_AUTO_TEST_CASE(schema2_identity_values_reject_invalid_encodings_and_ranges
         BOOST_REQUIRE(s->bindText(3, hash));
         return s->step();
     };
-    for (const auto& login : { std::string("Admin"), std::string("ab"), std::string("1abc"), std::string("abc "), std::string("a.b"), std::string("a\0bc",4), std::string(33,'a'), std::string("admin") }) {
+    for (const auto& login : { std::string("Admin"), std::string("ab"), std::string("1abc"), std::string("abc "), std::string("a.b"), std::string("a\0bc", 4), std::string(33, 'a'), std::string("admin") }) {
         errorIs(insert(login, kHash), ErrorCode::IntegrityError);
     }
     for (const char* parameter : { "m=262145,t=1,p=1", "m=8192,t=11,p=1", "m=8192,t=1,p=2", "m=7,t=1,p=1" }) {
@@ -420,16 +424,17 @@ BOOST_AUTO_TEST_CASE(schema2_identity_values_reject_invalid_encodings_and_ranges
     BOOST_REQUIRE(verifySqliteSchema(*connection));
 }
 
-BOOST_AUTO_TEST_CASE(schema2_sessions_enforce_bearer_and_temporal_shape) {
+BOOST_AUTO_TEST_CASE(schema5_sessions_enforce_modes_and_temporal_shape) {
     Database database;
     auto connection = database.current();
     seed(*connection);
     const auto sql = "INSERT INTO sessions VALUES(zeroblob(32)," + quoted(kUser) + ",0,10,0,0,'bearer')";
     BOOST_REQUIRE(connection->execute(sql));
-    for (const char* change : { "credential_mode='cookie'", "credential_mode=''", "created_at=10", "expires_at=-1", "revoked=2", "auth_epoch=-1", "token_hash=zeroblob(31)", "created_at=0.5" }) {
+    for (const char* change : { "credential_mode='unknown'", "credential_mode=''", "created_at=10", "expires_at=-1", "revoked=2", "auth_epoch=-1", "token_hash=zeroblob(31)", "created_at=0.5" }) {
         errorIs(connection->execute(std::string("UPDATE sessions SET ") + change), ErrorCode::IntegrityError);
     }
     errorIs(connection->execute(sql), ErrorCode::IntegrityError);
+    BOOST_REQUIRE(connection->execute("UPDATE sessions SET credential_mode='cookie'"));
     BOOST_REQUIRE(verifySqliteSchema(*connection));
 }
 
@@ -503,7 +508,7 @@ BOOST_AUTO_TEST_CASE(verify_only_rejects_legacy_without_changing_file_or_journal
     Database database;
     sqlite3* raw = nullptr;
     BOOST_REQUIRE_EQUAL(sqlite3_open(database.path().c_str(), &raw), SQLITE_OK);
-    const int created = sqlite3_exec(raw, "CREATE TABLE schema_migrations(version INTEGER); INSERT INTO schema_migrations VALUES(1)", nullptr,nullptr,nullptr);
+    const int created = sqlite3_exec(raw, "CREATE TABLE schema_migrations(version INTEGER); INSERT INTO schema_migrations VALUES(1)", nullptr, nullptr, nullptr);
     const int closed = sqlite3_close(raw);
     BOOST_REQUIRE_EQUAL(created, SQLITE_OK);
     BOOST_REQUIRE_EQUAL(closed, SQLITE_OK);
@@ -527,7 +532,9 @@ BOOST_AUTO_TEST_CASE(verify_only_rejects_legacy_without_changing_file_or_journal
 
 BOOST_AUTO_TEST_CASE(exclusive_creation_rejects_even_empty_existing_files) {
     Database database;
-    { std::ofstream file(database.path()); }
+    {
+        std::ofstream file(database.path());
+    }
     errorIs(createSqliteDatabase(database.path()), ErrorCode::Conflict);
     BOOST_TEST(std::filesystem::file_size(database.path()) == 0);
     auto missing = database.path().parent_path() / "absent" / "db";
@@ -536,7 +543,10 @@ BOOST_AUTO_TEST_CASE(exclusive_creation_rejects_even_empty_existing_files) {
     std::filesystem::remove(database.path());
     for (const char* suffix : { "-wal", "-shm", "-journal" }) {
         const auto sidecar = database.path().string() + suffix;
-        { std::ofstream file(sidecar); file << "preserve"; }
+        {
+            std::ofstream file(sidecar);
+            file << "preserve";
+        }
         errorIs(createSqliteDatabase(database.path()), ErrorCode::Conflict);
         BOOST_CHECK(!std::filesystem::exists(database.path()));
         BOOST_TEST(std::filesystem::file_size(sidecar) == 8);

@@ -1,10 +1,17 @@
 anof_add_unit_test(anof_runtime_unittest Runtime_unittest.cc)
+set_tests_properties(anof_runtime_unittest PROPERTIES TIMEOUT 30 LABELS "unit;runtime")
 target_link_libraries(anof_runtime_unittest PRIVATE anof_runtime)
 target_compile_options(anof_runtime_unittest PRIVATE -Wall -Wextra -Wconversion -Wshadow)
 
 anof_add_unit_test(anof_authentication_limiter_unittest AuthenticationLimiter_unittest.cc)
+set_tests_properties(anof_authentication_limiter_unittest PROPERTIES TIMEOUT 30 LABELS "unit;runtime")
 target_link_libraries(anof_authentication_limiter_unittest PRIVATE anof_runtime)
 
 anof_add_unit_test(anof_disk_executor_unittest DiskExecutor_unittest.cc)
+set_tests_properties(anof_disk_executor_unittest PROPERTIES TIMEOUT 30 LABELS "unit;runtime")
 target_include_directories(anof_disk_executor_unittest PRIVATE ${PROJECT_SOURCE_DIR})
 target_link_libraries(anof_disk_executor_unittest PRIVATE anof_runtime)
+
+anof_add_unit_test(anof_log_sink_unittest LogSink_unittest.cc)
+set_tests_properties(anof_log_sink_unittest PROPERTIES TIMEOUT 30 LABELS "integration;runtime;logging;security")
+target_link_libraries(anof_log_sink_unittest PRIVATE anof_runtime nlohmann_json::nlohmann_json)

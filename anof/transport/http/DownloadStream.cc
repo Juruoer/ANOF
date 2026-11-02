@@ -60,7 +60,11 @@ void DownloadState::open(TaskCompletion<OpenedDownload> completed) {
     try {
         auto* result = std::get_if<Result<OpenedDownload>>(&completed.outcome);
         if (!result) { fail(ProtocolError::TemporarilyUnavailable); return; }
-        if (!*result) { fail(transferError(result->error().code)); return; }
+        if (!*result) {
+            const auto code = result->error().code;
+            fail(code == ErrorCode::IntegrityError ? ProtocolError::IntegrityError : transferError(code));
+            return;
+        }
         auto opened = std::move(*result).value();
         stream_ = std::move(opened.stream);
         if (opened.descriptor.nodeId != command_.id || command_.metadataOnly == static_cast<bool>(stream_)) { fail(ProtocolError::InternalError); return; }

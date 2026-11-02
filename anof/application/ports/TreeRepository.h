@@ -1,7 +1,13 @@
 #pragma once
 #include <anof/domain/drive/TreePolicy.h>
 namespace anof {
-struct SearchQuery { SpaceId spaceId; SearchText text; PageSize limit; std::optional<ChildPosition> after; QueryBudget budget; };
+struct SearchQuery {
+    SpaceId spaceId;
+    SearchText text;
+    PageSize limit;
+    std::optional<ChildPosition> after;
+    QueryBudget budget;
+};
 struct TreeMutationPlan {
     TreeSnapshot expected;
     NodeCondition rootCondition;

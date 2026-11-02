@@ -1,0 +1,6 @@
+#pragma once
+// 由同一套CMake依赖政策生成，配置探针和程序启动使用相同门槛。
+namespace anof::app {
+inline constexpr int kMinimumSqliteVersion = @ANOF_MIN_SQLITE_NUMBER@;
+inline constexpr unsigned kMinimumCurlVersion = @ANOF_MIN_CURL_NUMBER@;
+}

@@ -1,31 +1,29 @@
 #define BOOST_TEST_MODULE AnofTransferValues
-#include <boost/test/unit_test.hpp>
-#include <anof/domain/transfer/TransferPolicy.h>
-#include <anof/domain/transfer/Storage.h>
-#include <anof/domain/drive/Quota.h>
 #include <anof/application/ports/TransferDispatcher.h>
 #include <anof/application/ports/TransferMetadataStore.h>
+#include <anof/domain/drive/Quota.h>
+#include <anof/domain/transfer/Storage.h>
+#include <anof/domain/transfer/TransferPolicy.h>
+
+#include <boost/test/unit_test.hpp>
 #include <type_traits>
 
 using namespace anof;
 namespace {
 ByteCount bytes(std::int64_t n) { return ByteCount::from(n).value(); }
-QuotaDelta quota(std::int64_t b, std::int64_t n) { return {bytes(b), NodeCount::from(n).value()}; }
+QuotaDelta quota(std::int64_t b, std::int64_t n) { return { bytes(b), NodeCount::from(n).value() }; }
 Upload sample() {
     const auto id = "11111111-1111-4111-8111-111111111111";
-    UploadTarget target{NodeId::parse(id).value(), "file"};
+    UploadTarget target{ NodeId::parse(id).value(), "file" };
     const UtcTime now(std::chrono::microseconds(100));
-    return { UploadId::parse(id).value(), UserId::parse(id).value(), OperationId::parse(id).value(),
-        {SpaceId::parse(id).value(), target, FileLength::from(5).value(), std::nullopt}, target,
-        {}, UploadState::Creating, {}, std::nullopt, std::nullopt, StagingLocation::Temporary,
-        std::nullopt, now, now, uploadExpiry(now, now).value(), std::nullopt, std::nullopt };
+    return { UploadId::parse(id).value(), UserId::parse(id).value(), OperationId::parse(id).value(), { SpaceId::parse(id).value(), target, FileLength::from(5).value(), std::nullopt }, target, {}, UploadState::Creating, {}, std::nullopt, std::nullopt, StagingLocation::Temporary, std::nullopt, now, now, uploadExpiry(now, now).value(), std::nullopt, std::nullopt };
 }
-}
+}  // namespace
 BOOST_AUTO_TEST_CASE(checked_numeric_boundaries_without_large_files) {
     BOOST_CHECK(FileLength::from(kMaxFileBytes));
     BOOST_CHECK(!FileLength::from(kMaxFileBytes + 1));
     BOOST_CHECK(!FileLength::from(-1));
-    for (const auto* invalid : {"", "00", "01", "+1", "-1", " 1", "1 ", "1.0", "9223372036854775808"})
+    for (const auto* invalid : { "", "00", "01", "+1", "-1", " 1", "1 ", "1.0", "9223372036854775808" })
         BOOST_CHECK(!parseTransferDecimal(invalid));
     BOOST_CHECK(parseTransferDecimal("0"));
     BOOST_TEST(parseTransferDecimal("9223372036854775807").value().value() == INT64_MAX);
@@ -47,11 +45,11 @@ BOOST_AUTO_TEST_CASE(digests_ids_and_ownership) {
     static_assert(!std::is_copy_constructible_v<OwnedTransferFile>);
     static_assert(!std::is_copy_constructible_v<OwnedTransferBlock>);
     static_assert(std::is_base_of_v<MetadataTransaction, TransferTransaction>);
-    Blob blob{BlobId::parse("abcdef12-1111-4111-8111-111111111111").value(), {}, Sha256::parse(hex).value()};
+    Blob blob{ BlobId::parse("abcdef12-1111-4111-8111-111111111111").value(), {}, Sha256::parse(hex).value() };
     BOOST_TEST(blob.storageKey() == "objects/ab/abcdef12-1111-4111-8111-111111111111");
 }
 BOOST_AUTO_TEST_CASE(disk_margin_and_overflow) {
-    DiskSafetyPolicy policy{bytes(0), SafetyPercent::from(5).value()};
+    DiskSafetyPolicy policy{ bytes(0), SafetyPercent::from(5).value() };
     BOOST_TEST(diskSafetyMargin(bytes(101), policy).value().value() == 6);
     policy.percent = SafetyPercent::from(100).value();
     BOOST_TEST(diskSafetyMargin(bytes(INT64_MAX), policy).value().value() == INT64_MAX);
@@ -60,7 +58,7 @@ BOOST_AUTO_TEST_CASE(disk_margin_and_overflow) {
     BOOST_CHECK(!requireDiskCapacity(bytes(9), bytes(3), FileLength::from(4).value(), bytes(3)));
 }
 BOOST_AUTO_TEST_CASE(reservations_are_conserved_and_underflow_is_rejected) {
-    QuotaState q{quota(100, 10), quota(10, 1), quota(0, 0)};
+    QuotaState q{ quota(100, 10), quota(10, 1), quota(0, 0) };
     auto reserved = reserveQuota(q, quota(90, 1));
     BOOST_REQUIRE(reserved);
     BOOST_CHECK(!reserveQuota(reserved.value(), quota(1, 0)));
@@ -75,10 +73,10 @@ BOOST_AUTO_TEST_CASE(reservations_are_conserved_and_underflow_is_rejected) {
     auto empty = reserveQuota(q, quota(0, 1));
     BOOST_REQUIRE(empty);
     BOOST_TEST(empty.value().reserved.nodes.value() == 1);
-    BOOST_CHECK(!reserveQuota({quota(INT64_MAX, 10), quota(INT64_MAX, 0), quota(1, 0)}, quota(0, 0)));
+    BOOST_CHECK(!reserveQuota({ quota(INT64_MAX, 10), quota(INT64_MAX, 0), quota(1, 0) }, quota(0, 0)));
 }
 BOOST_AUTO_TEST_CASE(physical_reservation_survives_logical_cancellation) {
-    StorageSnapshot initial{bytes(100), bytes(10), bytes(0), Revision{}};
+    StorageSnapshot initial{ bytes(100), bytes(10), bytes(0), Revision{} };
     auto held = reserveStorage(initial, bytes(90));
     BOOST_REQUIRE(held);
     BOOST_TEST(held.value().reserved.value() == 90);
@@ -158,10 +156,10 @@ BOOST_AUTO_TEST_CASE(expiry_is_capped_and_checked) {
 }
 
 BOOST_AUTO_TEST_CASE(record_limits_are_checked_without_flooding) {
-    BOOST_CHECK(requireUploadCapacity({7, 63, 511, 4095}));
-    BOOST_CHECK(!requireUploadCapacity({8, 63, 511, 4095}));
-    BOOST_CHECK(!requireUploadCapacity({7, 64, 511, 4095}));
-    BOOST_CHECK(!requireUploadCapacity({7, 63, 512, 4095}));
-    BOOST_CHECK(!requireUploadCapacity({7, 63, 511, 4096}));
-    BOOST_CHECK(!requireUploadCapacity({7, 6, 511, 4095}));
+    BOOST_CHECK(requireUploadCapacity({ 7, 63, 511, 4095 }));
+    BOOST_CHECK(!requireUploadCapacity({ 8, 63, 511, 4095 }));
+    BOOST_CHECK(!requireUploadCapacity({ 7, 64, 511, 4095 }));
+    BOOST_CHECK(!requireUploadCapacity({ 7, 63, 512, 4095 }));
+    BOOST_CHECK(!requireUploadCapacity({ 7, 63, 511, 4096 }));
+    BOOST_CHECK(!requireUploadCapacity({ 7, 6, 511, 4095 }));
 }

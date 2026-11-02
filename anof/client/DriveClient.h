@@ -15,10 +15,12 @@ public:
     ClientResult<Reply<Trash>> showTrash(TrashId);
     ClientResult<Reply<Node>> restore(TrashId, std::optional<NodeId> parent, std::optional<std::string> name, const ConditionTag&);
     ClientResult<Reply<Done>> purge(TrashId, const ConditionTag&);
+
 private:
-    template<class T> ClientResult<Reply<T>> call(DriveOperation, Method, std::string, SecureBuffer = {}, std::optional<ConditionTag> = {}, unsigned limit = 200);
+    template <class T>
+    ClientResult<Reply<T>> call(DriveOperation, Method, std::string, SecureBuffer = {}, std::optional<ConditionTag> = {}, unsigned limit = 200);
     HttpTransport& transport_;
     LockedProfile& profile_;
     const std::atomic_bool* cancel_;
 };
-} // namespace anof::client
+}  // namespace anof::client
